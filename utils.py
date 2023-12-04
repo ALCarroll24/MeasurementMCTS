@@ -21,3 +21,17 @@ def wrapped_angle_diff(angle1, angle2):
         diff += 2*np.pi
         
     return diff
+
+def angle_in_interval(angle, low_angle, high_angle):
+    # Wrap the angles just to be safe
+    angle = wrap_angle(angle)
+    low_angle = wrap_angle(low_angle)
+    high_angle = wrap_angle(high_angle)
+    
+    # print("Angle:", np.degrees(angle), "Low angle:", np.degrees(low_angle), "High angle:", np.degrees(high_angle))
+
+    # Adjust for intervals that cross the -π/π boundary
+    if low_angle <= high_angle:
+        return low_angle <= angle <= high_angle
+    else:
+        return angle >= low_angle or angle <= high_angle

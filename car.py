@@ -5,7 +5,7 @@ from utils import wrap_angle, sat_value
 import time
 
 class Car:
-    def __init__(self, ui, position, yaw, update_rate, length=4.0, width=2.0, max_range=10.0, max_bearing=45.0, max_velocity=10.0, max_steering_angle=45.0):
+    def __init__(self, ui, position, yaw, update_rate, length=4.0, width=2.0, max_range=20.0, max_bearing=45.0, max_velocity=10.0, max_steering_angle=45.0):
         self.ui = ui
         self.position = position  # x, y
         self.yaw = np.radians(yaw)  # Orientation
