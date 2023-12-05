@@ -46,7 +46,7 @@ class VectorizedStaticKalmanFilter:
             G = np.array([[np.cos(bearing), -np.sin(bearing)], [np.sin(bearing), np.cos(bearing)]])
             
             # Magnitude matrix to scale distribution
-            M = 0.1 * np.diag([dist, np.pi * dist])
+            M = self.p_dev**2 * np.diag([dist, np.pi * dist])
             
             # Calculate covariance matrix for this corner
             r = G @ M @ G.T
