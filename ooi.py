@@ -80,6 +80,7 @@ class OOI:
         
         # Find which corners are observable
         observable_corners = []
+        indeces = []
         for i, corner in enumerate(self.corners):
             # Calculate distance and bearing to corner
             distance = np.linalg.norm(corner - car_position)
@@ -102,13 +103,17 @@ class OOI:
                 pass
             else:
                 observable_corners.append(corner)
+                indeces.append(i)
                 
         if draw:
             # Draw observable corners
             for corner in observable_corners:
                 self.ui.draw_circle(corner, 0.6)
                 
-        return observable_corners
+        # Convert to numpy array for later usage
+        obs_corners_vec = np.array(observable_corners).flatten()
+        
+        return obs_corners_vec, indeces
         
         
 if __name__ == '__main__':

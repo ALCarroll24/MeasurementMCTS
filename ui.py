@@ -62,7 +62,7 @@ class MatPlotLibUI:
         print("Matplotlib window closed.")
         self.run_loop = False  # Set a global flag to stop the main loop
 
-    def draw_rectangle(self, center, width, length, angle=0):
+    def draw_rectangle(self, center, width, length, angle=0, color='r'):
         """
         Draw a rectangle on the plot.
         :param center: Tuple (x, y) for the center of the rectangle.
@@ -74,31 +74,42 @@ class MatPlotLibUI:
         bottom_left = center[0] - width/2, center[1] - length/2
         
         # Create a rectangle and add it to the plot
-        rect = patches.Rectangle(bottom_left, width, length, linewidth=1, edgecolor='r', facecolor='none', rotation_point='center')
+        rect = patches.Rectangle(bottom_left, width, length, linewidth=1, edgecolor=color, facecolor='none', rotation_point='center')
         rect.set_angle(np.degrees(angle))
         
         self.ax.add_patch(rect)
         self.patches.append(rect)
         
-    def draw_circle(self, center, radius):
+    def draw_circle(self, center, radius, color='r'):
         """
         Draw a circle on the plot.
         :param center: Tuple (x, y) for the center of the circle.
         :param radius: Radius of the circle.
         """
         # Create a circle and add it to the plot
-        circle = patches.Circle(center, radius, linewidth=1, edgecolor='r', facecolor='none')
+        circle = patches.Circle(center, radius, linewidth=1, edgecolor=color, facecolor='none')
         self.ax.add_patch(circle)
         self.patches.append(circle)
         
-    def draw_arrow(self, start, end):
+    def draw_point(self, point, color='r'):
+        """
+        Draw a point on the plot.
+        :param point: Tuple (x, y) for the point.
+        :param color: Color of the point.
+        """
+        # Create a point and add it to the plot
+        point = patches.Circle(point, 0.5, linewidth=1, edgecolor=color, facecolor=color)
+        self.ax.add_patch(point)
+        self.patches.append(point)
+        
+    def draw_arrow(self, start, end, color='b'):
         """
         Draw an arrow on the plot.
         :param start: Tuple (x, y) for the start of the arrow.
         :param end: Tuple (x, y) for the end of the arrow.
         """
         # Create an arrow and add it to the plot
-        arrow = patches.Arrow(start[0], start[1], end[0] - start[0], end[1] - start[1], width=1)
+        arrow = patches.Arrow(start[0], start[1], end[0] - start[0], end[1] - start[1], width=1, color=color)
         self.ax.add_patch(arrow)
         self.patches.append(arrow)
 

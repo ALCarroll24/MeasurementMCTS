@@ -1,6 +1,6 @@
 import numpy as np
 import threading
-from plotter_ui import MatPlotLibUI
+from ui import MatPlotLibUI
 from utils import wrap_angle, sat_value
 import time
 
@@ -20,7 +20,7 @@ class Car:
         self.velocity = 0.0
         self.steering_angle = 0.0
 
-    def update(self, dt, draw=True):
+    def update(self, dt):
         # Update car state using the bicycle model
         self.position[0] += self.velocity * np.cos(self.yaw) * dt
         self.position[1] += self.velocity * np.sin(self.yaw) * dt
@@ -32,9 +32,6 @@ class Car:
         
         # Keep angle between [-pi, pi]
         self.yaw = wrap_angle(self.yaw)
-        
-        if draw:
-            self.draw()
 
     def draw(self):
         # Draw the car as a rectangle in the UI
