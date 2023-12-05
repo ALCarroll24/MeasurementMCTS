@@ -33,28 +33,60 @@ class VectorizedStaticKalmanFilter:
         return H
     
     # Measurement noise, size needs to be 2 * number of observations for x and y (row length = column length)
-    def R(self, obs_indices):
-        return self.p_dev**2 * np.eye(len(obs_indices) * 2)
+    def R(self, z, obs_indices, car_pos, car_yaw):
+        R = np.zeros((2 * len(obs_indices), 2 * len(obs_indices)))
+        
+        # Apply range bearing sensor model for each of the corners in the OOI
+        for i in range(z.shape[0] // 2):
+            # Calculate the range and bearing to the corner
+            dist = max(np.linalg.norm(car_pos - z[i*2:i*2+2]), 1)
+            bearing = np.arctan2(z[i*2+1] - car_pos[1], z[i*2] - car_pos[0]) - car_yaw #TODO this may be the wrong angle
+            
+            # Rotation matrix to rotate distribution before scaling
+            G = np.array([[np.cos(bearing), -np.sin(bearing)], [np.sin(bearing), np.cos(bearing)]])
+            
+            # Magnitude matrix to scale distribution
+            M = 0.1 * np.diag([dist, np.pi * dist])
+            
+            # Calculate covariance matrix for this corner
+            r = G @ M @ G.T
+            
+            # Place into the measurement noise matrix
+            R[i*2:i*2+2, i*2:i*2+2] = r
+        
+        return R
+        
+        # Old static method
+        # return self.p_dev**2 * np.eye(len(obs_indices) * 2)
     
     # Update step of KF, get posterior distribution, function of measurement and sensor
-    def update(self, z, obs_indices):
-        S_k = self.H(obs_indices) @ self.P_k @ self.H(obs_indices).T + self.R(obs_indices)
-        K_k = self.P_k @ self.H(obs_indices).T @ np.linalg.inv(S_k)
+    def update(self, z, obs_indices, car_pos, car_yaw):
+        H = self.H(obs_indices)
+        R = self.R(z, obs_indices, car_pos, car_yaw)
+        I = np.eye(self.s_dim)
+        
+        S_k = H @ self.P_k @ H.T + R
+        K_k = self.P_k @ H.T @ np.linalg.inv(S_k)
 
-        z_bar = z - self.H(obs_indices) @ self.s_k
+        z_bar = z - H @ self.s_k
 
         self.s_k = self.s_k + K_k @ z_bar
-        self.P_k = (np.eye(self.s_dim) - K_k @ self.H(obs_indices)) @ self.P_k
+        self.P_k = (I - K_k @ H) @ self.P_k
 
     # Update step of KF, but with vectorized matrices
-    def update_vectorized(self, z, obs_indices):
-        S_k = self.H(obs_indices) @ self.P_k.reshape((self.s_dim,self.s_dim)) @ self.H(obs_indices).T + self.R(obs_indices)
-        K_k = self.P_k.reshape((self.s_dim,self.s_dim)) @ self.H(obs_indices).T @ np.linalg.inv(S_k)
+    def update_vectorized(self, z, obs_indices, car_pos, car_yaw):
+        H = self.H(obs_indices)
+        R = self.R(z, obs_indices, car_pos, car_yaw)
+        P_vec_k = self.P_k.reshape((self.s_dim,self.s_dim))
+        I = np.eye(self.s_dim)
+        
+        S_k = H @ P_vec_k @ H.T + R
+        K_k = P_vec_k @ H.T @ np.linalg.inv(S_k)
 
-        z_bar = z - self.H(obs_indices) @ self.s_k
+        z_bar = z - H @ self.s_k
         
         # Create kronecker product matrix which allows for vectorized matrix operations
-        O = np.kron(np.eye(self.s_dim) - K_k @ self.H(obs_indices), np.eye(self.s_dim))
+        O = np.kron(I - K_k @ H, I)
 
         self.s_k = self.s_k + K_k @ z_bar
         self.P_k = O @ self.P_k
@@ -65,8 +97,18 @@ class VectorizedStaticKalmanFilter:
             # For now average the variance of the x and y components
             avg_var = np.mean([self.P_k[i, i], self.P_k[i+1, i+1]])
             
+            # Find the eigenvectors and eigenvalues of the covariance matrix
+            eig_vals, eig_vecs = np.linalg.eig(self.P_k[i:i+2, i:i+2])
+            
+            # Calculate the angle of the eigenvector with the largest eigenvalue
+            angle = np.arctan2(eig_vecs[1, np.argmax(eig_vals)], eig_vecs[0, np.argmax(eig_vals)])
+            
+            # Draw the mean point and covariance ellipse
             ui.draw_point(self.s_k[i:i+2], color='g')
-            ui.draw_circle(self.s_k[i:i+2], avg_var, color='g')
+            ui.draw_ellipse(self.s_k[i:i+2], eig_vals[0], eig_vals[1], angle=angle, color='b')
+            
+            # Old circle drawing method
+            # ui.draw_circle(self.s_k[i:i+2], avg_var, color='g')
 
 if __name__ == '__main__':
     # Initial state vector, uncertainty and time

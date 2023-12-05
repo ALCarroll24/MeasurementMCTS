@@ -13,7 +13,7 @@ if __name__ == '__main__':
     ui = MatPlotLibUI(update_rate=hz)
     
     # Create a car object
-    car = Car(ui, np.array([15.0, 15.0]), 90, hz)
+    car = Car(ui, np.array([40.0, 40.0]), 90, hz)
     
     # Create an OOI object
     ooi = OOI(ui)
@@ -25,8 +25,8 @@ if __name__ == '__main__':
     while(True):
     
         # Get the observation from the OOI, pass it to the KF for update
-        observable_corners, indeces = ooi.get_observation(car)
-        vkf.update(observable_corners, indeces)
+        observable_corners, indeces = ooi.get_noisy_observation(car)
+        vkf.update(observable_corners, indeces, car.position, car.yaw)
         
         # Get the control inputs from the arrow keys, pass them to the car for update
         car.get_arrow_key_control()

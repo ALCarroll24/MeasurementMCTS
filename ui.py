@@ -42,6 +42,7 @@ class MatPlotLibUI:
         while self.run_loop:
             # Update the plot every 1/rate seconds
             # self.draw_rectangle((50, 50), 20, 20, np.radians(45))
+            self.draw_ellipse((50, 50), 20, 10, np.radians(45))
             self.update_display()
             plt.draw()
             plt.pause(self.period)
@@ -90,6 +91,21 @@ class MatPlotLibUI:
         circle = patches.Circle(center, radius, linewidth=1, edgecolor=color, facecolor='none')
         self.ax.add_patch(circle)
         self.patches.append(circle)
+        
+    def draw_ellipse(self, center, width, length, angle=0, color='r'):
+        """
+        Draw an ellipse on the plot.
+        :param center: Tuple (x, y) for the center of the ellipse.
+        :param width: Width of the ellipse.
+        :param length: Length of the ellipse.
+        :param angle: Rotation angle of the ellipse in degrees.
+        """
+        # Create an ellipse and add it to the plot
+        ellipse = patches.Ellipse(center, width, length, linewidth=1, edgecolor=color, facecolor='none')
+        ellipse.set_angle(np.degrees(angle))
+        
+        self.ax.add_patch(ellipse)
+        self.patches.append(ellipse)
         
     def draw_point(self, point, color='r'):
         """

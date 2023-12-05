@@ -2,7 +2,7 @@ import numpy as np
 from utils import wrap_angle, wrapped_angle_diff, angle_in_interval
 
 class OOI:
-    def __init__(self, ui, position=(50,50), length=4, width=8):
+    def __init__(self, ui, position=(50,50), length=4, width=8, std_dev=0.5):
         self.position = position
         
         # TODO: support yaw
@@ -11,6 +11,7 @@ class OOI:
         self.ui = ui
         self.length = length
         self.width = width
+        self.std_dev = std_dev
         
         # Calculate corner positions
         self.corners = self.get_corners()
@@ -114,7 +115,16 @@ class OOI:
         obs_corners_vec = np.array(observable_corners).flatten()
         
         return obs_corners_vec, indeces
+    
+    # Call get_observation and add noise to the observation
+    def get_noisy_observation(self, car, draw=True):
+        observable_corners, indeces = self.get_observation(car)
         
+        # Add noise to the observation
+        mean = 0
+        noisy_observable_corners = observable_corners + np.random.normal(mean, self.std_dev, observable_corners.shape)
+        
+        return noisy_observable_corners, indeces
         
 if __name__ == '__main__':
     ooi = OOI(None)
