@@ -60,18 +60,39 @@ class VectorizedStaticKalmanFilter:
         # return self.p_dev**2 * np.eye(len(obs_indices) * 2)
     
     # Update step of KF, get posterior distribution, function of measurement and sensor
-    def update(self, z, obs_indices, car_pos, car_yaw):
+    def update(self, z, obs_indices, car_state, simulate=False, s_k=None, P_k=None):
+        # Pull out car position and yaw
+        car_pos = car_state[0:2]
+        car_yaw = car_state[2]
+        
+        # If we are not simulating use the class variables, otherwise use the passed in variables
+        if not simulate:
+            s_k = self.s_k
+            P_k = self.P_k
+        
+        # Get function outputs beforehand
         H = self.H(obs_indices)
         R = self.R(z, obs_indices, car_pos, car_yaw)
         I = np.eye(self.s_dim)
         
-        S_k = H @ self.P_k @ H.T + R
-        K_k = self.P_k @ H.T @ np.linalg.inv(S_k)
+        # Kalman gain
+        S_k = H @ P_k @ H.T + R
+        K_k = P_k @ H.T @ np.linalg.inv(S_k)
 
-        z_bar = z - H @ self.s_k
+        # Measurement residual
+        z_bar = z - H @ s_k
 
-        self.s_k = self.s_k + K_k @ z_bar
-        self.P_k = (I - K_k @ H) @ self.P_k
+        # Update state and covariance
+        s_k = s_k + K_k @ z_bar
+        P_k = (I - K_k @ H) @ P_k
+        
+        # If we are not simulating update the class variables
+        if not simulate:
+            self.s_k = s_k
+            self.P_k = P_k
+        # Otherwise return the updated state and covariance
+        else:
+            return s_k, P_k
 
     # Update step of KF, but with vectorized matrices
     def update_vectorized(self, z, obs_indices, car_pos, car_yaw):

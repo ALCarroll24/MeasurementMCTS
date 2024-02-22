@@ -2,7 +2,8 @@ import numpy as np
 from utils import wrap_angle, wrapped_angle_diff, angle_in_interval
 
 class OOI:
-    def __init__(self, ui, position=(50,50), length=4, width=8, std_dev=0.5):
+    def __init__(self, ui, position=(50,50), length=4, width=8, std_dev=0.5,
+                 car_max_range=20.0, car_max_bearing=45.0):
         self.position = position
         
         # TODO: support yaw
@@ -12,6 +13,9 @@ class OOI:
         self.length = length
         self.width = width
         self.std_dev = std_dev
+        
+        self.max_range = car_max_range
+        self.max_bearing = car_max_bearing
         
         # Calculate corner positions
         self.corners = self.get_corners()
@@ -72,12 +76,12 @@ class OOI:
         # for corner in self.corners:
         #     self.ui.draw_circle(corner, 0.6)
         
-    def get_observation(self, car, draw=True):
+    def get_observation(self, car_state, draw=True):
         # Get needed parameters from car
-        car_position = car.position
-        car_yaw = car.yaw
-        car_range = car.max_range
-        car_max_bearing = np.radians(car.max_bearing)
+        car_position = car_state[0:2]
+        car_yaw = car_state[2]
+        car_range = self.max_range
+        car_max_bearing = np.radians(self.max_bearing)
         
         # Find which corners are observable
         observable_corners = []
@@ -117,8 +121,8 @@ class OOI:
         return obs_corners_vec, indeces
     
     # Call get_observation and add noise to the observation
-    def get_noisy_observation(self, car, draw=True):
-        observable_corners, indeces = self.get_observation(car)
+    def get_noisy_observation(self, car_state, draw=True):
+        observable_corners, indeces = self.get_observation(car_state)
         
         # Add noise to the observation
         mean = 0

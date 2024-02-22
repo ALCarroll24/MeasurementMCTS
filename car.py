@@ -20,11 +20,24 @@ class Car:
         self.velocity = 0.0
         self.steering_angle = 0.0
 
-    def update(self, dt):
+    def step(self, dt, action=None,  simulate=False, starting_state=None):
+        # Let's assume that the action is a tuple of (velocity, steering_angle)
+        if action is not None:
+            self.velocity = action[0]
+            self.steering_angle = action[1]
+            
+        # If we are doing forward simulation, we need to pass in the starting state
+        if simulate is not None and starting_state is not None:
+            position = starting_state[0:2]
+            yaw = starting_state[2]
+        else:
+            position = self.position
+            yaw = self.yaw
+        
         # Update car state using the bicycle model
-        self.position[0] += self.velocity * np.cos(self.yaw) * dt
-        self.position[1] += self.velocity * np.sin(self.yaw) * dt
-        self.yaw += (self.velocity / self.length) * np.tan(self.steering_angle) * dt
+        position[0] += self.velocity * np.cos(self.yaw) * dt
+        position[1] += self.velocity * np.sin(self.yaw) * dt
+        yaw += (self.velocity / self.length) * np.tan(self.steering_angle) * dt
         
         # Saturate inputs
         self.velocity = sat_value(self.velocity, self.max_velocity)
@@ -32,6 +45,17 @@ class Car:
         
         # Keep angle between [-pi, pi]
         self.yaw = wrap_angle(self.yaw)
+        
+        # Only update state if we are not simulating
+        if not simulate:
+            self.position = position
+            self.yaw = yaw
+            
+        # Otherwise return the new state
+        else:
+            return np.array([position[0], position[1], yaw])
+            
+        
 
     def draw(self):
         # Draw the car as a rectangle in the UI
@@ -53,24 +77,40 @@ class Car:
             time.sleep(0.1)
             
     def get_arrow_key_control(self):
+        velocity = 0.0
+        steering_angle = 0.0
+        
         # Grab inputs from arrow keys
         if 'up' in self.ui.keys:
-            self.velocity += 0.4
+            velocity += 0.4
         if 'down' in self.ui.keys:
-            self.velocity -= 0.4
+            velocity -= 0.4
         if 'left' in self.ui.keys:
-            self.steering_angle += np.radians(5.0)
+            steering_angle += np.radians(5.0)
         if 'right' in self.ui.keys:
-            self.steering_angle -= np.radians(5.0)
+            steering_angle -= np.radians(5.0)
+        
+        # print("Keys: ", self.ui.keys)
+        # print("Velocity: ", self.velocity, "Steering angle: ", np.degrees(self.steering_angle))
+        
+        # Return the tuple of inputs
+        return (velocity, steering_angle)
+          
+    def set_input(self, vel_steering):
+        self.velocity = vel_steering[0]
+        self.steering_angle = vel_steering[1]
+        
+    def add_input(self, vel_steering):
+        self.velocity += vel_steering[0]
+        self.steering_angle += vel_steering[1]
         
         # If there are no inputs from the arrow keys, decay the velocity and steering angle
         if len(self.ui.keys) == 0:
             self.velocity *= 0.95
             self.steering_angle *= 0.6
         
-        # print("Keys: ", self.ui.keys)
-        # print("Velocity: ", self.velocity, "Steering angle: ", np.degrees(self.steering_angle))
-            
+    def get_state(self):
+        return np.array([self.position[0], self.position[1], self.yaw])
 
 if __name__ == '__main__':
     
