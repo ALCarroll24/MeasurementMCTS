@@ -1,35 +1,25 @@
-from typing import List, Dict, Any, Tuple, Optional
+
 
 class DecisionNode:
     """
     The Decision Node class
 
     :param state: (tuple) defining the state
-    :param parent: (RandomNode) The parent of the Decision Node, None if root node
+    :param father: (RandomNode) The father of the Decision Node, None if root node
     :param is_root: (bool)
     :param is_final: (bool)
     """
 
-    def __init__(
-        self, 
-        state: Any = None, 
-        parent = None, 
-        is_root: bool = False, 
-        is_final: bool = False
-    ):
+    def __init__(self, state=None, father=None, is_root=False, is_final=False):
         self.state = state
-        self.children: Dict[Any, RandomNode] = {}
+        self.children = {}
         self.is_final = is_final
-        self.visits: int = 0
-        self.reward: float = 0.0
-        self.parent: RandomNode = parent
+        self.visits = 0
+        self.reward = 0
+        self.father = father
         self.is_root = is_root
 
-    def add_children(
-        self, 
-        random_node, 
-        hash_preprocess=None,
-    ):
+    def add_children(self, random_node, hash_preprocess=None):
         """
         Adds a RandomNode object to the dictionary of children (key is the action)
 
@@ -41,12 +31,7 @@ class DecisionNode:
 
         self.children[hash_preprocess(random_node.action)] = random_node
 
-    def next_random_node(
-        self, 
-        action: Any, 
-        hash_preprocess=None
-    ):
-    # ) -> RandomNode:
+    def next_random_node(self, action, hash_preprocess=None):
         """
         Add the random node to the children of the decision node if note present. Otherwise it resturns the existing one
 
@@ -59,7 +44,7 @@ class DecisionNode:
                 return x
 
         if hash_preprocess(action) not in self.children.keys():
-            new_random_node = RandomNode(action, parent=self)
+            new_random_node = RandomNode(action, father=self)
             self.add_children(new_random_node, hash_preprocess)
         else:
             new_random_node = self.children[hash_preprocess(action)]
@@ -71,7 +56,7 @@ class DecisionNode:
         for k, v in self.__dict__.items():
             if k == "children":
                 pass
-            elif k == "parent":
+            elif k == "father":
                 pass
             else:
                 s += str(k)+": "+str(v)+"\n"
@@ -83,25 +68,17 @@ class RandomNode:
     The RandomNode class defined by the state and the action, it's a random node since the next state is not yet defined
 
     :param action: (action) taken in the decision node
-    :param parent: (DecisionNode)
+    :param father: (DecisionNode)
     """
 
-    def __init__(
-        self, 
-        action: Any, 
-        parent: DecisionNode =None,
-    ):
+    def __init__(self, action, father=None):
         self.action = action
-        self.children: Dict[Any, DecisionNode] = {}
-        self.cumulative_reward: float = 0.0
-        self.visits: int = 0
-        self.parent: DecisionNode = parent
+        self.children = {}
+        self.cumulative_reward = 0
+        self.visits = 0
+        self.father = father
 
-    def add_children(
-        self, 
-        x: DecisionNode, 
-        hash_preprocess
-    ):
+    def add_children(self, x, hash_preprocess):
         """
         adds a DecisionNode object to the dictionary of children (key is the state)
 

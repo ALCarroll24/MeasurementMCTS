@@ -1,7 +1,6 @@
-from typing import List, Any, Callable, Tuple
 import numpy as np
-from nav2_air_active_track_planner.mcts.mcts import MCTS
-from nav2_air_active_track_planner.mcts.nodes import DecisionNode
+from mcts.MCTS import MCTS
+
 
 class SPW(MCTS):
     """
@@ -15,32 +14,21 @@ class SPW(MCTS):
     :param K: exploration parameter of UCB
     """
 
-    def __init__(
-        self, 
-        initial_obs: Any, 
-        env, 
-        K: float,
-        _hash_action: Callable[[Any], Tuple],
-        _hash_state: Callable[[Any], Tuple],
-        alpha: float, 
-    ):
-        # super(MCTS, self).__init__(initial_obs, env, K,
-        #     _hash_action, _hash_state)
-        MCTS.__init__(self, initial_obs, env, K,
-            _hash_action, _hash_state)
+    def __init__(self, alpha, initial_obs, env, K):
+        super(SPW, self).__init__(initial_obs, env, K)
 
         self.alpha = alpha
 
-    def select(self, x: DecisionNode) -> Any:
+    def select(self, x):
         """
         Selects the action to play from the current decision node. The number of children of a DecisionNode is
         kept finite at all times and monotonic to the number of visits of the DecisionNode.
 
         :param x: (DecisionNode) current decision node
-        :return: (Any) action to play
+        :return: (float) action to play
         """
         if x.visits**self.alpha >= len(x.children):
-            a = self.env.action_space_sample(x.state)
+            a = self.env.action_space.sample()
 
         else:
 
@@ -54,19 +42,14 @@ class SPW(MCTS):
             a = max(x.children, key=scoring)
 
         return a
-    
-    def _collect_data(self, action_vector: Any = None):
+
+    def _collect_data(self):
         """
         Collects the data and parameters to save.
         """
         data = {
             "K": self.K,
-            "nodes": [],
-            "decision": action_vector,
-            "alpha": self.alpha,
+            "root": self.root,
+            "alpha": self.alpha
         }
-
-        self._traverse_tree(self.root, data)
-        # do a dfs for all nodes
-
         return data

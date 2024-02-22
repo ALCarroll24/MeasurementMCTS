@@ -13,6 +13,9 @@ class ToyMeasurementControl:
         
         # Parameters
         self.final_cov_trace = 0.1
+        self.action_space_sample_heuristic = 'uniform_discrete'
+        self.velocity_options = 5  # number of discrete options for velocity
+        self.steering_angle_options = 5  # number of discrete options for steering angle
         
         # Create a plotter object
         self.ui = MatPlotLibUI(update_rate=self.hz)
@@ -39,7 +42,7 @@ class ToyMeasurementControl:
             vel_steering_tuple = self.car.get_arrow_key_control()
             self.car.add_input(vel_steering_tuple)   # This adds the control input rather than directly setting it (easier for keyboard control)
             
-            self.car.step(self.period)
+            self.car.update(self.period)
         
             # Update the displays, and pause for the period
             self.car.draw()
@@ -58,7 +61,7 @@ class ToyMeasurementControl:
         :return: (float, np.ndarray) the reward of the state-action pair, and the new state
         """
         # Apply the action to the car
-        new_car_state = self.car.step(self.period, action, simulate=True, starting_state=state)
+        new_car_state = self.car.update(self.period, action, simulate=True, starting_state=state)
         
         # Get the observation from the OOI, pass it to the KF for update
         observable_corners, indeces = self.ooi.get_noisy_observation(new_car_state)
@@ -98,6 +101,25 @@ class ToyMeasurementControl:
         reward = -trace
         
         return reward, done
+    
+    def action_space_sample(self) -> np.ndarray:
+        """
+        Sample an action from the action space.
+        
+        :return: (np.ndarray) the sampled action
+        """
+        # Uniform sampling in continuous space
+        if self.action_space_sample_heuristic == 'uniform_continuous':
+            velocity = np.random.uniform(0, self.car.max_velocity)
+            steering_angle = np.random.uniform(-self.car.max_steering_angle, self.car.max_steering_angle)
+            
+        # Uniform Discrete sampling with a specified number of options
+        if self.action_space_sample_heuristic == 'uniform_discrete':
+            velocity = np.random.choice(np.linspace(0, self.car.max_velocity, self.velocity_options))
+            steering_angle = np.random.choice(np.linspace(-self.car.max_steering_angle, self.car.max_steering_angle, self.steering_angle_options))
+            
+        return np.array([velocity, steering_angle])
+    
     
 if __name__ == '__main__':  
     tmc = ToyMeasurementControl()

@@ -20,7 +20,7 @@ class Car:
         self.velocity = 0.0
         self.steering_angle = 0.0
 
-    def step(self, dt, action=None,  simulate=False, starting_state=None):
+    def update(self, dt, action=None,  simulate=False, starting_state=None):
         # Let's assume that the action is a tuple of (velocity, steering_angle)
         if action is not None:
             self.velocity = action[0]
