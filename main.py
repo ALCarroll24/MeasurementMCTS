@@ -4,6 +4,7 @@ from ui import MatPlotLibUI
 from car import Car
 from ooi import OOI
 from vkf import VectorizedStaticKalmanFilter
+from mcts.mcts import MCTS
 
 class ToyMeasurementControl:
     def __init__(self):
@@ -38,9 +39,17 @@ class ToyMeasurementControl:
             observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state())
             self.vkf.update(observable_corners, indeces, self.car.get_state())
             
+            ############################ MANUAL CONTROL ############################
             # Get the control inputs from the arrow keys, pass them to the car for update
-            vel_steering_tuple = self.car.get_arrow_key_control()
-            self.car.add_input(vel_steering_tuple)   # This adds the control input rather than directly setting it (easier for keyboard control)
+            # vel_steering_tuple = self.car.get_arrow_key_control()
+            # self.car.add_input(vel_steering_tuple)   # This adds the control input rather than directly setting it (easier for keyboard control)
+            
+            
+            ############################ AUTONOMOUS CONTROL ############################
+            # Create an MCTS object
+            mcts = MCTS(initial_obs=self.car.get_state(), env=self, K=0.3**5,
+                        _hash_action=None, _hash_state=None)
+            
             
             self.car.update(self.period)
         
