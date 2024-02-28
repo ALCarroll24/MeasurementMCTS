@@ -130,6 +130,12 @@ class VectorizedStaticKalmanFilter:
             
             # Old circle drawing method
             # ui.draw_circle(self.s_k[i:i+2], avg_var, color='g')
+            
+    def get_mean(self):
+        return self.s_k
+    
+    def get_covariance(self):
+        return self.P_k
 
 if __name__ == '__main__':
     # Initial state vector, uncertainty and time

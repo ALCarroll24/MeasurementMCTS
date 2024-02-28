@@ -39,9 +39,11 @@ class SPW(MCTS):
         :param x: (DecisionNode) current decision node
         :return: (Any) action to play
         """
+        # If we have already visited the node enough times, we select a random action
         if x.visits**self.alpha >= len(x.children):
             a = self.env.action_space_sample(x.state)
 
+        # Otherwise, pick the best action according to the UCB
         else:
 
             def scoring(k):

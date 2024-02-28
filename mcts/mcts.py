@@ -6,7 +6,7 @@ https://github.com/martinobdl/MCTS
 import cloudpickle
 import numpy as np
 # import gym
-from nav2_air_active_track_planner.mcts.nodes import DecisionNode, RandomNode
+from .nodes import DecisionNode, RandomNode
 from typing import Callable, List, Tuple, Any, Optional
 
 
@@ -191,8 +191,16 @@ class MCTS:
         :param x: (DecisionNode) current decision node
         :return: action to play
         """
+        # TODO: Why is this 2? This would make the branching factor 2 in selection
         if x.visits <= 2:
-            x.children = {a: RandomNode(a, parent=x) for a in range(self.env.action_space.n)}
+            # This removes children for some reason????????
+            # x.children = {a: RandomNode(a, parent=x) for a in range(self.env.action_space_sample())}
+            
+            # Action space sample currently returns a single action
+            a = self.env.action_space_sample()
+            
+            # Children were changed before, but random nodes are created in the next step... confusion
+            x.add_children(RandomNode(a, parent=x), hash_preprocess=self._hash_action)
 
         def scoring(k):
             if x.children[k].visits > 0:

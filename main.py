@@ -5,6 +5,8 @@ from car import Car
 from ooi import OOI
 from vkf import VectorizedStaticKalmanFilter
 from mcts.mcts import MCTS
+from mcts.hash import hash_action, hash_state
+import time
 
 class ToyMeasurementControl:
     def __init__(self):
@@ -41,15 +43,17 @@ class ToyMeasurementControl:
             
             ############################ MANUAL CONTROL ############################
             # Get the control inputs from the arrow keys, pass them to the car for update
-            # vel_steering_tuple = self.car.get_arrow_key_control()
-            # self.car.add_input(vel_steering_tuple)   # This adds the control input rather than directly setting it (easier for keyboard control)
+            vel_steering_tuple = self.car.get_arrow_key_control()
+            self.car.add_input(vel_steering_tuple)   # This adds the control input rather than directly setting it (easier for keyboard control)
             
             
             ############################ AUTONOMOUS CONTROL ############################
             # Create an MCTS object
-            mcts = MCTS(initial_obs=self.car.get_state(), env=self, K=0.3**5,
-                        _hash_action=None, _hash_state=None)
-            
+            mcts = MCTS(initial_obs=self.get_state(), env=self, K=0.3**5,
+                        _hash_action=hash_action, _hash_state=hash_state)
+            mcts.learn(100, progress_bar=False)
+            action_vector = mcts.best_action()
+            print("Past MCTS")
             
             self.car.update(self.period)
         
@@ -59,26 +63,32 @@ class ToyMeasurementControl:
             self.vkf.draw(self.ui)
             self.ui.update()
             
+    # Returns full state -> Tuple[Car State, Corner Mean, Corner Covariance, Done]:
+    def get_state(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        return self.car.get_state(), self.vkf.get_mean(), self.vkf.get_covariance()
     
     def step(self, state, action) -> Tuple[float, np.ndarray]:
         """
         Step the environment by one time step. The action is applied to the car, and the state is observed by the OOI.
         The observation is then passed to the KF for update.
         
-        :param state: (np.ndarray) the state of the car and OOI (position(0:2), corner means(2:10), corner covariances(10:74))
+        :param state: (np.ndarray) the state of the car and KF (Car state(x,y,yaw), corner means, corner covariances)
         :param action: (np.ndarray) the control input to the car (velocity, steering angle)
         :return: (float, np.ndarray) the reward of the state-action pair, and the new state
         """
+        # Pull out the state elements
+        car_state, corner_means, corner_cov = state
+        
         # Apply the action to the car
-        new_car_state = self.car.update(self.period, action, simulate=True, starting_state=state)
+        new_car_state = self.car.update(self.period, action, simulate=True, starting_state=car_state)
         
         # Get the observation from the OOI, pass it to the KF for update
         observable_corners, indeces = self.ooi.get_noisy_observation(new_car_state)
         new_mean, new_cov = self.vkf.update(observable_corners, indeces, new_car_state, 
-                                            simulate=True, s_k=state[2:10], P_k=state[10:74])
+                                            simulate=True, s_k=corner_means, P_k=corner_cov)
         
         # Combine the new car state and the new mean and covariance into a new state
-        new_state = np.concatenate((new_car_state, new_mean, new_cov))
+        new_state = (new_car_state, new_mean, new_cov)
         
         # Find the reward based on updated state
         reward, done = self.get_reward(new_state, action)
@@ -86,7 +96,7 @@ class ToyMeasurementControl:
         # Return the reward and the new state
         return new_state, reward, done
     
-    def get_reward(self, new_state, action) -> Tuple[float, bool]:
+    def get_reward(self, state, action) -> Tuple[float, bool]:
         """
         Get the reward of the new state-action pair.
         
@@ -94,13 +104,10 @@ class ToyMeasurementControl:
         :param action: (np.ndarray) the control input to the car (velocity, steering angle)
         :return: (float, bool) the reward of the state-action pair, and whether the episode is done
         """
-        # Pull out the portions of the state
-        car_position = new_state[0:2]
-        corner_means = new_state[2:10]
-        corner_cov = new_state[10:74]
+        # Pull out the state elements
+        car_state, corner_means, corner_cov = state
         
-        # Convert the corner covariance into a 8x8 matrix and find the trace
-        corner_cov = corner_cov.reshape((8,8))
+        # Find the sum of the diagonals
         trace = np.trace(corner_cov)
         
         # Find whether the episode is done
