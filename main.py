@@ -19,6 +19,8 @@ class ToyMeasurementControl:
         self.action_space_sample_heuristic = 'uniform_discrete'
         self.velocity_options = 5  # number of discrete options for velocity
         self.steering_angle_options = 5  # number of discrete options for steering angle
+        self.horizon = 10 # length of the planning horizon
+        self.random_iterations = 10  # number of random iterations for MCTS
         
         # Create a plotter object
         self.ui = MatPlotLibUI(update_rate=self.hz)
@@ -31,6 +33,9 @@ class ToyMeasurementControl:
         
         # Create a Static Vectorized Kalman Filter object
         self.vkf = VectorizedStaticKalmanFilter(np.array([50]*8), np.diag([8]*8), 4.0)
+        
+        # Save the last action (mainly used for relative manual control)
+        self.last_action = np.array([0.0, 0.0])
 
 
     def run(self): 
@@ -41,21 +46,22 @@ class ToyMeasurementControl:
             observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state())
             self.vkf.update(observable_corners, indeces, self.car.get_state())
             
-            ############################ MANUAL CONTROL ############################
-            # Get the control inputs from the arrow keys, pass them to the car for update
-            vel_steering_tuple = self.car.get_arrow_key_control()
-            self.car.add_input(vel_steering_tuple)   # This adds the control input rather than directly setting it (easier for keyboard control)
-            
-            
             ############################ AUTONOMOUS CONTROL ############################
             # Create an MCTS object
             mcts = MCTS(initial_obs=self.get_state(), env=self, K=0.3**5,
-                        _hash_action=hash_action, _hash_state=hash_state)
+                        _hash_action=hash_action, _hash_state=hash_state, 
+                        random_iterations=self.random_iterations)
             mcts.learn(100, progress_bar=False)
             action_vector = mcts.best_action()
             print("Past MCTS")
             
-            self.car.update(self.period)
+            ############################ MANUAL CONTROL ############################
+            # Get the control inputs from the arrow keys, pass them to the car for update
+            relative_action_vector = self.car.get_arrow_key_control()
+            # action_vector = self.car.add_input(relative_action_vector, self.last_action)   # This adds the control input rather than directly setting it (easier for keyboard control)
+            
+            # Update the car's state based on the control inputs
+            self.car.update(self.period, action_vector)
         
             # Update the displays, and pause for the period
             self.car.draw()
@@ -63,9 +69,11 @@ class ToyMeasurementControl:
             self.vkf.draw(self.ui)
             self.ui.update()
             
-    # Returns full state -> Tuple[Car State, Corner Mean, Corner Covariance, Done]:
-    def get_state(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        return self.car.get_state(), self.vkf.get_mean(), self.vkf.get_covariance()
+    def get_state(self, horizon=0) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+        '''
+        Returns full state -> Tuple[Car State, Corner Mean, Corner Covariance, Horizon]
+        '''
+        return self.car.get_state(), self.vkf.get_mean(), self.vkf.get_covariance(), horizon
     
     def step(self, state, action) -> Tuple[float, np.ndarray]:
         """
@@ -77,7 +85,10 @@ class ToyMeasurementControl:
         :return: (float, np.ndarray) the reward of the state-action pair, and the new state
         """
         # Pull out the state elements
-        car_state, corner_means, corner_cov = state
+        car_state, corner_means, corner_cov, horizon = state
+        
+        # Increment the horizon
+        horizon += 1
         
         # Apply the action to the car
         new_car_state = self.car.update(self.period, action, simulate=True, starting_state=car_state)
@@ -87,11 +98,15 @@ class ToyMeasurementControl:
         new_mean, new_cov = self.vkf.update(observable_corners, indeces, new_car_state, 
                                             simulate=True, s_k=corner_means, P_k=corner_cov)
         
-        # Combine the new car state and the new mean and covariance into a new state
-        new_state = (new_car_state, new_mean, new_cov)
+        # Combine the updated car state, mean, covariance and horizon into a new state
+        new_state = (new_car_state, new_mean, new_cov, horizon)
         
         # Find the reward based on updated state
         reward, done = self.get_reward(new_state, action)
+        
+        # Check if we are at the end of the horizon
+        if not done and horizon == self.horizon-1:
+            done = True
         
         # Return the reward and the new state
         return new_state, reward, done
@@ -105,7 +120,7 @@ class ToyMeasurementControl:
         :return: (float, bool) the reward of the state-action pair, and whether the episode is done
         """
         # Pull out the state elements
-        car_state, corner_means, corner_cov = state
+        car_state, corner_means, corner_cov, horizon = state
         
         # Find the sum of the diagonals
         trace = np.trace(corner_cov)

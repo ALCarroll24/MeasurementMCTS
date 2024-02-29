@@ -27,12 +27,14 @@ class MCTS:
         K: float,
         _hash_action: Callable[[Any], Tuple],
         _hash_state: Callable[[Any], Tuple],
+        random_iterations: int = 100,
     ):
         
         self.env = env
         self.K = K
         self.root = DecisionNode(state=initial_obs, is_root=True)
         self._initialize_hash(_hash_action, _hash_state)
+        self.random_iterations = random_iterations
 
     def _initialize_hash(
         self, 
@@ -126,19 +128,24 @@ class MCTS:
             # Create new decision node using environment step function
             (new_decision_node, r) = self.select_outcome(internal_env, new_random_node)
 
-            
+            # Ensure that the decision node is connected to its parent random node (not sure why it wouldn't be though...?)
             new_decision_node = self.update_decision_node(new_decision_node, new_random_node, self._hash_state)
 
+            # Set the reward of the new nodes
             new_decision_node.reward = r
             new_random_node.reward = r
 
+            # Continue the tree traversal
             decision_node = new_decision_node
 
+        # Add a visit since we ended traversal on this decision node
         decision_node.visits += 1
-        # TODO: update this evaluation function based on env
-        # cumulative_reward = self.evaluate(internal_env)
-        cumulative_reward = self.env.evaluate(decision_node.state)
-        # back propagate
+        
+        # Currently utilizing random actions to evaluate reward (general evaluation, the monte carlo part)
+        cumulative_reward = self.evaluate(internal_env, decision_node.state)
+        # cumulative_reward = self.env.evaluate(decision_node.state)
+        
+        # Back propagate the reward back to the root
         while not decision_node.is_root:
             random_node = decision_node.parent
             cumulative_reward += random_node.reward
@@ -163,8 +170,8 @@ class MCTS:
         iter = 0
         while ((not done) and (iter < max_iter)):
             iter += 1
-            a = env.action_space.sample(state)
-            s, r, done = env.step(a)
+            a = env.action_space_sample()
+            s, r, done = env.step(state, a)
             R += r
 
         return R
@@ -216,45 +223,60 @@ class MCTS:
 
         return a
 
-    def best_action(self) -> Any:
+    ############################ Open Source Version ############################
+    def best_action(self):
         """
         At the end of the simulations returns the most visited action
 
         :return: (float) the best action according to the number of visits
         """
 
-        action_vector = list()
+        number_of_visits_children = [node.visits for node in self.root.children.values()]
+        index_best_action = np.argmax(number_of_visits_children)
 
-        decision_node = self.root
-        # depth = 0
-        while not decision_node.is_final:
-            # depth += 1
-            number_of_visits_children = [node.visits for node in decision_node.children.values()]
-            # avg_reward_children = [node.cumulative_reward/node.visits for node in decision_node.children.values()]
-            # print(f'layer {depth}: {number_of_visits_children}')
-            indices_most_visit = np.argwhere(number_of_visits_children == np.amax(number_of_visits_children)).flatten().tolist()
-            # this may contain more than 1 children
-            if len(indices_most_visit) == 1:
-                index_best_action = indices_most_visit[0]
-            else:
-                avg_reward_list = []
-                for index in indices_most_visit:
-                    node = list(decision_node.children.values())[index]
-                    element = (index, node.cumulative_reward/node.visits)
-                    avg_reward_list.append(element)
-                index_best_action = max(avg_reward_list, key = lambda x: x[1])[0]
+        a = list(self.root.children.values())[index_best_action].action
+        return a
 
-            # index_best_action = np.argmax(number_of_visits_children)
-            random_node = list(decision_node.children.values())[index_best_action]
-            a = random_node.action
-            action_vector.append(a)
-            # find next decision state, only for determinisitic case
-            # TODO need to consider the stochastic case
-            assert len(random_node.children) == 1, print(random_node.children)
-            decision_node = list(random_node.children.values())[0]
+    ############################ Tianqi's Version ############################
+    # def best_action(self) -> Any:
+    #     """
+    #     At the end of the simulations returns the most visited action
 
-        # print("action output is {}".format(a))
-        return action_vector
+    #     :return: (float) the best action according to the number of visits
+    #     """
+
+    #     action_vector = list()
+
+    #     decision_node = self.root
+    #     # depth = 0
+    #     while not decision_node.is_final:
+    #         # depth += 1
+    #         number_of_visits_children = [node.visits for node in decision_node.children.values()]
+    #         # avg_reward_children = [node.cumulative_reward/node.visits for node in decision_node.children.values()]
+    #         # print(f'layer {depth}: {number_of_visits_children}')
+    #         indices_most_visit = np.argwhere(number_of_visits_children == np.amax(number_of_visits_children)).flatten().tolist()
+    #         # this may contain more than 1 children
+    #         if len(indices_most_visit) == 1:
+    #             index_best_action = indices_most_visit[0]
+    #         else:
+    #             avg_reward_list = []
+    #             for index in indices_most_visit:
+    #                 node = list(decision_node.children.values())[index]
+    #                 element = (index, node.cumulative_reward/node.visits)
+    #                 avg_reward_list.append(element)
+    #             index_best_action = max(avg_reward_list, key = lambda x: x[1])[0]
+
+    #         # index_best_action = np.argmax(number_of_visits_children)
+    #         random_node = list(decision_node.children.values())[index_best_action]
+    #         a = random_node.action
+    #         action_vector.append(a)
+    #         # find next decision state, only for determinisitic case
+    #         # TODO need to consider the stochastic case
+    #         assert len(random_node.children) == 1, print(random_node.children)
+    #         decision_node = list(random_node.children.values())[0]
+
+    #     # print("action output is {}".format(a))
+    #     return action_vector
 
     def learn(
         self, 

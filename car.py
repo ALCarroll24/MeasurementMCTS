@@ -3,6 +3,7 @@ import threading
 from ui import MatPlotLibUI
 from utils import wrap_angle, sat_value
 import time
+from typing import Tuple
 
 class Car:
     def __init__(self, ui, position, yaw, update_rate, length=4.0, width=2.0, max_range=20.0, max_bearing=45.0, max_velocity=10.0, max_steering_angle=45.0):
@@ -20,11 +21,9 @@ class Car:
         self.velocity = 0.0
         self.steering_angle = 0.0
 
-    def update(self, dt, action=None,  simulate=False, starting_state=None):
-        # Let's assume that the action is a tuple of (velocity, steering_angle)
-        if action is not None:
-            self.velocity = action[0]
-            self.steering_angle = action[1]
+    def update(self, dt, action,  simulate=False, starting_state=None):
+        # Pull the inputs from the action tuple
+        velocity, steering_angle = action
             
         # If we are doing forward simulation, we need to pass in the starting state
         if simulate is not None and starting_state is not None:
@@ -35,16 +34,16 @@ class Car:
             yaw = self.yaw
         
         # Update car state using the bicycle model
-        position[0] += self.velocity * np.cos(self.yaw) * dt
-        position[1] += self.velocity * np.sin(self.yaw) * dt
-        yaw += (self.velocity / self.length) * np.tan(self.steering_angle) * dt
+        position[0] += velocity * np.cos(yaw) * dt
+        position[1] += velocity * np.sin(yaw) * dt
+        yaw += (velocity / self.length) * np.tan(steering_angle) * dt
         
         # Saturate inputs
-        self.velocity = sat_value(self.velocity, self.max_velocity)
-        self.steering_angle = sat_value(self.steering_angle, np.radians(self.max_steering_angle))
+        velocity = sat_value(velocity, self.max_velocity)
+        steering_angle = sat_value(steering_angle, np.radians(self.max_steering_angle))
         
         # Keep angle between [-pi, pi]
-        self.yaw = wrap_angle(self.yaw)
+        yaw = wrap_angle(yaw)
         
         # Only update state if we are not simulating
         if not simulate:
@@ -100,14 +99,16 @@ class Car:
         self.velocity = vel_steering[0]
         self.steering_angle = vel_steering[1]
         
-    def add_input(self, vel_steering):
-        self.velocity += vel_steering[0]
-        self.steering_angle += vel_steering[1]
+    def add_input(self, relative_input: Tuple[float, float], last_input: Tuple[float, float]) -> Tuple[float, float]:
+        new_input = last_input + relative_input
         
         # If there are no inputs from the arrow keys, decay the velocity and steering angle
         if len(self.ui.keys) == 0:
-            self.velocity *= 0.95
-            self.steering_angle *= 0.6
+            new_input[0] *= 0.95    # Decay the velocity
+            new_input[1] *= 0.6     # Decay the steering angle
+            
+        # Return the new input
+        return new_input
         
     def get_state(self):
         return np.array([self.position[0], self.position[1], self.yaw])

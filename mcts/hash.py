@@ -2,15 +2,18 @@ from typing import Tuple, List
 import numpy as np
 
 
-def hash_state(state: Tuple[np.ndarray, np.ndarray, np.ndarray]) -> Tuple[Tuple, Tuple, Tuple]:
+def hash_state(state: Tuple[np.ndarray, np.ndarray, np.ndarray, int]) -> Tuple[Tuple, Tuple, Tuple, int]:
     '''
-    Take in the state Tuple(car_state, corner_means, corner_cov) and convert inner np.ndarrays to tuples
+    Take in the state Tuple(car_state, corner_means, corner_cov, horizon) and convert inner np.ndarrays to tuples
     This makes the state hashable
     '''
+    # First, convert the np.ndarrays to tuples
     state_list = list()
-    for s in state:
+    for s in range(len(state)-1):
+        state_list.append(tuple(state[s].flatten()))
         
-        state_list.append(tuple(s.flatten()))
+    # Then, append the horizon (int)
+    state_list.append(state[-1])
     
     return tuple(state_list)
 
