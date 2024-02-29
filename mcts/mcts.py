@@ -117,13 +117,16 @@ class MCTS:
         internal_env = self.env
 
         while (not decision_node.is_final): # and decision_node.visits > 1:
-
+            # Get action using UCB
             a = self.select(decision_node)
 
+            # Create new random node or get the existing one from the action
             new_random_node = decision_node.next_random_node(a, self._hash_action)
 
+            # Create new decision node using environment step function
             (new_decision_node, r) = self.select_outcome(internal_env, new_random_node)
 
+            
             new_decision_node = self.update_decision_node(new_decision_node, new_random_node, self._hash_state)
 
             new_decision_node.reward = r

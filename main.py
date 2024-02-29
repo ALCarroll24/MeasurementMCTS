@@ -110,7 +110,7 @@ class ToyMeasurementControl:
         # Find the sum of the diagonals
         trace = np.trace(corner_cov)
         
-        # Find whether the episode is done
+        # Find whether the episode is done TODO: done needs to also account for horizon length
         done = trace < self.final_cov_trace
 
         # Find the reward
