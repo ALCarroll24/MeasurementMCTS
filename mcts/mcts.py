@@ -119,7 +119,7 @@ class MCTS:
         internal_env = self.env
 
         while (not decision_node.is_final): # and decision_node.visits > 1:
-            # Get action using UCB
+            # Get action from this decision node using UCB
             a = self.select(decision_node)
 
             # Create new random node or get the existing one from the action
@@ -164,11 +164,10 @@ class MCTS:
         :param env: (gym.env) gym environemt that describes the state at the node to evaulate.
         :return: (float) the cumulative reward observed during the tree traversing.
         """
-        max_iter = 100
         R = 0
         done = False
         iter = 0
-        while ((not done) and (iter < max_iter)):
+        while ((not done) and (iter < self.random_iterations)):
             iter += 1
             a = env.action_space_sample()
             s, r, done = env.step(state, a)

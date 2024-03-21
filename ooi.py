@@ -122,7 +122,7 @@ class OOI:
     
     # Call get_observation and add noise to the observation
     def get_noisy_observation(self, car_state, draw=True):
-        observable_corners, indeces = self.get_observation(car_state)
+        observable_corners, indeces = self.get_observation(car_state, draw=draw)
         
         # Add noise to the observation
         mean = 0

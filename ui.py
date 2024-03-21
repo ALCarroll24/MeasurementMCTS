@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from matplotlib.widgets import Button
 import threading
 
 class MatPlotLibUI:
@@ -10,6 +11,15 @@ class MatPlotLibUI:
         self.fig.canvas.mpl_connect('button_press_event', self.on_click)
         self.fig.canvas.mpl_connect('close_event', self.handle_close)
         self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
+        
+        # Create Buttons
+        play_button_ax = self.fig.add_axes([0.3, 0.9, 0.2, 0.07])  # Adjust as necessary
+        self.play_button = Button(play_button_ax, 'Play/Pause', color='lightgoldenrodyellow', hovercolor='0.975')
+        self.play_button.on_clicked(self.on_play_button_click)
+        
+        viz_button_ax = self.fig.add_axes([0.52, 0.9, 0.2, 0.07])  # Adjust as necessary
+        self.viz_button = Button(viz_button_ax, 'Visualize', color='lightgoldenrodyellow', hovercolor='0.975')
+        self.viz_button.on_clicked(self.on_viz_button_click)
         
         # Store the keys being pressed for later retrieval
         self.keys = []
@@ -148,9 +158,15 @@ class MatPlotLibUI:
         # Redraw the rectangles
         for rect in self.patches:
             self.ax.add_patch(rect)
-            
+                    
         # Remove rectangles from the list
         self.patches = []
+
+    def on_play_button_click(self, event):
+        print("Button clicked")
+        
+    def on_viz_button_click(self, event):
+        print("Visualize button clicked")
 
     def on_click(self, event):
         """

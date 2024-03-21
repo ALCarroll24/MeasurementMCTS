@@ -6,6 +6,7 @@ from ooi import OOI
 from vkf import VectorizedStaticKalmanFilter
 from mcts.mcts import MCTS
 from mcts.hash import hash_action, hash_state
+from mcts.tree_viz import render_graph, render_pyvis
 import time
 
 class ToyMeasurementControl:
@@ -19,17 +20,17 @@ class ToyMeasurementControl:
         self.action_space_sample_heuristic = 'uniform_discrete'
         self.velocity_options = 5  # number of discrete options for velocity
         self.steering_angle_options = 5  # number of discrete options for steering angle
-        self.horizon = 10 # length of the planning horizon
-        self.random_iterations = 10  # number of random iterations for MCTS
+        self.horizon = 50 # length of the planning horizon
+        self.random_iterations = 1  # number of random iterations for MCTS
         
         # Create a plotter object
         self.ui = MatPlotLibUI(update_rate=self.hz)
         
         # Create a car object
-        self.car = Car(self.ui, np.array([30.0, 30.0]), 90, self.hz)
+        self.car = Car(self.ui, np.array([50.0, 30.0]), 90, self.hz)
         
         # Create an OOI object
-        self.ooi = OOI(self.ui, car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
+        self.ooi = OOI(self.ui, position=(50,50), car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
         
         # Create a Static Vectorized Kalman Filter object
         self.vkf = VectorizedStaticKalmanFilter(np.array([50]*8), np.diag([8]*8), 4.0)
@@ -51,13 +52,16 @@ class ToyMeasurementControl:
             mcts = MCTS(initial_obs=self.get_state(), env=self, K=0.3**5,
                         _hash_action=hash_action, _hash_state=hash_state, 
                         random_iterations=self.random_iterations)
-            mcts.learn(100, progress_bar=False)
+            mcts.learn(10, progress_bar=False)
             action_vector = mcts.best_action()
-            print("Past MCTS")
+            print("MCTS Action: ", action_vector)
+            # render_graph(mcts.root, open=False)
+            render_pyvis(mcts.root)
+            
             
             ############################ MANUAL CONTROL ############################
             # Get the control inputs from the arrow keys, pass them to the car for update
-            relative_action_vector = self.car.get_arrow_key_control()
+            # relative_action_vector = self.car.get_arrow_key_control()
             # action_vector = self.car.add_input(relative_action_vector, self.last_action)   # This adds the control input rather than directly setting it (easier for keyboard control)
             
             # Update the car's state based on the control inputs
@@ -94,7 +98,7 @@ class ToyMeasurementControl:
         new_car_state = self.car.update(self.period, action, simulate=True, starting_state=car_state)
         
         # Get the observation from the OOI, pass it to the KF for update
-        observable_corners, indeces = self.ooi.get_noisy_observation(new_car_state)
+        observable_corners, indeces = self.ooi.get_noisy_observation(new_car_state, draw=False)
         new_mean, new_cov = self.vkf.update(observable_corners, indeces, new_car_state, 
                                             simulate=True, s_k=corner_means, P_k=corner_cov)
         
