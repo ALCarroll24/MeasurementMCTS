@@ -7,6 +7,7 @@ from vkf import VectorizedStaticKalmanFilter
 from mcts.mcts import MCTS
 from mcts.hash import hash_action, hash_state
 from mcts.tree_viz import render_graph, render_pyvis
+from flask_server import FlaskServer
 import time
 
 class ToyMeasurementControl:
@@ -37,41 +38,83 @@ class ToyMeasurementControl:
         
         # Save the last action (mainly used for relative manual control)
         self.last_action = np.array([0.0, 0.0])
+        
+        # Run flask server which makes web MCTS tree display and communicates clicked nodes
+        self.flask_server = FlaskServer()
+        self.flask_server.run_thread()
+        self.last_node_clicked = None
+        self.last_node_hash_clicked = None
+        
+        # Flag for whether simulated state is being drawn
+        self.drawing_simulated_state = False
 
 
     def run(self): 
     # Loop until matplotlib window is closed (handled by the UI class)
         while(True):
-        
-            # Get the observation from the OOI, pass it to the KF for update
-            observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state())
-            self.vkf.update(observable_corners, indeces, self.car.get_state())
             
-            ############################ AUTONOMOUS CONTROL ############################
-            # Create an MCTS object
-            mcts = MCTS(initial_obs=self.get_state(), env=self, K=0.3**5,
-                        _hash_action=hash_action, _hash_state=hash_state, 
-                        random_iterations=self.random_iterations)
-            mcts.learn(10, progress_bar=False)
-            action_vector = mcts.best_action()
-            print("MCTS Action: ", action_vector)
-            # render_graph(mcts.root, open=False)
-            render_pyvis(mcts.root)
+            # Only update controls if the UI is not paused
+            if not self.ui.paused:
+                
+                # Get the observation from the OOI, pass it to the KF for update
+                observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state())
+                self.vkf.update(observable_corners, indeces, self.car.get_state())
+                
+                ############################ AUTONOMOUS CONTROL ############################
+                # Create an MCTS object
+                mcts = MCTS(initial_obs=self.get_state(), env=self, K=0.3**5,
+                            _hash_action=hash_action, _hash_state=hash_state, 
+                            random_iterations=self.random_iterations)
+                mcts.learn(10, progress_bar=False)
+                action_vector = mcts.best_action()
+                print("MCTS Action: ", action_vector)
+                # render_graph(mcts.root, open=False)
+                render_pyvis(mcts.root)
+                
+                
+                ############################ MANUAL CONTROL ############################
+                # Get the control inputs from the arrow keys, pass them to the car for update
+                # relative_action_vector = self.car.get_arrow_key_control()
+                # action_vector = self.car.add_input(relative_action_vector, self.last_action)   # This adds the control input rather than directly setting it (easier for keyboard control)
+                
+                # Update the car's state based on the control inputs
+                self.car.update(self.period, action_vector)
+                
+                self.drawing_simulated_state = False
+                
+            else:
+                # Check if a node has been clicked
+                if self.last_node_hash_clicked != self.flask_server.node_clicked:
+                    
+                    clicked_node = mcts.get_node(self.flask_server.node_clicked)
+                    
+                    if clicked_node is None:
+                        print("Node not found")
+                        print("Either refresh (viewing old tree) or click on decision node (not random node)")
+                    else:
+                        self.drawing_simulated_state = True
+                        self.last_node_clicked = clicked_node
+                        self.last_node_hash_clicked = self.flask_server.node_clicked
             
+            # Draw either simulated state or current state
+            if self.drawing_simulated_state:
+                # Update displays based on clicked node
+                self.car.draw_state(self.last_node_clicked.state[0])
+                self.vkf.draw_state(self.last_node_clicked.state[1], self.last_node_clicked.state[2], self.ui)
+                self.ooi.draw() # Just draw rectangles for now
+            else:
+                # Update current state displays
+                self.car.draw()
+                self.ooi.draw()
+                self.vkf.draw(self.ui)
             
-            ############################ MANUAL CONTROL ############################
-            # Get the control inputs from the arrow keys, pass them to the car for update
-            # relative_action_vector = self.car.get_arrow_key_control()
-            # action_vector = self.car.add_input(relative_action_vector, self.last_action)   # This adds the control input rather than directly setting it (easier for keyboard control)
-            
-            # Update the car's state based on the control inputs
-            self.car.update(self.period, action_vector)
-        
-            # Update the displays, and pause for the period
-            self.car.draw()
-            self.ooi.draw()
-            self.vkf.draw(self.ui)
+            # Update the ui to display the new state
             self.ui.update()
+            
+            # Check for shutdown flag
+            if self.ui.shutdown:
+                self.flask_server.stop_flask()
+                break
             
     def get_state(self, horizon=0) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
         '''

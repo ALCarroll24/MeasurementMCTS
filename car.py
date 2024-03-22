@@ -66,6 +66,15 @@ class Car:
         self.ui.draw_arrow(self.position, self.position + np.array([np.cos(self.yaw - np.radians(self.max_bearing))*self.max_range,
                                                                     np.sin(self.yaw - np.radians(self.max_bearing))*self.max_range]))
         
+    def draw_state(self, state):
+        # Draw the car as a rectangle in the UI
+        self.ui.draw_rectangle(state[0:2], self.length, self.width, state[2])
+                               
+        # Draw range and bearing indicators
+        self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[2] + np.radians(self.max_bearing))*self.max_range,
+                                                                np.sin(state[2] + np.radians(self.max_bearing))*self.max_range]))
+        self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[2] - np.radians(self.max_bearing))*self.max_range,
+                                                                np.sin(state[2] - np.radians(self.max_bearing))*self.max_range]))
         
     def test_actions(self):
         # Test drive the car around using a for loop

@@ -36,6 +36,25 @@ class MCTS:
         self._initialize_hash(_hash_action, _hash_state)
         self.random_iterations = random_iterations
 
+    def get_node(self, node_hash: int) -> Optional[DecisionNode]:
+        """
+        Returns the node from the tree given its hash
+
+        :param node_hash: (int) hash of the node to retrieve
+        :return: (DecisionNode) the node corresponding to the hash
+        """
+        def _get_node(node: DecisionNode, node_hash: int) -> Optional[DecisionNode]:
+            if node.__hash__() == node_hash:
+                return node
+            for _, random_node in node.children.items():
+                for _, next_decision_node in random_node.children.items():
+                    found_node = _get_node(next_decision_node, node_hash)
+                    if found_node is not None:
+                        return found_node
+            return None
+
+        return _get_node(self.root, node_hash)
+
     def _initialize_hash(
         self, 
         _hash_action: Callable[[Any], Tuple],

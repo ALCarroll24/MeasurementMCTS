@@ -8,7 +8,7 @@ class MatPlotLibUI:
     def __init__(self, update_rate=10, figsize=(8, 8), async_loop=False):
         # Initialize the Matplotlib figure and axes
         self.fig, self.ax = plt.subplots(figsize=figsize)
-        self.fig.canvas.mpl_connect('button_press_event', self.on_click)
+        # self.fig.canvas.mpl_connect('button_press_event', self.on_click)
         self.fig.canvas.mpl_connect('close_event', self.handle_close)
         self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
         
@@ -16,6 +16,7 @@ class MatPlotLibUI:
         play_button_ax = self.fig.add_axes([0.3, 0.9, 0.2, 0.07])  # Adjust as necessary
         self.play_button = Button(play_button_ax, 'Play/Pause', color='lightgoldenrodyellow', hovercolor='0.975')
         self.play_button.on_clicked(self.on_play_button_click)
+        self.paused = False
         
         viz_button_ax = self.fig.add_axes([0.52, 0.9, 0.2, 0.07])  # Adjust as necessary
         self.viz_button = Button(viz_button_ax, 'Visualize', color='lightgoldenrodyellow', hovercolor='0.975')
@@ -41,7 +42,7 @@ class MatPlotLibUI:
         # self.thread.start()
         
         # Flag for stopping the plotting loop
-        self.run_loop = True
+        self.shutdown = False
         
         # If async_loop is True, start the asynchronous plotting loop
         if async_loop:
@@ -49,7 +50,7 @@ class MatPlotLibUI:
 
     # Runs a loop to update the plot asynchronously
     def start_async_loop(self):
-        while self.run_loop:
+        while not self.shutdown:
             # Update the plot every 1/rate seconds
             # self.draw_rectangle((50, 50), 20, 20, np.radians(45))
             self.draw_ellipse((50, 50), 20, 10, np.radians(45))
@@ -63,15 +64,11 @@ class MatPlotLibUI:
         self.update_display()
         plt.draw()
         plt.pause(self.period)
-        
-        # Exit if the window is closed
-        if self.run_loop is False:
-            exit()
 
     def handle_close(self, event):
         # Handle what happens when the window is closed
         print("Matplotlib window closed.")
-        self.run_loop = False  # Set a global flag to stop the main loop
+        self.shutdown = True  # Set a global flag to stop the main loop
 
     def draw_rectangle(self, center, width, length, angle=0, color='r'):
         """
@@ -163,7 +160,8 @@ class MatPlotLibUI:
         self.patches = []
 
     def on_play_button_click(self, event):
-        print("Button clicked")
+        print("play/pause button clicked")
+        self.paused = not self.paused
         
     def on_viz_button_click(self, event):
         print("Visualize button clicked")

@@ -4,6 +4,7 @@ import argparse
 import os
 from pyvis.network import Network
 import json
+import numpy as np
 
 def dir_path(string):
     if os.path.exists(string):
@@ -39,7 +40,24 @@ def render_graph(root, open=True):
 
 def add_nodes_and_edges_pyvis(node, net, parent_hash=None):
     node_hash = str(node.__hash__())
-    net.add_node(node_hash, label=name(node))
+    
+    # If this is a random node, make it square
+    if "RandomNode" in str(type(node)):
+        label = "Action: " + "\n" + str(np.around(node.action, 2)) + "\n" + \
+            "Reward: " + "\n" + str(round(node.reward, 2)) + "\n" + \
+            "Cumulative Reward: " + "\n" + str(round(node.cumulative_reward, 2)) + "\n" + \
+            "Visits: " + "\n" + str(round(node.visits, 2))
+        net.add_node(node_hash, label=label, shape='square')
+    else:
+        # Get corner covariance diagonals
+        corner_covariance = np.diag(node.state[2])
+        label = "Corner 1 Variance: " + "\n" + str(np.around(corner_covariance[0:2], 2)) + "\n" + \
+            "Corner 2 Variance: " + "\n" + str(np.around(corner_covariance[2:4], 2)) + "\n" + \
+            "Corner 3 Variance: " + "\n" + str(np.around(corner_covariance[4:6], 2)) + "\n" + \
+            "Corner 4 Variance: " + "\n" + str(np.around(corner_covariance[6:8], 2)) + "\n" + \
+            "Reward: " + "\n" + str(round(node.reward, 2)) + "\n" + \
+            "Visits: " + "\n" + str(round(node.visits, 2))
+        net.add_node(node_hash, label=label)
     
     if parent_hash is not None:
         net.add_edge(parent_hash, node_hash)
@@ -48,7 +66,7 @@ def add_nodes_and_edges_pyvis(node, net, parent_hash=None):
         add_nodes_and_edges_pyvis(child, net, node_hash)
 
 def render_pyvis(root):
-    net = Network(height="750px", width="100%", directed=True)
+    net = Network(height="1000px", width="100%", directed=True)
     net.force_atlas_2based()
     add_nodes_and_edges_pyvis(root, net)
     
@@ -59,12 +77,18 @@ def render_pyvis(root):
       "layout": {
         "hierarchical": {
           "enabled": True,
-          "levelSeparation": 130,
-          "nodeSpacing": 50,
+          "levelSeparation": 140,
+          "nodeSpacing": 250,
           "treeSpacing": 25,
           "direction": "LR", # UD for Up-Down, DU for Down-Up, LR for Left-Right, RL for Right-Left
           "sortMethod": "directed" # hubsize, directed
         }
+      },
+      "physics": {
+        "enabled": False,
+      },
+      "interaction": {
+        "dragNodes": False,
       }
     }
     options_json = json.dumps(hierarchical_options)

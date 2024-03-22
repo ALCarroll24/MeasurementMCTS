@@ -111,5 +111,5 @@ class RandomNode:
 
     def __repr__(self):
         mean_rew = round(self.cumulative_reward/(self.visits+1), 2)
-        s = "action: {}\nmean_reward: {}\nvisits: {}".format(self.action, mean_rew, self.visits)
+        s = "action: {}\ncumulative reward: {}\nvisits: {}".format(self.action, mean_rew, self.visits)
         return s

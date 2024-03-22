@@ -130,6 +130,23 @@ class VectorizedStaticKalmanFilter:
             
             # Old circle drawing method
             # ui.draw_circle(self.s_k[i:i+2], avg_var, color='g')
+    
+    # Draw the state on the UI
+    def draw_state(self, mean, cov, ui):
+        for i in range(0, self.s_dim, 2):
+            # For now average the variance of the x and y components
+            avg_var = np.mean([cov[i, i], cov[i+1, i+1]])
+            
+            # Find the eigenvectors and eigenvalues of the covariance matrix
+            eig_vals, eig_vecs = np.linalg.eig(cov[i:i+2, i:i+2])
+            
+            # Calculate the angle of the eigenvector with the largest eigenvalue
+            angle = np.arctan2(eig_vecs[1, np.argmax(eig_vals)], eig_vecs[0, np.argmax(eig_vals)])
+            
+            # Draw the mean point and covariance ellipse
+            ui.draw_point(mean[i:i+2], color='g')
+            ui.draw_ellipse(mean[i:i+2], eig_vals[0], eig_vals[1], angle=angle, color='b')
+            
             
     def get_mean(self):
         return self.s_k
