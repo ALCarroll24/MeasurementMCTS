@@ -21,8 +21,8 @@ class ToyMeasurementControl:
         self.action_space_sample_heuristic = 'uniform_discrete'
         self.velocity_options = 5  # number of discrete options for velocity
         self.steering_angle_options = 5  # number of discrete options for steering angle
-        self.horizon = 2 # length of the planning horizon
-        self.random_iterations = 1  # number of random iterations for MCTS
+        self.horizon = 30 # length of the planning horizon
+        self.random_iterations = 100  # number of random iterations for MCTS (limited by horizon anyways)
         self.learn_iterations = 5  # number of learning iterations for MCTS
         
         # Create a plotter object
@@ -58,14 +58,14 @@ class ToyMeasurementControl:
             if not self.ui.paused:
                 
                 # Get the observation from the OOI, pass it to the KF for update
-                observable_corners, indeces = self.ooi.get_observation(self.car.get_state())
+                observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state())
                 self.vkf.update(observable_corners, indeces, self.car.get_state())
                 
                 ############################ AUTONOMOUS CONTROL ############################
                 # Create an MCTS object
-                print("NEW MCTS ITERATION-------------------")
-                print()
-                print("Initial State: ", self.get_state())
+                # print("NEW MCTS ITERATION-------------------")
+                # print()
+                # print("Initial State: ", self.get_state())
                 mcts = MCTS(initial_obs=self.get_state(), env=self, K=0.3**5,
                             _hash_action=hash_action, _hash_state=hash_state, 
                             random_iterations=self.random_iterations)
@@ -147,7 +147,7 @@ class ToyMeasurementControl:
         new_car_state = self.car.update(self.period, action, simulate=True, starting_state=car_state)
         
         # Get the observation from the OOI, pass it to the KF for update
-        observable_corners, indeces = self.ooi.get_noisy_observation(new_car_state, draw=False)
+        observable_corners, indeces = self.ooi.get_observation(new_car_state, draw=False)
         new_mean, new_cov = self.vkf.update(observable_corners, indeces, new_car_state, 
                                             simulate=True, s_k_=corner_means, P_k_=corner_cov)
         
