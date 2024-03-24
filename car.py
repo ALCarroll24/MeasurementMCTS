@@ -26,9 +26,10 @@ class Car:
         velocity, steering_angle = action
             
         # If we are doing forward simulation, we need to pass in the starting state
+        # MUY IMPORTANTE - take a copy of the state, otherwise we will be modifying the original state object
         if simulate is not None and starting_state is not None:
-            position = starting_state[0:2]
-            yaw = starting_state[2]
+            position = np.copy(starting_state[0:2])
+            yaw = np.copy(starting_state[2])
         else:
             position = self.position
             yaw = self.yaw

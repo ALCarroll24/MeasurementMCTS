@@ -21,8 +21,9 @@ class ToyMeasurementControl:
         self.action_space_sample_heuristic = 'uniform_discrete'
         self.velocity_options = 5  # number of discrete options for velocity
         self.steering_angle_options = 5  # number of discrete options for steering angle
-        self.horizon = 50 # length of the planning horizon
+        self.horizon = 2 # length of the planning horizon
         self.random_iterations = 1  # number of random iterations for MCTS
+        self.learn_iterations = 5  # number of learning iterations for MCTS
         
         # Create a plotter object
         self.ui = MatPlotLibUI(update_rate=self.hz)
@@ -57,18 +58,20 @@ class ToyMeasurementControl:
             if not self.ui.paused:
                 
                 # Get the observation from the OOI, pass it to the KF for update
-                observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state())
+                observable_corners, indeces = self.ooi.get_observation(self.car.get_state())
                 self.vkf.update(observable_corners, indeces, self.car.get_state())
                 
                 ############################ AUTONOMOUS CONTROL ############################
                 # Create an MCTS object
+                print("NEW MCTS ITERATION-------------------")
+                print()
+                print("Initial State: ", self.get_state())
                 mcts = MCTS(initial_obs=self.get_state(), env=self, K=0.3**5,
                             _hash_action=hash_action, _hash_state=hash_state, 
                             random_iterations=self.random_iterations)
-                mcts.learn(10, progress_bar=False)
+                mcts.learn(self.learn_iterations, progress_bar=False)
                 action_vector = mcts.best_action()
                 print("MCTS Action: ", action_vector)
-                # render_graph(mcts.root, open=False)
                 render_pyvis(mcts.root)
                 
                 
@@ -95,6 +98,7 @@ class ToyMeasurementControl:
                         self.drawing_simulated_state = True
                         self.last_node_clicked = clicked_node
                         self.last_node_hash_clicked = self.flask_server.node_clicked
+                        print("Node clicked: \n", self.last_node_clicked)
             
             # Draw either simulated state or current state
             if self.drawing_simulated_state:
@@ -131,6 +135,8 @@ class ToyMeasurementControl:
         :param action: (np.ndarray) the control input to the car (velocity, steering angle)
         :return: (float, np.ndarray) the reward of the state-action pair, and the new state
         """
+        # print("Starting forward simulation state: ", state)
+        
         # Pull out the state elements
         car_state, corner_means, corner_cov, horizon = state
         
@@ -143,7 +149,7 @@ class ToyMeasurementControl:
         # Get the observation from the OOI, pass it to the KF for update
         observable_corners, indeces = self.ooi.get_noisy_observation(new_car_state, draw=False)
         new_mean, new_cov = self.vkf.update(observable_corners, indeces, new_car_state, 
-                                            simulate=True, s_k=corner_means, P_k=corner_cov)
+                                            simulate=True, s_k_=corner_means, P_k_=corner_cov)
         
         # Combine the updated car state, mean, covariance and horizon into a new state
         new_state = (new_car_state, new_mean, new_cov, horizon)

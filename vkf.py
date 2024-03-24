@@ -60,15 +60,19 @@ class VectorizedStaticKalmanFilter:
         # return self.p_dev**2 * np.eye(len(obs_indices) * 2)
     
     # Update step of KF, get posterior distribution, function of measurement and sensor
-    def update(self, z, obs_indices, car_state, simulate=False, s_k=None, P_k=None):
+    def update(self, z, obs_indices, car_state, simulate=False, s_k_=None, P_k_=None):
         # Pull out car position and yaw
         car_pos = car_state[0:2]
         car_yaw = car_state[2]
         
         # If we are not simulating use the class variables, otherwise use the passed in variables
         if not simulate:
-            s_k = self.s_k
-            P_k = self.P_k
+            s_k = np.copy(self.s_k)
+            P_k = np.copy(self.P_k)
+        else:
+            # MUY IMPORTANTE - take a copy of the state, otherwise we will be modifying the original state object
+            s_k = np.copy(s_k_)
+            P_k = np.copy(P_k_)
         
         # Get function outputs beforehand
         H = self.H(obs_indices)

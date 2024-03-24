@@ -138,17 +138,23 @@ class MCTS:
         internal_env = self.env
 
         while (not decision_node.is_final): # and decision_node.visits > 1:
+            # print("Starting Decision node: ", decision_node)
+            
             # Get action from this decision node using UCB
             a = self.select(decision_node)
+            # print(f"Action selected: {a}")
 
             # Create new random node or get the existing one from the action
             new_random_node = decision_node.next_random_node(a, self._hash_action)
+            # print(f"New Random node: {new_random_node}")
 
             # Create new decision node using environment step function
             (new_decision_node, r) = self.select_outcome(internal_env, new_random_node)
+            # print(f"New Decision node: {new_decision_node}")
 
             # Ensure that the decision node is connected to its parent random node (not sure why it wouldn't be though...?)
             new_decision_node = self.update_decision_node(new_decision_node, new_random_node, self._hash_state)
+            # print(f"Updated Decision node: {new_decision_node}")
 
             # Set the reward of the new nodes
             new_decision_node.reward = r
@@ -315,6 +321,9 @@ class MCTS:
             iterations = range(Nsim)
         for _ in iterations:
             
+            # print("Next Learning Iteration")
+            # print("Node hash: ", self.root.__hash__())
+            # print("Root node: ", self.root)
             self.grow_tree()
 
     # TODO: visualize the MCTS process
