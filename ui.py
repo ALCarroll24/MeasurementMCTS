@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.widgets import Button
 import threading
+import webbrowser
 
 class MatPlotLibUI:
     def __init__(self, update_rate=10, figsize=(8, 8), async_loop=False):
@@ -165,6 +166,7 @@ class MatPlotLibUI:
         
     def on_viz_button_click(self, event):
         print("Visualize button clicked")
+        webbrowser.open('http://127.0.0.1:5000')
 
     def on_click(self, event):
         """
