@@ -215,6 +215,45 @@ class MCTS:
         new_state, r, done = env.step(random_node.parent.state, random_node.action)
         return DecisionNode(state=new_state, parent=random_node, is_final=done), r
 
+    # def select(
+    #     self, 
+    #     x: DecisionNode,
+    # ) -> Any:
+    #     """
+    #     Selects the action to play from the current decision node
+
+    #     :param x: (DecisionNode) current decision node
+    #     :return: action to play
+    #     """
+    #     scoring = False
+    #     # If there are no random node children (actions) of this decision node
+    #     if len(x.children) == 0:            
+    #         # Create all of the random nodes for the actions and create the next decision node (state) to get reward
+    #         for a in self.env.get_all_actions():
+    #             # Use environment to get the next state and reward
+    #             new_state, r, done = self.env.step(x.state, a)
+                
+    #             # Add the random node (action) to the decision node
+    #             x.add_children(RandomNode(a, parent=x), hash_preprocess=self._hash_action)
+                
+    #             # Add the decision node (state) as a child of the random node we just made
+    #             new_decision_node = DecisionNode(state=new_state, parent=x.children[self._hash_action(a)], is_final=done)
+    #             x.children[self._hash_action(a)].add_children(new_decision_node, hash_preprocess=self._hash_state)
+
+    #     def scoring(k):
+    #         if x.children[k].visits > 0:
+    #             print("In scoring function")
+    #             scoring = True
+    #             return x.children[k].cumulative_reward/x.children[k].visits + \
+    #                 self.K*np.sqrt(np.log(x.visits)/x.children[k].visits)
+    #         else:
+    #             return np.inf
+
+    #     a = max(x.children, key=scoring)
+    #     if scoring:
+    #         print("Action selected: ", a)
+    #     return a
+    
     def select(
         self, 
         x: DecisionNode,

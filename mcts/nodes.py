@@ -90,11 +90,13 @@ class RandomNode:
         self, 
         action: Any, 
         parent: DecisionNode =None,
+        cumulative_reward: float = 0.0,
+        visits: int = 0
     ):
         self.action = action
         self.children: Dict[Any, DecisionNode] = {}
-        self.cumulative_reward: float = 0.0
-        self.visits: int = 0
+        self.cumulative_reward: float = cumulative_reward
+        self.visits: int = visits
         self.parent: DecisionNode = parent
 
     def add_children(

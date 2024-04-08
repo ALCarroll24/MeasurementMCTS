@@ -19,17 +19,17 @@ class ToyMeasurementControl:
         # Parameters
         self.final_cov_trace = 0.1
         self.action_space_sample_heuristic = 'uniform_discrete'
-        self.velocity_options = 5  # number of discrete options for velocity
-        self.steering_angle_options = 5  # number of discrete options for steering angle
-        self.horizon = 30 # length of the planning horizon
+        self.velocity_options = 3  # number of discrete options for velocity
+        self.steering_angle_options = 3  # number of discrete options for steering angle
+        self.horizon = 5 # length of the planning horizon
         self.random_iterations = 100  # number of random iterations for MCTS (limited by horizon anyways)
-        self.learn_iterations = 5  # number of learning iterations for MCTS
-        
+        self.learn_iterations = 100  # number of learning iterations for MCTS
+
         # Create a plotter object
         self.ui = MatPlotLibUI(update_rate=self.hz)
         
         # Create a car object
-        self.car = Car(self.ui, np.array([50.0, 30.0]), 90, self.hz)
+        self.car = Car(self.ui, np.array([50.0, 40.0]), 90, self.hz)
         
         # Create an OOI object
         self.ooi = OOI(self.ui, position=(50,50), car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
@@ -203,6 +203,19 @@ class ToyMeasurementControl:
             steering_angle = np.random.choice(np.linspace(-self.car.max_steering_angle, self.car.max_steering_angle, self.steering_angle_options))
             
         return np.array([velocity, steering_angle])
+    
+    def get_all_actions(self) -> np.ndarray:
+        """
+        Get all possible actions in the action space.
+        
+        :return: (np.ndarray) the possible actions
+        """
+        # Create a meshgrid of all possible actions
+        velocity = np.linspace(0, self.car.max_velocity, self.velocity_options)
+        steering_angle = np.linspace(-self.car.max_steering_angle, self.car.max_steering_angle, self.steering_angle_options)
+        actions = np.array(np.meshgrid(velocity, steering_angle)).T.reshape(-1, 2)
+            
+        return actions
     
     
 if __name__ == '__main__':  

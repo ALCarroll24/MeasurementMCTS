@@ -44,7 +44,7 @@ def add_nodes_and_edges_pyvis(node, net, parent_hash=None):
     # If this is a random node, make it square
     if "RandomNode" in str(type(node)):
         label = "Action: " + "\n" + str(np.around(node.action, 2)) + "\n" + \
-            "Reward: " + "\n" + str(round(node.reward, 2)) + "\n" + \
+            "Mean Reward: " + "\n" + str(round(node.cumulative_reward/(node.visits+1), 2)) + "\n" + \
             "Cumulative Reward: " + "\n" + str(round(node.cumulative_reward, 2)) + "\n" + \
             "Visits: " + "\n" + str(round(node.visits, 2))
         net.add_node(node_hash, label=label, shape='square')
