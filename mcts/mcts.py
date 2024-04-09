@@ -28,6 +28,8 @@ class MCTS:
         _hash_action: Callable[[Any], Tuple],
         _hash_state: Callable[[Any], Tuple],
         random_iterations: int = 100,
+        expansion_branch_factor = 2,
+        deterministic: bool = True,
     ):
         
         self.env = env
@@ -35,6 +37,8 @@ class MCTS:
         self.root = DecisionNode(state=initial_obs, is_root=True)
         self._initialize_hash(_hash_action, _hash_state)
         self.random_iterations = random_iterations
+        self.expansion_branch_factor = expansion_branch_factor
+        self.deterministic = deterministic
 
     def get_node(self, node_hash: int) -> Optional[DecisionNode]:
         """
@@ -137,7 +141,9 @@ class MCTS:
         decision_node = self.root
         internal_env = self.env
 
-        while (not decision_node.is_final): # and decision_node.visits > 1:
+        ## SELECTION PHASE
+        # While goal has not been reached and we are not at a leaf node (no children)
+        while (not decision_node.is_final) and len(decision_node.children) > 0:
             # print("Starting Decision node: ", decision_node)
             
             # Get action from this decision node using UCB
@@ -148,8 +154,15 @@ class MCTS:
             new_random_node = decision_node.next_random_node(a, self._hash_action)
             # print(f"New Random node: {new_random_node}")
 
-            # Create new decision node using environment step function
-            (new_decision_node, r) = self.select_outcome(internal_env, new_random_node)
+            # Create new decision node using environment step function, if stochastic, use environment to get the next state and reward
+            if not self.deterministic:
+                (new_decision_node, r) = self.select_outcome(internal_env, new_random_node)
+            
+            # If deterministic, we have already simulated this node, so just get the child decision node
+            else:
+                new_decision_node = list(new_random_node.children.values())[0]
+                r = new_decision_node.reward
+            
             # print(f"New Decision node: {new_decision_node}")
 
             # Ensure that the decision node is connected to its parent random node (not sure why it wouldn't be though...?)
@@ -163,13 +176,30 @@ class MCTS:
             # Continue the tree traversal
             decision_node = new_decision_node
 
+
+        ### EXPANSION PHASE
+        # If have already evaluated this node (visited more than once), Add a new node to the tree and evaluate it instead
+        if decision_node.visits > 0:
+            for a in range(self.expansion_branch_factor):
+                # Random action -> random node -> environment step -> decision node
+                a = self.env.action_space_sample()
+                new_random_node = decision_node.next_random_node(a, self._hash_action)
+                (new_decision_node, r) = self.select_outcome(internal_env, new_random_node)
+                new_decision_node = self.update_decision_node(new_decision_node, new_random_node, self._hash_state)
+                new_decision_node.reward = r
+                new_random_node.reward = r
+
         # Add a visit since we ended traversal on this decision node
         decision_node.visits += 1
         
+        
+        ### SIMULATION PHASE
         # Currently utilizing random actions to evaluate reward (general evaluation, the monte carlo part)
         cumulative_reward = self.evaluate(internal_env, decision_node.state)
         # cumulative_reward = self.env.evaluate(decision_node.state)
         
+        
+        ### BACKPROPAGATION PHASE
         # Back propagate the reward back to the root
         while not decision_node.is_root:
             random_node = decision_node.parent
@@ -265,15 +295,15 @@ class MCTS:
         :return: action to play
         """
         # TODO: Why is this 2? This would make the branching factor 2 in selection
-        if x.visits <= 2:
-            # This removes children for some reason????????
-            # x.children = {a: RandomNode(a, parent=x) for a in range(self.env.action_space_sample())}
+        # if x.visits <= 2:
+        #     # This removes children for some reason????????
+        #     # x.children = {a: RandomNode(a, parent=x) for a in range(self.env.action_space_sample())}
             
-            # Action space sample currently returns a single action
-            a = self.env.action_space_sample()
+        #     # Action space sample currently returns a single action
+        #     a = self.env.action_space_sample()
             
-            # Children were changed before, but random nodes are created in the next step... confusion
-            x.add_children(RandomNode(a, parent=x), hash_preprocess=self._hash_action)
+        #     # Children were changed before, but random nodes are created in the next step... confusion
+        #     x.add_children(RandomNode(a, parent=x), hash_preprocess=self._hash_action)
 
         def scoring(k):
             if x.children[k].visits > 0:

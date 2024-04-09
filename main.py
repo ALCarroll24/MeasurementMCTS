@@ -23,6 +23,7 @@ class ToyMeasurementControl:
         self.steering_angle_options = 3  # number of discrete options for steering angle
         self.horizon = 5 # length of the planning horizon
         self.random_iterations = 100  # number of random iterations for MCTS (limited by horizon anyways)
+        self.expansion_branch_factor = 3  # number of branches when expanding a node (at least two for algorithm to work properly)
         self.learn_iterations = 100  # number of learning iterations for MCTS
 
         # Create a plotter object
@@ -67,7 +68,8 @@ class ToyMeasurementControl:
                 # print()
                 # print("Initial State: ", self.get_state())
                 mcts = MCTS(initial_obs=self.get_state(), env=self, K=0.3**5,
-                            _hash_action=hash_action, _hash_state=hash_state, 
+                            _hash_action=hash_action, _hash_state=hash_state,
+                            expansion_branch_factor=self.expansion_branch_factor,
                             random_iterations=self.random_iterations)
                 mcts.learn(self.learn_iterations, progress_bar=False)
                 action_vector = mcts.best_action()
