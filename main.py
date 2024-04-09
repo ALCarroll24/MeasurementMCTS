@@ -76,6 +76,10 @@ class ToyMeasurementControl:
                 print("MCTS Action: ", action_vector)
                 render_pyvis(mcts.root)
                 
+                # Uncomment for single iteration plotting
+                # self.flask_server.stop_flask()
+                # exit()
+                
                 
                 ############################ MANUAL CONTROL ############################
                 # Get the control inputs from the arrow keys, pass them to the car for update
