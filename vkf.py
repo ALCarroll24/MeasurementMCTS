@@ -1,30 +1,31 @@
 import numpy as np
+import torch
 from math import *
 
 class VectorizedStaticKalmanFilter:
     def __init__(self, _s, _P, p_dev):
         # Load noise scaling values
-        self.p_dev = np.array(p_dev)
+        self.p_dev = torch.tensor(p_dev)
 
         # Dimension of state and observation vectors
         self.s_dim = 8
         self.z_dim = 8
 
         # Load in the initial state vector and covariance matrix
-        self.s_k = _s
-        self.P_k = _P
+        self.s_k = _s  # Ensure _s is a tensor
+        self.P_k = _P  # Ensure _P is a tensor
         
     # State transition matrix, s_dim dimensional identity matrix
     def F(self):
         # Start with a two dimensional identity matrix
-        F = np.eye(self.s_dim)
+        F = torch.eye(self.s_dim)
 
         return F
     
     # Maps state space to observation space,
     # The column length is given by state dimension, but the row length is given by 2 * number of observations for x and y
     def H(self, obs_indices):
-        H = np.zeros((2 * len(obs_indices), self.s_dim)) # 2 * len(obs_indices) since each observation has an x and y component
+        H = torch.zeros((2 * len(obs_indices), self.s_dim)) # 2 * len(obs_indices) since each observation has an x and y component
         for i, index in enumerate(obs_indices):
             col_index = (index + 1) * 2 - 2     # Function mapping index of observation to index of diagonal point list of (x,y)
             
@@ -34,19 +35,22 @@ class VectorizedStaticKalmanFilter:
     
     # Measurement noise, size needs to be 2 * number of observations for x and y (row length = column length)
     def R(self, z, obs_indices, car_pos, car_yaw):
-        R = np.zeros((2 * len(obs_indices), 2 * len(obs_indices)))
+        R = torch.zeros((2 * len(obs_indices), 2 * len(obs_indices)))
         
         # Apply range bearing sensor model for each of the corners in the OOI
         for i in range(z.shape[0] // 2):
             # Calculate the range and bearing to the corner
-            dist = max(np.linalg.norm(car_pos - z[i*2:i*2+2]), 1)
-            bearing = np.arctan2(z[i*2+1] - car_pos[1], z[i*2] - car_pos[0]) - car_yaw #TODO this may be the wrong angle
+            ooi_to_car = torch.tensor(car_pos - z[i*2:i*2+2])
+            dist = max(torch.linalg.norm(ooi_to_car), 1)
+            y = torch.tensor(z[i*2+1] - car_pos[1])
+            x = torch.tensor(z[i*2] - car_pos[0])
+            bearing = torch.atan2(y, x) - car_yaw #TODO this may be the wrong angle
             
             # Rotation matrix to rotate distribution before scaling
-            G = np.array([[np.cos(bearing), -np.sin(bearing)], [np.sin(bearing), np.cos(bearing)]])
-            
+            G = torch.tensor([[torch.cos(bearing), -torch.sin(bearing)], [torch.sin(bearing), torch.cos(bearing)]])
+
             # Magnitude matrix to scale distribution
-            M = self.p_dev**2 * np.diag([dist, np.pi * dist])
+            M = self.p_dev**2 * torch.diag(torch.tensor([dist, torch.pi * dist]))
             
             # Calculate covariance matrix for this corner
             r = G @ M @ G.T
@@ -55,9 +59,6 @@ class VectorizedStaticKalmanFilter:
             R[i*2:i*2+2, i*2:i*2+2] = r
         
         return R
-        
-        # Old static method
-        # return self.p_dev**2 * np.eye(len(obs_indices) * 2)
     
     # Update step of KF, get posterior distribution, function of measurement and sensor
     def update(self, z, obs_indices, car_state, simulate=False, s_k_=None, P_k_=None):
@@ -67,21 +68,21 @@ class VectorizedStaticKalmanFilter:
         
         # If we are not simulating use the class variables, otherwise use the passed in variables
         if not simulate:
-            s_k = np.copy(self.s_k)
-            P_k = np.copy(self.P_k)
+            s_k = self.s_k.clone()
+            P_k = self.P_k.clone()
         else:
             # MUY IMPORTANTE - take a copy of the state, otherwise we will be modifying the original state object
-            s_k = np.copy(s_k_)
-            P_k = np.copy(P_k_)
+            s_k = s_k_.clone()
+            P_k = P_k_.clone()
         
         # Get function outputs beforehand
         H = self.H(obs_indices)
         R = self.R(z, obs_indices, car_pos, car_yaw)
-        I = np.eye(self.s_dim)
+        I = torch.eye(self.s_dim)
         
         # Kalman gain
         S_k = H @ P_k @ H.T + R
-        K_k = P_k @ H.T @ np.linalg.inv(S_k)
+        K_k = P_k @ H.T @ torch.linalg.inv(S_k)
 
         # Measurement residual
         z_bar = z - H @ s_k
@@ -98,35 +99,35 @@ class VectorizedStaticKalmanFilter:
         else:
             return s_k, P_k
 
-    # Update step of KF, but with vectorized matrices
-    def update_vectorized(self, z, obs_indices, car_pos, car_yaw):
-        H = self.H(obs_indices)
-        R = self.R(z, obs_indices, car_pos, car_yaw)
-        P_vec_k = self.P_k.reshape((self.s_dim,self.s_dim))
-        I = np.eye(self.s_dim)
+    # # Update step of KF, but with vectorized matrices
+    # def update_vectorized(self, z, obs_indices, car_pos, car_yaw):
+    #     H = self.H(obs_indices)
+    #     R = self.R(z, obs_indices, car_pos, car_yaw)
+    #     P_vec_k = self.P_k.reshape((self.s_dim,self.s_dim))
+    #     I = torch.eye(self.s_dim)
         
-        S_k = H @ P_vec_k @ H.T + R
-        K_k = P_vec_k @ H.T @ np.linalg.inv(S_k)
+    #     S_k = H @ P_vec_k @ H.T + R
+    #     K_k = P_vec_k @ H.T @ torch.linalg.inv(S_k)
 
-        z_bar = z - H @ self.s_k
+    #     z_bar = z - H @ self.s_k
         
-        # Create kronecker product matrix which allows for vectorized matrix operations
-        O = np.kron(I - K_k @ H, I)
+    #     # Create kronecker product matrix which allows for vectorized matrix operations
+    #     O = np.kron(I - K_k @ H, I)
 
-        self.s_k = self.s_k + K_k @ z_bar
-        self.P_k = O @ self.P_k
+    #     self.s_k = self.s_k + K_k @ z_bar
+    #     self.P_k = O @ self.P_k
         
     # Draw the mean and covariance on the UI
     def draw(self, ui):
         for i in range(0, self.s_dim, 2):
             # For now average the variance of the x and y components
-            avg_var = np.mean([self.P_k[i, i], self.P_k[i+1, i+1]])
+            avg_var = torch.mean([self.P_k[i, i], self.P_k[i+1, i+1]])
             
             # Find the eigenvectors and eigenvalues of the covariance matrix
-            eig_vals, eig_vecs = np.linalg.eig(self.P_k[i:i+2, i:i+2])
+            eig_vals, eig_vecs = torch.linalg.eig(self.P_k[i:i+2, i:i+2])
             
             # Calculate the angle of the eigenvector with the largest eigenvalue
-            angle = np.arctan2(eig_vecs[1, np.argmax(eig_vals)], eig_vecs[0, np.argmax(eig_vals)])
+            angle = torch.atan2(eig_vecs[1, torch.argmax(eig_vals)], eig_vecs[0, torch.argmax(eig_vals)])
             
             # Draw the mean point and covariance ellipse
             ui.draw_point(self.s_k[i:i+2], color='g')
@@ -139,13 +140,13 @@ class VectorizedStaticKalmanFilter:
     def draw_state(self, mean, cov, ui):
         for i in range(0, self.s_dim, 2):
             # For now average the variance of the x and y components
-            avg_var = np.mean([cov[i, i], cov[i+1, i+1]])
+            avg_var = torch.mean([cov[i, i], cov[i+1, i+1]])
             
             # Find the eigenvectors and eigenvalues of the covariance matrix
-            eig_vals, eig_vecs = np.linalg.eig(cov[i:i+2, i:i+2])
+            eig_vals, eig_vecs = torch.linalg.eig(cov[i:i+2, i:i+2])
             
             # Calculate the angle of the eigenvector with the largest eigenvalue
-            angle = np.arctan2(eig_vecs[1, np.argmax(eig_vals)], eig_vecs[0, np.argmax(eig_vals)])
+            angle = torch.atan2(eig_vecs[1, torch.argmax(eig_vals)], eig_vecs[0, torch.argmax(eig_vals)])
             
             # Draw the mean point and covariance ellipse
             ui.draw_point(mean[i:i+2], color='g')
@@ -160,8 +161,8 @@ class VectorizedStaticKalmanFilter:
 
 if __name__ == '__main__':
     # Initial state vector, uncertainty and time
-    s = np.array([0, 0])
-    P = np.diag([0.1, 0.1])
+    s = torch.tensor([0, 0])
+    P = torch.diag(torch.tensor([0.1, 0.1]))
     std_dev = 0.1
     P_vec = P.flatten()
 
@@ -170,8 +171,8 @@ if __name__ == '__main__':
     kf_vec = VectorizedStaticKalmanFilter(s, P_vec, std_dev)
 
     # Create measurement vector
-    z = np.array([0.1, 0.1])
-    z2 = np.array([0.2, 0.2])
+    z = torch.tensor([0.1, 0.1])
+    z2 = torch.tensor([0.2, 0.2])
 
     # Update KF
     kf.update(z)

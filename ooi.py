@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 from utils import wrap_angle, wrapped_angle_diff, angle_in_interval
 
 class OOI:
@@ -66,7 +67,7 @@ class OOI:
         # Rotate corners TODO: This rotates around (0,0) and needs to be done some other way
         # rotation_matrix = np.array([[np.cos(self.yaw), -np.sin(self.yaw)], [np.sin(self.yaw), np.cos(self.yaw)]])
         # corners = np.matmul(rotation_matrix, corners.T).T
-        return corners
+        return torch.tensor(corners)
         
     def draw(self):
         # Draw main rectangle
@@ -88,9 +89,9 @@ class OOI:
         indeces = []
         for i, corner in enumerate(self.corners):
             # Calculate distance and bearing to corner
-            distance = np.linalg.norm(corner - car_position)
-            bearing = wrapped_angle_diff(np.arctan2(corner[1] - car_position[1], corner[0] - car_position[0]), car_yaw)
-            opposite_bearing = wrap_angle(np.arctan2(car_position[1] - corner[1], car_position[0] - corner[0]))
+            distance = torch.linalg.norm(corner - car_position)
+            bearing = wrapped_angle_diff(torch.atan2(corner[1] - car_position[1], corner[0] - car_position[0]), car_yaw)
+            opposite_bearing = wrap_angle(torch.atan2(car_position[1] - corner[1], car_position[0] - corner[0]))
             # print("Car yaw:", np.degrees(car_yaw), "Corner bearing:", np.degrees(np.arctan2(corner[1] - car_position[1], corner[0] - car_position[0])))
             # print("Corner:", i, "bearing:", np.degrees(bearing), "opp_bearing:", np.degrees(opposite_bearing), "interval:", np.degrees(self.corner_bearing_ranges[i, 0]), np.degrees(self.corner_bearing_ranges[i, 1]), "in_interval:", angle_in_interval(opposite_bearing, self.corner_bearing_ranges[i, 0], self.corner_bearing_ranges[i, 1]))
             
@@ -99,7 +100,7 @@ class OOI:
                 # print("Corner is ", distance - car_range, "m too far away")
                 pass
             # Check if corner is within the car's field of view
-            elif np.abs(bearing) >= car_max_bearing:
+            elif torch.abs(bearing) >= car_max_bearing:
                 # print("Bearing is", np.degrees(np.abs(bearing) - car_max_bearing), "degrees too large")
                 pass
             # Check if any observation vectors go through one of the walls
@@ -115,19 +116,21 @@ class OOI:
             for corner in observable_corners:
                 self.ui.draw_circle(corner, 0.6)
                 
-        # Convert to numpy array for later usage
-        obs_corners_vec = np.array(observable_corners).flatten()
+        # Convert list of tensors to n by 2 tensor
+        observable_corners = torch.stack(observable_corners, dim=0)
         
-        return obs_corners_vec, indeces
+        return observable_corners, indeces
     
     # Call get_observation and add noise to the observation
     def get_noisy_observation(self, car_state, draw=True):
         observable_corners, indeces = self.get_observation(car_state, draw=draw)
         
-        # Add noise to the observation
-        mean = 0
-        noisy_observable_corners = observable_corners + np.random.normal(mean, self.std_dev, observable_corners.shape)
+        # Add noise to each corner
+        noise = torch.randn(observable_corners.shape)
+        scaled_noise = noise * self.std_dev
         
+        noisy_observable_corners = observable_corners + scaled_noise
+            
         return noisy_observable_corners, indeces
         
 if __name__ == '__main__':

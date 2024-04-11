@@ -4,12 +4,12 @@ from ui import MatPlotLibUI
 from utils import wrap_angle, sat_value
 import time
 from typing import Tuple
+import torch
 
 class Car:
     def __init__(self, ui, position, yaw, update_rate, length=4.0, width=2.0, max_range=20.0, max_bearing=45.0, max_velocity=10.0, max_steering_angle=45.0):
         self.ui = ui
-        self.position = position  # x, y
-        self.yaw = np.radians(yaw)  # Orientation
+        self.state = torch.tensor([position[0], position[1], yaw])
         self.hz = update_rate
         self.period = 1.0 / self.hz
         self.length = length
@@ -20,42 +20,75 @@ class Car:
         self.max_steering_angle = max_steering_angle
         self.velocity = 0.0
         self.steering_angle = 0.0
+        
+        self.A = torch.eye(3)
+        
+    def B(self, dt, yaw):
+        return torch.tensor([[torch.cos(yaw) * dt, 0],
+                             [torch.sin(yaw) * dt, 0],
+                             [0, dt]])
+        
 
-    def update(self, dt, action,  simulate=False, starting_state=None):
-        # Pull the inputs from the action tuple
-        velocity, steering_angle = action
+    # def update(self, dt, action,  simulate=False, starting_state=None):
+    #     # Pull the inputs from the action tuple
+    #     velocity, steering_angle = action
             
-        # If we are doing forward simulation, we need to pass in the starting state
-        # MUY IMPORTANTE - take a copy of the state, otherwise we will be modifying the original state object
-        if simulate is not None and starting_state is not None:
-            position = np.copy(starting_state[0:2])
-            yaw = np.copy(starting_state[2])
-        else:
-            position = self.position
-            yaw = self.yaw
+    #     # If we are doing forward simulation, we need to pass in the starting state
+    #     # MUY IMPORTANTE - take a copy of the state, otherwise we will be modifying the original state object
+    #     if simulate is not None and starting_state is not None:
+    #         position = np.copy(starting_state[0:2])
+    #         yaw = np.copy(starting_state[2])
+    #     else:
+    #         position = self.position
+    #         yaw = self.yaw
         
-        # Update car state using the bicycle model
-        position[0] += velocity * np.cos(yaw) * dt
-        position[1] += velocity * np.sin(yaw) * dt
-        yaw += (velocity / self.length) * np.tan(steering_angle) * dt
+    #     # Update car state using the bicycle model
+    #     position[0] += velocity * np.cos(yaw) * dt
+    #     position[1] += velocity * np.sin(yaw) * dt
+    #     yaw += (velocity / self.length) * np.tan(steering_angle) * dt
         
+    #     # Saturate inputs
+    #     velocity = sat_value(velocity, self.max_velocity)
+    #     steering_angle = sat_value(steering_angle, np.radians(self.max_steering_angle))
+        
+    #     # Keep angle between [-pi, pi]
+    #     yaw = wrap_angle(yaw)
+        
+    #     # Only update state if we are not simulating
+    #     if not simulate:
+    #         self.position = position
+    #         self.yaw = yaw
+            
+    #     # Otherwise return the new state
+    #     else:
+    #         return np.array([position[0], position[1], yaw])
+            
+
+    def update(self, dt, action, simulate=False, starting_state=None):
+        dt = torch.tensor(dt)
+
         # Saturate inputs
-        velocity = sat_value(velocity, self.max_velocity)
-        steering_angle = sat_value(steering_angle, np.radians(self.max_steering_angle))
+        action[0] = torch.clamp(action[0], -self.max_velocity, self.max_velocity)
+        action[1] = torch.clamp(action[1], -torch.radians(self.max_steering_angle), torch.radians(self.max_steering_angle))
+        
+        # If we are doing forward simulation, use the provided starting state
+        if simulate and starting_state is not None:
+            state = starting_state.clone()
+        else:
+            state = self.state
+        
+        # Matrix update
+        new_state = (self.A @ state + self.B(dt, state[2]) @ action)
         
         # Keep angle between [-pi, pi]
-        yaw = wrap_angle(yaw)
+        new_state[2] = wrap_angle(state[2])
         
-        # Only update state if we are not simulating
+        # Only update the class state if not simulating
         if not simulate:
-            self.position = position
-            self.yaw = yaw
-            
-        # Otherwise return the new state
+            self.state = new_state
         else:
-            return np.array([position[0], position[1], yaw])
-            
-        
+            return new_state
+
 
     def draw(self):
         # Draw the car as a rectangle in the UI
@@ -121,7 +154,7 @@ class Car:
         return new_input
         
     def get_state(self):
-        return np.array([self.position[0], self.position[1], self.yaw])
+        return self.state
 
 if __name__ == '__main__':
     

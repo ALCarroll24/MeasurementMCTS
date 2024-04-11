@@ -9,6 +9,7 @@ from mcts.hash import hash_action, hash_state
 from mcts.tree_viz import render_graph, render_pyvis
 from flask_server import FlaskServer
 import time
+import torch
 
 class ToyMeasurementControl:
     def __init__(self):
@@ -26,24 +27,35 @@ class ToyMeasurementControl:
         self.expansion_branch_factor = 3  # number of branches when expanding a node (at least two for algorithm to work properly)
         self.learn_iterations = 100  # number of learning iterations for MCTS
 
+        # Set the default data type for tensors
+        torch.set_default_dtype(torch.float32)
+
+        # Use GPU if available
+        if torch.cuda.is_available():
+            print("Using GPU")
+            torch.set_default_device('cuda')
+        else:
+            print("Using CPU")
+            torch.set_default_device('cpu')
+
         # Create a plotter object
         self.ui = MatPlotLibUI(update_rate=self.hz)
         
         # Create a car object
-        self.car = Car(self.ui, np.array([50.0, 40.0]), 90, self.hz)
+        self.car = Car(self.ui, torch.tensor([50.0, 40.0]), 90, self.hz)
         
         # Create an OOI object
-        self.ooi = OOI(self.ui, position=(50,50), car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
+        self.ooi = OOI(self.ui, position=(50.0,50.0), car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
         
         # Create a Static Vectorized Kalman Filter object
-        self.vkf = VectorizedStaticKalmanFilter(np.array([50]*8), np.diag([8]*8), 4.0)
+        self.vkf = VectorizedStaticKalmanFilter(torch.tensor([50.0]*8), torch.diag(torch.tensor([8.0]*8)), 4.0)
         
         # Save the last action (mainly used for relative manual control)
         self.last_action = np.array([0.0, 0.0])
         
         # Run flask server which makes web MCTS tree display and communicates clicked nodes
-        self.flask_server = FlaskServer()
-        self.flask_server.run_thread()
+        # self.flask_server = FlaskServer()
+        # self.flask_server.run_thread()
         self.last_node_clicked = None
         self.last_node_hash_clicked = None
         
