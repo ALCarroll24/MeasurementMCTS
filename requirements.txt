@@ -11,3 +11,4 @@ pyvis
 flask
 requests
 snakeviz
+tensorboard

@@ -86,11 +86,13 @@ class ToyMeasurementControl:
                 mcts.learn(self.learn_iterations, progress_bar=False)
                 action_vector = mcts.best_action()
                 print("MCTS Action: ", action_vector)
+                exit()
                 render_pyvis(mcts.root)
+                print("ho")
                 
                 # Uncomment for single iteration plotting
                 # self.flask_server.stop_flask()
-                # exit()
+                exit()
                 
                 
                 ############################ MANUAL CONTROL ############################
@@ -194,33 +196,61 @@ class ToyMeasurementControl:
         car_state, corner_means, corner_cov, horizon = state
         
         # Find the sum of the diagonals
-        trace = np.trace(corner_cov)
+        trace = torch.trace(corner_cov)
         
         # Find whether the episode is done TODO: done needs to also account for horizon length
         done = trace < self.final_cov_trace
 
         # Find the reward
-        reward = -trace
+        reward = -trace.item()
         
         return reward, done
     
-    def action_space_sample(self) -> np.ndarray:
-        """
-        Sample an action from the action space.
+    # def action_space_sample(self) -> np.ndarray:
+    #     """
+    #     Sample an action from the action space.
         
-        :return: (np.ndarray) the sampled action
+    #     :return: (np.ndarray) the sampled action
+    #     """
+    #     # Uniform sampling in continuous space
+    #     if self.action_space_sample_heuristic == 'uniform_continuous':
+    #         velocity = np.random.uniform(0, self.car.max_velocity)
+    #         steering_angle = np.random.uniform(-self.car.max_steering_angle, self.car.max_steering_angle)
+            
+    #     # Uniform Discrete sampling with a specified number of options
+    #     if self.action_space_sample_heuristic == 'uniform_discrete':
+    #         velocity = np.random.choice(np.linspace(0, self.car.max_velocity, self.velocity_options))
+    #         steering_angle = np.random.choice(np.linspace(-self.car.max_steering_angle, self.car.max_steering_angle, self.steering_angle_options))
+            
+    #     return np.array([velocity, steering_angle])
+    
+
+    def action_space_sample(self) -> torch.Tensor:
+        """
+        Sample an action from the action space using PyTorch tensors.
+
+        :return: (torch.Tensor) the sampled action
         """
         # Uniform sampling in continuous space
         if self.action_space_sample_heuristic == 'uniform_continuous':
-            velocity = np.random.uniform(0, self.car.max_velocity)
-            steering_angle = np.random.uniform(-self.car.max_steering_angle, self.car.max_steering_angle)
+            velocity = torch.rand(1) * self.car.max_velocity
+            steering_angle = (torch.rand(1) * 2 - 1) * self.car.max_steering_angle  # Scale to [-max_steering_angle, max_steering_angle]
             
         # Uniform Discrete sampling with a specified number of options
-        if self.action_space_sample_heuristic == 'uniform_discrete':
-            velocity = np.random.choice(np.linspace(0, self.car.max_velocity, self.velocity_options))
-            steering_angle = np.random.choice(np.linspace(-self.car.max_steering_angle, self.car.max_steering_angle, self.steering_angle_options))
+        elif self.action_space_sample_heuristic == 'uniform_discrete':
+            velocity_options = torch.linspace(0, self.car.max_velocity, self.velocity_options)
+            steering_angle_options = torch.linspace(-self.car.max_steering_angle, self.car.max_steering_angle, self.steering_angle_options)
             
-        return np.array([velocity, steering_angle])
+            # Randomly select an index for velocity and steering_angle
+            velocity_index = torch.randint(0, self.velocity_options, (1,))
+            steering_angle_index = torch.randint(0, self.steering_angle_options, (1,))
+            
+            # Use the indices to select the actual values
+            velocity = velocity_options[velocity_index]
+            steering_angle = steering_angle_options[steering_angle_index]
+
+        return torch.tensor([velocity, steering_angle]).squeeze()  # Ensure the return value is a 1D tensor
+
     
     def get_all_actions(self) -> np.ndarray:
         """

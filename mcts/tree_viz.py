@@ -5,6 +5,7 @@ import os
 from pyvis.network import Network
 import json
 import numpy as np
+import torch
 
 def dir_path(string):
     if os.path.exists(string):
@@ -43,18 +44,18 @@ def add_nodes_and_edges_pyvis(node, net, parent_hash=None):
     
     # If this is a random node, make it square
     if "RandomNode" in str(type(node)):
-        label = "Action: " + "\n" + str(np.around(node.action, 2)) + "\n" + \
+        label = "Action: " + "\n" + str(torch.round(node.action)) + "\n" + \
             "Mean Reward: " + "\n" + str(round(node.cumulative_reward/(node.visits+1), 2)) + "\n" + \
             "Cumulative Reward: " + "\n" + str(round(node.cumulative_reward, 2)) + "\n" + \
             "Visits: " + "\n" + str(round(node.visits, 2))
         net.add_node(node_hash, label=label, shape='square')
     else:
         # Get corner covariance diagonals
-        corner_covariance = np.diag(node.state[2])
-        label = "Corner 1 Variance: " + "\n" + str(np.around(corner_covariance[0:2], 2)) + "\n" + \
-            "Corner 2 Variance: " + "\n" + str(np.around(corner_covariance[2:4], 2)) + "\n" + \
-            "Corner 3 Variance: " + "\n" + str(np.around(corner_covariance[4:6], 2)) + "\n" + \
-            "Corner 4 Variance: " + "\n" + str(np.around(corner_covariance[6:8], 2)) + "\n" + \
+        corner_covariance = torch.diag(node.state[2])
+        label = "Corner 1 Variance: " + "\n" + str(torch.round(corner_covariance[0:2])) + "\n" + \
+            "Corner 2 Variance: " + "\n" + str(torch.round(corner_covariance[2:4])) + "\n" + \
+            "Corner 3 Variance: " + "\n" + str(torch.round(corner_covariance[4:6])) + "\n" + \
+            "Corner 4 Variance: " + "\n" + str(torch.round(corner_covariance[6:8])) + "\n" + \
             "Reward: " + "\n" + str(round(node.reward, 2)) + "\n" + \
             "Visits: " + "\n" + str(round(node.visits, 2))
         net.add_node(node_hash, label=label)

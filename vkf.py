@@ -119,22 +119,27 @@ class VectorizedStaticKalmanFilter:
         
     # Draw the mean and covariance on the UI
     def draw(self, ui):
-        for i in range(0, self.s_dim, 2):
-            # For now average the variance of the x and y components
-            avg_var = torch.mean([self.P_k[i, i], self.P_k[i+1, i+1]])
-            
+        for i in range(0, self.s_dim, 2): 
             # Find the eigenvectors and eigenvalues of the covariance matrix
             eig_vals, eig_vecs = torch.linalg.eig(self.P_k[i:i+2, i:i+2])
             
-            # Calculate the angle of the eigenvector with the largest eigenvalue
-            angle = torch.atan2(eig_vecs[1, torch.argmax(eig_vals)], eig_vecs[0, torch.argmax(eig_vals)])
+            # Calculate the magnitude of each eigenvalue
+            eig_vals_magnitude = torch.abs(eig_vals)
+
+            # Find the index of the eigenvalue with the largest magnitude
+            max_eigenvalue_index = torch.argmax(eig_vals_magnitude)
+
+            # Calculate the angle of the eigenvector corresponding to the largest eigenvalue
+            angle = torch.atan2(eig_vecs[1, max_eigenvalue_index].real, eig_vecs[0, max_eigenvalue_index].real)
+
+            # Convert to numpy for drawing
+            mean = self.s_k[i:i+2].cpu().numpy()
+            eig_vals = eig_vals.cpu().numpy()
+            angle = angle.cpu().numpy()
             
             # Draw the mean point and covariance ellipse
-            ui.draw_point(self.s_k[i:i+2], color='g')
-            ui.draw_ellipse(self.s_k[i:i+2], eig_vals[0], eig_vals[1], angle=angle, color='b')
-            
-            # Old circle drawing method
-            # ui.draw_circle(self.s_k[i:i+2], avg_var, color='g')
+            ui.draw_point(mean, color='g')
+            ui.draw_ellipse(mean, eig_vals[0], eig_vals[1], angle=angle, color='b')
     
     # Draw the state on the UI
     def draw_state(self, mean, cov, ui):

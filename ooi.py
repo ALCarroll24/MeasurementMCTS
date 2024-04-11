@@ -83,7 +83,7 @@ class OOI:
         car_position = car_state[0:2]
         car_yaw = car_state[2]
         car_range = self.max_range
-        car_max_bearing = np.radians(self.max_bearing)
+        car_max_bearing = torch.deg2rad(self.max_bearing)
         
         # Find which corners are observable
         observable_corners = []

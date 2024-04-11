@@ -69,7 +69,7 @@ class Car:
 
         # Saturate inputs
         action[0] = torch.clamp(action[0], -self.max_velocity, self.max_velocity)
-        action[1] = torch.clamp(action[1], -torch.radians(self.max_steering_angle), torch.radians(self.max_steering_angle))
+        action[1] = torch.clamp(action[1], -torch.deg2rad(self.max_steering_angle), torch.deg2rad(self.max_steering_angle))
         
         # If we are doing forward simulation, use the provided starting state
         if simulate and starting_state is not None:
@@ -91,24 +91,32 @@ class Car:
 
 
     def draw(self):
+        # Place the state in the cpu and convert to numpy for usage in the UI
+        state = self.state.cpu().numpy()
+        max_bearing = self.max_bearing.cpu().numpy()
+        
         # Draw the car as a rectangle in the UI
-        self.ui.draw_rectangle(self.position, self.length, self.width, self.yaw)
+        self.ui.draw_rectangle(state[0:2], self.length, self.width, state[2])
         
         # Draw range and bearing indicators
-        self.ui.draw_arrow(self.position, self.position + np.array([np.cos(self.yaw + np.radians(self.max_bearing))*self.max_range,
-                                                                    np.sin(self.yaw + np.radians(self.max_bearing))*self.max_range]))
-        self.ui.draw_arrow(self.position, self.position + np.array([np.cos(self.yaw - np.radians(self.max_bearing))*self.max_range,
-                                                                    np.sin(self.yaw - np.radians(self.max_bearing))*self.max_range]))
+        self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[2] + np.radians(max_bearing))*self.max_range,
+                                                                    np.sin(state[2] + np.radians(max_bearing))*self.max_range]))
+        self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[2] - np.radians(max_bearing))*self.max_range,
+                                                                    np.sin(state[2] - np.radians(max_bearing))*self.max_range]))
         
     def draw_state(self, state):
+        # Place the state in the cpu and convert to numpy for usage in the UI
+        state = state.cpu().numpy()
+        max_bearing = self.max_bearing.cpu().numpy()
+        
         # Draw the car as a rectangle in the UI
         self.ui.draw_rectangle(state[0:2], self.length, self.width, state[2])
                                
         # Draw range and bearing indicators
-        self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[2] + np.radians(self.max_bearing))*self.max_range,
-                                                                np.sin(state[2] + np.radians(self.max_bearing))*self.max_range]))
-        self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[2] - np.radians(self.max_bearing))*self.max_range,
-                                                                np.sin(state[2] - np.radians(self.max_bearing))*self.max_range]))
+        self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[2] + np.radians(max_bearing))*self.max_range,
+                                                                np.sin(state[2] + np.radians(max_bearing))*self.max_range]))
+        self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[2] - np.radians(max_bearing))*self.max_range,
+                                                                np.sin(state[2] - np.radians(max_bearing))*self.max_range]))
         
     def test_actions(self):
         # Test drive the car around using a for loop
