@@ -10,3 +10,4 @@ graphviz
 pyvis
 flask
 requests
+snakeviz
