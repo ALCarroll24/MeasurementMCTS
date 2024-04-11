@@ -40,10 +40,10 @@ class VectorizedStaticKalmanFilter:
         # Apply range bearing sensor model for each of the corners in the OOI
         for i in range(z.shape[0] // 2):
             # Calculate the range and bearing to the corner
-            ooi_to_car = torch.tensor(car_pos - z[i*2:i*2+2])
+            ooi_to_car = car_pos - z[i*2:i*2+2]
             dist = max(torch.linalg.norm(ooi_to_car), 1)
-            y = torch.tensor(z[i*2+1] - car_pos[1])
-            x = torch.tensor(z[i*2] - car_pos[0])
+            y = z[i*2+1] - car_pos[1]
+            x = z[i*2] - car_pos[0]
             bearing = torch.atan2(y, x) - car_yaw #TODO this may be the wrong angle
             
             # Rotation matrix to rotate distribution before scaling

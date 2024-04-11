@@ -67,7 +67,8 @@ class OOI:
         # Rotate corners TODO: This rotates around (0,0) and needs to be done some other way
         # rotation_matrix = np.array([[np.cos(self.yaw), -np.sin(self.yaw)], [np.sin(self.yaw), np.cos(self.yaw)]])
         # corners = np.matmul(rotation_matrix, corners.T).T
-        return torch.tensor(corners)
+        
+        return torch.tensor(corners, dtype=torch.float32)
         
     def draw(self):
         # Draw main rectangle
@@ -115,9 +116,9 @@ class OOI:
             # Draw observable corners
             for corner in observable_corners:
                 self.ui.draw_circle(corner, 0.6)
-                
-        # Convert list of tensors to n by 2 tensor
-        observable_corners = torch.stack(observable_corners, dim=0)
+        
+        # Convert list of tensors to 1d tensor
+        observable_corners = torch.stack(observable_corners, dim=1).flatten()
         
         return observable_corners, indeces
     

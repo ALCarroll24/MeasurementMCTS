@@ -15,9 +15,9 @@ class Car:
         self.length = length
         self.width = width
         self.max_range = max_range
-        self.max_bearing = max_bearing
-        self.max_velocity = max_velocity
-        self.max_steering_angle = max_steering_angle
+        self.max_bearing = torch.tensor(max_bearing)
+        self.max_velocity = torch.tensor(max_velocity)
+        self.max_steering_angle = torch.tensor(max_steering_angle)
         self.velocity = 0.0
         self.steering_angle = 0.0
         
