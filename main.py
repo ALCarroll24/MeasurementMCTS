@@ -10,9 +10,14 @@ from mcts.tree_viz import render_graph, render_pyvis
 from flask_server import FlaskServer
 import time
 import torch
+import argparse
 
 class ToyMeasurementControl:
-    def __init__(self):
+    def __init__(self, one_iteration=False):
+        # Flag for whether to run one iteration for profiling
+        self.one_iteration = one_iteration
+        if self.one_iteration:
+            print("Running one iteration for profiling")
         # Determine update rate
         self.hz = 20.0
         self.period = 1.0 / self.hz
@@ -86,7 +91,11 @@ class ToyMeasurementControl:
                 mcts.learn(self.learn_iterations, progress_bar=False)
                 action_vector = mcts.best_action()
                 print("MCTS Action: ", action_vector)
-                exit()
+                
+                # If we are doing one iteration for profiling, exit
+                if self.one_iteration:
+                    exit()
+                
                 render_pyvis(mcts.root)
                 print("ho")
                 
@@ -266,6 +275,16 @@ class ToyMeasurementControl:
         return actions
     
     
-if __name__ == '__main__':  
-    tmc = ToyMeasurementControl()
+if __name__ == '__main__':
+    # Create parser
+    parser = argparse.ArgumentParser(description='Run Toy Measurement Control')
+    
+    # Add arguments
+    parser.add_argument('--one_iteration', type=bool)
+    
+    # Parse arguments
+    args = parser.parse_args()
+    
+    # Create an instance of ToyMeasurementControl using command line arguments
+    tmc = ToyMeasurementControl(one_iteration=args.one_iteration)
     tmc.run()
