@@ -18,6 +18,10 @@ class ToyMeasurementControl:
         self.one_iteration = one_iteration
         if self.one_iteration:
             print("Running one iteration for profiling")
+            self.draw = False
+        else:
+            self.draw = True
+            
         # Determine update rate
         self.hz = 20.0
         self.period = 1.0 / self.hz
@@ -43,8 +47,11 @@ class ToyMeasurementControl:
             print("Using CPU")
             torch.set_default_device('cpu')
 
-        # Create a plotter object
-        self.ui = MatPlotLibUI(update_rate=self.hz)
+        # Create a plotter object unless we are profiling
+        if self.one_iteration:
+            self.ui = None
+        else:
+            self.ui = MatPlotLibUI(update_rate=self.hz)
         
         # Create a car object
         self.car = Car(self.ui, torch.tensor([50.0, 40.0]), 90, self.hz)
@@ -59,8 +66,12 @@ class ToyMeasurementControl:
         self.last_action = np.array([0.0, 0.0])
         
         # Run flask server which makes web MCTS tree display and communicates clicked nodes
-        # self.flask_server = FlaskServer()
-        # self.flask_server.run_thread()
+        if self.one_iteration:
+            self.flask_server = None
+        else:
+            self.flask_server = FlaskServer()
+            self.flask_server.run_thread()
+            
         self.last_node_clicked = None
         self.last_node_hash_clicked = None
         
@@ -73,10 +84,10 @@ class ToyMeasurementControl:
         while(True):
             
             # Only update controls if the UI is not paused
-            if not self.ui.paused:
+            if (self.ui is None) or (not self.ui.paused):
                 
                 # Get the observation from the OOI, pass it to the KF for update
-                observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state())
+                observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state(), draw=self.draw)
                 self.vkf.update(observable_corners, indeces, self.car.get_state())
                 
                 ############################ AUTONOMOUS CONTROL ############################
@@ -95,15 +106,11 @@ class ToyMeasurementControl:
                 # If we are doing one iteration for profiling, exit
                 if self.one_iteration:
                     exit()
-                
-                render_pyvis(mcts.root)
-                print("ho")
-                
-                # Uncomment for single iteration plotting
-                # self.flask_server.stop_flask()
-                exit()
-                
-                
+                else:
+                    # Draw the MCTS tree
+                    render_pyvis(mcts.root)
+
+
                 ############################ MANUAL CONTROL ############################
                 # Get the control inputs from the arrow keys, pass them to the car for update
                 # relative_action_vector = self.car.get_arrow_key_control()
