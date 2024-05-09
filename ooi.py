@@ -83,6 +83,12 @@ class OOI:
         car_range = self.max_range
         car_max_bearing = np.radians(self.max_bearing)
         
+        # Do initial distance check to see if we can see any corners
+        # If not, return empty list (avoid needless computation)
+        distances = np.linalg.norm(self.corners - car_position, axis=1)
+        if np.all(distances >= car_range):
+            return np.array([]), []
+        
         # Find which corners are observable
         observable_corners = []
         indeces = []

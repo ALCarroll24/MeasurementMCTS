@@ -8,6 +8,7 @@ import numpy as np
 # import gym
 from .nodes import DecisionNode, RandomNode
 from typing import Callable, List, Tuple, Any, Optional
+from utils import wrap_angle
 
 
 class MCTS:
@@ -27,18 +28,22 @@ class MCTS:
         K: float,
         _hash_action: Callable[[Any], Tuple],
         _hash_state: Callable[[Any], Tuple],
-        random_iterations: int = 100,
-        expansion_branch_factor = 2,
+        expansion_branch_factor: int = 2,
         deterministic: bool = True,
+        alpha: float = 0.5,
+        beta: float = 0.5,
+        evaluation_multiplier: float = 1.0,
     ):
         
         self.env = env
         self.K = K
         self.root = DecisionNode(state=initial_obs, is_root=True)
         self._initialize_hash(_hash_action, _hash_state)
-        self.random_iterations = random_iterations
         self.expansion_branch_factor = expansion_branch_factor
         self.deterministic = deterministic
+        self.alpha = alpha
+        self.beta = beta
+        self.evaluation_multiplier = evaluation_multiplier
 
     def get_node(self, node_hash: int) -> Optional[DecisionNode]:
         """
@@ -211,24 +216,61 @@ class MCTS:
 
     def evaluate(self, env, state) -> float:
         """
-        a customized function, don't have to be
-
-        Evaluates a DecionNode playing until an terminal node using the rollotPolicy,
+        Evaluates a DecisionNode by using a convex combination of distance to closest OOI point and angle to OOI.
         
-
         :param env: (gym.env) gym environemt that describes the state at the node to evaulate.
         :return: (float) the cumulative reward observed during the tree traversing.
         """
-        R = 0
-        done = False
-        iter = 0
-        while ((not done) and (iter < self.random_iterations)):
-            iter += 1
-            a = env.action_space_sample()
-            s, r, done = env.step(state, a)
-            R += r
+        # Pull out the car position and yaw from the state
+        car_state = state[0]
+        car_pos = car_state[0:2]
+        car_yaw = car_state[2]
+        
+        # Pull out the OOI corner positions from the state
+        ooi_state = state[1]
+        ooi_reshaped = np.reshape(ooi_state, (4, 2))
+        
+        # Calculate squared distance of Car to OOI points
+        squared_dists = np.sum((ooi_reshaped - car_pos)**2, axis=1)
+        
+        # Get smallest squared distance by finding the index of the minimum squared distance and then getting the value
+        closest_ooi_pt_index = np.argmin(squared_dists)
+        smallest_squared_dist = squared_dists[closest_ooi_pt_index]
+        
+        # Find bearing to closest OOI point (0 to 2pi)
+        ooi_bearing = np.arctan2(ooi_reshaped[closest_ooi_pt_index, 1] - car_pos[1], ooi_reshaped[closest_ooi_pt_index, 0] - car_pos[0])
+        
+        # Subtract the car yaw to get the relative bearing to the OOI point
+        raw_bearing_delta = ooi_bearing - car_yaw
+        
+        # Wrap the angle to be between -pi and pi and take the absolute value, this ensures we get the smallest angle to the OOI and it is positive
+        bearing_delta = np.abs(wrap_angle(raw_bearing_delta))
+        
+        # Return weighted convex combination (alpha and beta add to 1) of distance to closest OOI point and angle to OOI
+        return self.evaluation_multiplier * self.alpha * smallest_squared_dist + self.beta * bearing_delta
 
-        return R
+
+    # Random action evaluation, doesn't really make sense for this problem
+    # def evaluate(self, env, state) -> float:
+    #     """
+    #     a customized function, don't have to be
+
+    #     Evaluates a DecionNode playing until an terminal node using the rollotPolicy,
+        
+
+    #     :param env: (gym.env) gym environemt that describes the state at the node to evaulate.
+    #     :return: (float) the cumulative reward observed during the tree traversing.
+    #     """
+    #     R = 0
+    #     done = False
+    #     iter = 0
+    #     while ((not done) and (iter < self.random_iterations)):
+    #         iter += 1
+    #         a = env.action_space_sample()
+    #         s, r, done = env.step(state, a)
+    #         R += r
+
+    #     return R
 
     def select_outcome(
         self, 

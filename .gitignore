@@ -4,3 +4,7 @@ __pycache__/
 # Ignore code workspace files
 .vscode/
 *.code-workspace
+
+# Ignore generated files
+lib/
+tree_visualization.html

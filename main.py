@@ -31,15 +31,22 @@ class ToyMeasurementControl:
         self.velocity_options = 3  # number of discrete options for velocity
         self.steering_angle_options = 3  # number of discrete options for steering angle
         self.horizon = 5 # length of the planning horizon
-        self.random_iterations = 100  # number of random iterations for MCTS (limited by horizon anyways)
         self.expansion_branch_factor = 3  # number of branches when expanding a node (at least two for algorithm to work properly)
         self.learn_iterations = 100  # number of learning iterations for MCTS
+        self.alpha = 0.2  # for evaluation, the weight of the distance error
+        self.beta = 0.8   # for evaluation, the weight of the heading error
+        self.evaluation_multiplier = 1000.0  # multiplier for evaluation function
+        
+        # Raise an error if alpha and beta do not sum to 1
+        if self.alpha + self.beta != 1:
+            raise ValueError("Alpha and Beta must sum to 1, as they make a convex combination for evaluation")
 
         # Create a plotter object unless we are profiling
         if self.one_iteration:
             self.ui = None
         else:
             self.ui = MatPlotLibUI(update_rate=self.hz)
+            self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
         
         # Create a car object
         self.car = Car(self.ui, np.array([50.0, 40.0]), 90, self.hz)
@@ -71,8 +78,10 @@ class ToyMeasurementControl:
     # Loop until matplotlib window is closed (handled by the UI class)
         while(True):
             
-            # Only update controls if the UI is not paused
-            if (self.ui is None) or (not self.ui.paused):
+            # Only update controls if the UI is not paused or if we are doing one iteration
+            if (self.one_iteration is True) or (not self.ui.paused):
+                # Reset the flag for whether the UI was paused before the last iteration
+                self.ui_was_paused = False
                 
                 # Get the observation from the OOI, pass it to the KF for update
                 observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state(), draw=self.draw)
@@ -86,7 +95,8 @@ class ToyMeasurementControl:
                 mcts = MCTS(initial_obs=self.get_state(), env=self, K=0.3**5,
                             _hash_action=hash_action, _hash_state=hash_state,
                             expansion_branch_factor=self.expansion_branch_factor,
-                            random_iterations=self.random_iterations)
+                            alpha=self.alpha, beta=self.beta,
+                            evaluation_multiplier=self.evaluation_multiplier)
                 mcts.learn(self.learn_iterations, progress_bar=False)
                 action_vector = mcts.best_action()
                 print("MCTS Action: ", action_vector)
@@ -94,9 +104,6 @@ class ToyMeasurementControl:
                 # If we are doing one iteration for profiling, exit
                 if self.one_iteration:
                     exit()
-                else:
-                    # Render the MCTS tree
-                    render_pyvis(mcts)
                 
                 
                 ############################ MANUAL CONTROL ############################
@@ -110,6 +117,11 @@ class ToyMeasurementControl:
                 self.drawing_simulated_state = False
                 
             else:
+                # Only render the MCTS tree if the UI was not paused before the last iteration so that the tree is not rendered multiple times
+                if not self.ui_was_paused:
+                    render_pyvis(mcts.root)
+                    self.ui_was_paused = True
+                    
                 # Check if a node has been clicked
                 if self.last_node_hash_clicked != self.flask_server.node_clicked:
                     
@@ -171,7 +183,7 @@ class ToyMeasurementControl:
         new_car_state = self.car.update(self.period, action, simulate=True, starting_state=car_state)
         
         # Get the observation from the OOI, pass it to the KF for update
-        observable_corners, indeces = self.ooi.get_observation(new_car_state, draw=False)
+        observable_corners, indeces = self.ooi.get_observation(new_car_state, draw=False) # TODO: In forward simulation, observations should come from mean of KF
         new_mean, new_cov = self.vkf.update(observable_corners, indeces, new_car_state, 
                                             simulate=True, s_k_=corner_means, P_k_=corner_cov)
         
