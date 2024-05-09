@@ -9,9 +9,18 @@ from mcts.hash import hash_action, hash_state
 from mcts.tree_viz import render_graph, render_pyvis
 from flask_server import FlaskServer
 import time
+import argparse
 
 class ToyMeasurementControl:
-    def __init__(self):
+    def __init__(self, one_iteration=False):
+        # Flag for whether to run one iteration for profiling
+        self.one_iteration = one_iteration
+        if self.one_iteration:
+            print("Running one iteration for profiling")
+            self.draw = False
+        else:
+            self.draw = True
+            
         # Determine update rate
         self.hz = 20.0
         self.period = 1.0 / self.hz
@@ -26,8 +35,11 @@ class ToyMeasurementControl:
         self.expansion_branch_factor = 3  # number of branches when expanding a node (at least two for algorithm to work properly)
         self.learn_iterations = 100  # number of learning iterations for MCTS
 
-        # Create a plotter object
-        self.ui = MatPlotLibUI(update_rate=self.hz)
+        # Create a plotter object unless we are profiling
+        if self.one_iteration:
+            self.ui = None
+        else:
+            self.ui = MatPlotLibUI(update_rate=self.hz)
         
         # Create a car object
         self.car = Car(self.ui, np.array([50.0, 40.0]), 90, self.hz)
@@ -36,14 +48,18 @@ class ToyMeasurementControl:
         self.ooi = OOI(self.ui, position=(50,50), car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
         
         # Create a Static Vectorized Kalman Filter object
-        self.vkf = VectorizedStaticKalmanFilter(np.array([50]*8), np.diag([8]*8), 4.0)
+        self.vkf = VectorizedStaticKalmanFilter(np.array([50.0]*8), np.diag([8.0]*8), 4.0)
         
         # Save the last action (mainly used for relative manual control)
         self.last_action = np.array([0.0, 0.0])
         
         # Run flask server which makes web MCTS tree display and communicates clicked nodes
-        self.flask_server = FlaskServer()
-        self.flask_server.run_thread()
+        if self.one_iteration:
+            self.flask_server = None
+        else:
+            self.flask_server = FlaskServer()
+            self.flask_server.run_thread()
+            
         self.last_node_clicked = None
         self.last_node_hash_clicked = None
         
@@ -56,10 +72,10 @@ class ToyMeasurementControl:
         while(True):
             
             # Only update controls if the UI is not paused
-            if not self.ui.paused:
+            if (self.ui is None) or (not self.ui.paused):
                 
                 # Get the observation from the OOI, pass it to the KF for update
-                observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state())
+                observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state(), draw=self.draw)
                 self.vkf.update(observable_corners, indeces, self.car.get_state())
                 
                 ############################ AUTONOMOUS CONTROL ############################
@@ -74,11 +90,13 @@ class ToyMeasurementControl:
                 mcts.learn(self.learn_iterations, progress_bar=False)
                 action_vector = mcts.best_action()
                 print("MCTS Action: ", action_vector)
-                render_pyvis(mcts.root)
                 
-                # Uncomment for single iteration plotting
-                # self.flask_server.stop_flask()
-                # exit()
+                # If we are doing one iteration for profiling, exit
+                if self.one_iteration:
+                    exit()
+                else:
+                    # Render the MCTS tree
+                    render_pyvis(mcts)
                 
                 
                 ############################ MANUAL CONTROL ############################
@@ -224,6 +242,16 @@ class ToyMeasurementControl:
         return actions
     
     
-if __name__ == '__main__':  
-    tmc = ToyMeasurementControl()
+if __name__ == '__main__':
+    # Create parser
+    parser = argparse.ArgumentParser(description='Run Toy Measurement Control')
+    
+    # Add arguments
+    parser.add_argument('--one_iteration', type=bool)
+    
+    # Parse arguments
+    args = parser.parse_args()
+    
+    # Create an instance of ToyMeasurementControl using command line arguments
+    tmc = ToyMeasurementControl(one_iteration=args.one_iteration)
     tmc.run()
