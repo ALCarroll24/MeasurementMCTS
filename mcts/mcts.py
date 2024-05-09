@@ -180,14 +180,23 @@ class MCTS:
         ### EXPANSION PHASE
         # If have already evaluated this node (visited more than once), Add a new node to the tree and evaluate it instead
         if decision_node.visits > 0:
-            for a in range(self.expansion_branch_factor):
+            all_actions = self.env.get_all_actions()
+            for a in all_actions:
                 # Random action -> random node -> environment step -> decision node
                 a = self.env.action_space_sample()
                 new_random_node = decision_node.next_random_node(a, self._hash_action)
-                (new_decision_node, r) = self.select_outcome(internal_env, new_random_node)
-                new_decision_node = self.update_decision_node(new_decision_node, new_random_node, self._hash_state)
-                new_decision_node.reward = r
-                new_random_node.reward = r
+
+            # Create decision node only for the first action
+            (new_decision_node, r) = self.select_outcome(internal_env, decision_node.children[self._hash_action(all_actions[0])])
+            new_decision_node = self.update_decision_node(new_decision_node, new_random_node, self._hash_state)
+            new_decision_node.reward = r
+            new_random_node.reward = r
+            
+            # Pick this new node for rollout
+            decision_node = new_decision_node
+        
+        # If this is the first time we are visiting this node, we don't need to expand the tree
+        # No need to do anything just evaluate the current node
 
         # Add a visit since we ended traversal on this decision node
         decision_node.visits += 1

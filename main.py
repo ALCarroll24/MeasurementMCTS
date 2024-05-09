@@ -23,7 +23,7 @@ class ToyMeasurementControl:
         self.steering_angle_options = 3  # number of discrete options for steering angle
         self.horizon = 5 # length of the planning horizon
         self.random_iterations = 100  # number of random iterations for MCTS (limited by horizon anyways)
-        self.expansion_branch_factor = 3  # number of branches when expanding a node (at least two for algorithm to work properly)
+        self.expansion_branch_factor = 1  # number of branches when expanding a node (at least two for algorithm to work properly)
         self.learn_iterations = 100  # number of learning iterations for MCTS
 
         # Create a plotter object
@@ -42,8 +42,8 @@ class ToyMeasurementControl:
         self.last_action = np.array([0.0, 0.0])
         
         # Run flask server which makes web MCTS tree display and communicates clicked nodes
-        self.flask_server = FlaskServer()
-        self.flask_server.run_thread()
+        # self.flask_server = FlaskServer()
+        # self.flask_server.run_thread()
         self.last_node_clicked = None
         self.last_node_hash_clicked = None
         
