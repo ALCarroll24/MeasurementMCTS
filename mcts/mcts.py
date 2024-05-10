@@ -184,7 +184,7 @@ class MCTS:
 
         ### EXPANSION PHASE
         # If have already evaluated this node (visited more than once), Add a new node to the tree and evaluate it instead
-        if decision_node.visits > 0:
+        if decision_node.visits == 0 and not decision_node.is_final:
             for a in range(self.expansion_branch_factor):
                 # Random action -> random node -> environment step -> decision node
                 a = self.env.action_space_sample()
@@ -200,8 +200,8 @@ class MCTS:
         
         ### SIMULATION PHASE
         # Currently utilizing random actions to evaluate reward (general evaluation, the monte carlo part)
-        cumulative_reward = self.evaluate(internal_env, decision_node.state)
-        # cumulative_reward = self.env.evaluate(decision_node.state)
+        cumulative_reward = self.evaluate(decision_node.state)
+        decision_node.evaluation_reward = cumulative_reward
         
         
         ### BACKPROPAGATION PHASE
@@ -214,7 +214,7 @@ class MCTS:
             decision_node = random_node.parent
             decision_node.visits += 1
 
-    def evaluate(self, env, state) -> float:
+    def evaluate(self, state) -> float:
         """
         Evaluates a DecisionNode by using a convex combination of distance to closest OOI point and angle to OOI.
         
@@ -336,17 +336,6 @@ class MCTS:
         :param x: (DecisionNode) current decision node
         :return: action to play
         """
-        # TODO: Why is this 2? This would make the branching factor 2 in selection
-        # if x.visits <= 2:
-        #     # This removes children for some reason????????
-        #     # x.children = {a: RandomNode(a, parent=x) for a in range(self.env.action_space_sample())}
-            
-        #     # Action space sample currently returns a single action
-        #     a = self.env.action_space_sample()
-            
-        #     # Children were changed before, but random nodes are created in the next step... confusion
-        #     x.add_children(RandomNode(a, parent=x), hash_preprocess=self._hash_action)
-
         def scoring(k):
             if x.children[k].visits > 0:
                 return x.children[k].cumulative_reward/x.children[k].visits + \

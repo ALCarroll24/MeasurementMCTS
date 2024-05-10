@@ -194,7 +194,7 @@ class ToyMeasurementControl:
         reward, done = self.get_reward(new_state, action)
         
         # Check if we are at the end of the horizon
-        if not done and horizon == self.horizon-1:
+        if not done and horizon == self.horizon:
             done = True
         
         # Return the reward and the new state

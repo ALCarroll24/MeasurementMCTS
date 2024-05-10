@@ -15,15 +15,18 @@ class DecisionNode:
         state: Any = None, 
         parent = None, 
         is_root: bool = False, 
-        is_final: bool = False
+        is_final: bool = False,
+        evaluation_reward: float = 0.0
+        
     ):
         self.state = state
+        self.parent: RandomNode = parent
         self.children: Dict[Any, RandomNode] = {}
+        self.is_root = is_root
         self.is_final = is_final
+        self.evaluation_reward = evaluation_reward
         self.visits: int = 0
         self.reward: float = 0.0
-        self.parent: RandomNode = parent
-        self.is_root = is_root
 
     def add_children(
         self, 
@@ -45,13 +48,12 @@ class DecisionNode:
         self, 
         action: Any, 
         hash_preprocess=None
-    ):
-    # ) -> RandomNode:
+    ) -> 'RandomNode':
         """
         Add the random node to the children of the decision node if note present. Otherwise it resturns the existing one
 
-        :param action: (float) the actiuon taken at the current node
-        :return: (RandomNode) the resutling random node
+        :param action: (float) the action taken at the current node
+        :return: (RandomNode) the resulting random node
         """
 
         if hash_preprocess is None:

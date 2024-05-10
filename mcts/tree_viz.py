@@ -43,20 +43,32 @@ def add_nodes_and_edges_pyvis(node, net, parent_hash=None):
     
     # If this is a random node, make it square
     if "RandomNode" in str(type(node)):
-        label = "Action: " + "\n" + str(np.around(node.action, 2)) + "\n" + \
-            "Mean Reward: " + "\n" + str(round(node.cumulative_reward/(node.visits+1), 2)) + "\n" + \
-            "Cumulative Reward: " + "\n" + str(round(node.cumulative_reward, 2)) + "\n" + \
-            "Visits: " + "\n" + str(round(node.visits, 2))
+        # Build the text string label for the node
+        label = "Action: " + " " + str(np.around(node.action, 2)) + "\n" + \
+            "Mean Reward: " + " " + str(round(node.cumulative_reward/(node.visits+1), 2)) + "\n" + \
+            "Cum Reward: " + " " + str(round(node.cumulative_reward, 2)) + "\n" + \
+            "Visits: " + " " + str(round(node.visits, 2))
         net.add_node(node_hash, label=label, shape='square')
     else:
         # Get corner covariance diagonals
         corner_covariance = np.diag(node.state[2])
-        label = "Corner 1 Variance: " + "\n" + str(np.around(corner_covariance[0:2], 2)) + "\n" + \
-            "Corner 2 Variance: " + "\n" + str(np.around(corner_covariance[2:4], 2)) + "\n" + \
-            "Corner 3 Variance: " + "\n" + str(np.around(corner_covariance[4:6], 2)) + "\n" + \
-            "Corner 4 Variance: " + "\n" + str(np.around(corner_covariance[6:8], 2)) + "\n" + \
-            "Reward: " + "\n" + str(round(node.reward, 2)) + "\n" + \
-            "Visits: " + "\n" + str(round(node.visits, 2))
+        
+        # Check if this is the root node
+        if node.is_root:
+            root_label = "Root\n"
+        else:
+            root_label = ""
+        
+        # Build the text string label for the node
+        label = root_label + \
+            "C1 Variance: " + " " + str(np.around(corner_covariance[0:2], 2)) + "\n" + \
+            "C2 Variance: " + " " + str(np.around(corner_covariance[2:4], 2)) + "\n" + \
+            "C3 Variance: " + " " + str(np.around(corner_covariance[4:6], 2)) + "\n" + \
+            "C4 Variance: " + " " + str(np.around(corner_covariance[6:8], 2)) + "\n" + \
+            "Reward: " + " " + str(round(node.reward, 2)) + "\n" + \
+            "Visits: " + " " + str(round(node.visits, 2)) + "\n" + \
+            "Evaluation Reward: " + " " + str(round(node.evaluation_reward, 2)) + "\n" + \
+            "Is Final: " + " " + str(node.is_final)
         net.add_node(node_hash, label=label)
     
     if parent_hash is not None:
