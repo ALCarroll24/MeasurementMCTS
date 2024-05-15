@@ -1,12 +1,13 @@
---find-links https://download.pytorch.org/whl/cu121
-torch
-torchvision
-torchaudio
+# --find-links https://download.pytorch.org/whl/cu121
+# torch
+# torchvision
+# torchaudio
 
 numpy
 matplotlib
 cloudpickle
 graphviz
+pygraphviz
 pyvis
 flask
 requests

@@ -185,14 +185,18 @@ class MCTS:
         ### EXPANSION PHASE
         # If have already evaluated this node (visited more than once), Add a new node to the tree and evaluate it instead
         if decision_node.visits == 0 and not decision_node.is_final:
-            for a in range(self.expansion_branch_factor):
-                # Random action -> random node -> environment step -> decision node
-                a = self.env.action_space_sample()
-                new_random_node = decision_node.next_random_node(a, self._hash_action)
-                (new_decision_node, r) = self.select_outcome(internal_env, new_random_node)
-                new_decision_node = self.update_decision_node(new_decision_node, new_random_node, self._hash_state)
-                new_decision_node.reward = r
-                new_random_node.reward = r
+            # If we are expanding with all actions
+            if self.expansion_branch_factor == -1:
+                for a in self.env.all_actions:
+                    # Action -> random node -> environment step -> decision node
+                    self.expand(decision_node, a)
+            
+            # Otherwise if we are sampling a number of times from the action space
+            else:
+                for i in range(self.expansion_branch_factor):
+                    # Random action -> random node -> environment step -> decision node
+                    a = self.env.action_space_sample()
+                    self.expand(decision_node, a)
 
         # Add a visit since we ended traversal on this decision node
         decision_node.visits += 1
@@ -213,6 +217,14 @@ class MCTS:
             random_node.visits += 1
             decision_node = random_node.parent
             decision_node.visits += 1
+
+    def expand(self, decision_node: DecisionNode, action: np.ndarray):
+        # Random action -> random node -> environment step -> decision node
+        new_random_node = decision_node.next_random_node(action, self._hash_action)
+        (new_decision_node, r) = self.select_outcome(self.env, new_random_node)
+        new_decision_node = self.update_decision_node(new_decision_node, new_random_node, self._hash_state)
+        new_decision_node.reward = r
+        new_random_node.reward = r
 
     def evaluate(self, state) -> float:
         """

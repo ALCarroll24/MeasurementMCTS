@@ -1,9 +1,10 @@
 import numpy as np
 import threading
 from ui import MatPlotLibUI
-from utils import wrap_angle, sat_value
+from utils import wrap_angle, sat_value, rotate
 import time
 from typing import Tuple
+from shapely import Polygon
 
 class Car:
     def __init__(self, ui, position, yaw, update_rate, length=4.0, width=2.0, max_range=20.0, max_bearing=45.0, max_velocity=10.0, max_steering_angle=45.0):
@@ -55,6 +56,16 @@ class Car:
         else:
             return np.array([position[0], position[1], yaw])
             
+    def get_car_polygon(self):
+        points_no_yaw = [[self.position[0] + self.width / 2, self.position[1] + self.length / 2],
+                         [self.position[0] + self.width / 2, self.position[1] - self.length / 2],
+                         [self.position[0] - self.width / 2, self.position[1] - self.length / 2],
+                         [self.position[0] - self.width / 2, self.position[1] + self.length / 2]]
+        
+        # Rotate the points by the yaw
+        points = rotate(np.array(points_no_yaw) - self.position, self.yaw - np.radians(90)) + self.position
+        
+        return Polygon(points)
         
 
     def draw(self):
@@ -66,6 +77,12 @@ class Car:
                                                                     np.sin(self.yaw + np.radians(self.max_bearing))*self.max_range]))
         self.ui.draw_arrow(self.position, self.position + np.array([np.cos(self.yaw - np.radians(self.max_bearing))*self.max_range,
                                                                     np.sin(self.yaw - np.radians(self.max_bearing))*self.max_range]))
+        
+        # # Draw the car's polygon to check it is working
+        # x, y = self.get_car_polygon().exterior.xy
+        # for x, y in zip(x, y):
+        #     self.ui.draw_circle((x, y), 0.3)
+
         
     def draw_state(self, state):
         # Draw the car as a rectangle in the UI

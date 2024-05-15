@@ -35,3 +35,15 @@ def angle_in_interval(angle, low_angle, high_angle):
         return low_angle <= angle <= high_angle
     else:
         return angle >= low_angle or angle <= high_angle
+    
+def rotate(points: np.ndarray, angle):
+    # Create rotation matrix and output array
+    rot_matrix = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+    rotated_points = np.zeros(points.shape)
+    
+    # Iterate through the points
+    for i, point in enumerate(points):
+        # Rotate a point around the origin by a given angle
+        rotated_points[i] = rot_matrix @ point
+        
+    return rotated_points

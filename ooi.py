@@ -1,5 +1,7 @@
 import numpy as np
+from shapely import Polygon
 from utils import wrap_angle, wrapped_angle_diff, angle_in_interval
+from typing import Union
 
 class OOI:
     def __init__(self, ui, position=(50,50), length=4, width=8, std_dev=0.5,
@@ -67,10 +69,24 @@ class OOI:
         # rotation_matrix = np.array([[np.cos(self.yaw), -np.sin(self.yaw)], [np.sin(self.yaw), np.cos(self.yaw)]])
         # corners = np.matmul(rotation_matrix, corners.T).T
         return corners
+    
+    # Return the collision polygon for the OOI
+    def get_collision_polygon(self) -> Polygon:
+        # Calculate corner positions
+        corners = self.get_corners()
+        
+        # Create an OOI polygon from the corners
+        return Polygon(corners)
+        
         
     def draw(self):
         # Draw main rectangle
         self.ui.draw_rectangle(self.position, self.width, self.length, 0)
+        
+        # Draw the collision polygon to ensure it matches
+        # for x, y in self.get_collision_polygons().exterior.coords:
+        #     print(x, y)
+        #     self.ui.draw_circle((x, y), 1.5)
         
         # Draw corners
         # for corner in self.corners:

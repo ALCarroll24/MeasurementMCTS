@@ -37,6 +37,8 @@ def render_graph(root, open=True):
     
     if open:
         g.render('img/tree.gv', view=True)
+        
+    print('Tree rendered in img/tree.gv')
 
 def add_nodes_and_edges_pyvis(node, net, parent_hash=None):
     node_hash = str(node.__hash__())
@@ -78,7 +80,7 @@ def add_nodes_and_edges_pyvis(node, net, parent_hash=None):
         add_nodes_and_edges_pyvis(child, net, node_hash)
 
 def render_pyvis(root):
-    net = Network(height="1000px", width="100%", directed=True)
+    net = Network(height="1200px", width="100%", directed=True)
     net.force_atlas_2based()
     add_nodes_and_edges_pyvis(root, net)
     
@@ -89,10 +91,8 @@ def render_pyvis(root):
       "layout": {
         "hierarchical": {
           "enabled": True,
-          "levelSeparation": 140,
+          "levelSeparation": 410,
           "nodeSpacing": 250,
-          "treeSpacing": 25,
-          "direction": "LR", # UD for Up-Down, DU for Down-Up, LR for Left-Right, RL for Right-Left
           "sortMethod": "directed" # hubsize, directed
         }
       },

@@ -7,9 +7,12 @@ from vkf import VectorizedStaticKalmanFilter
 from mcts.mcts import MCTS
 from mcts.hash import hash_action, hash_state
 from mcts.tree_viz import render_graph, render_pyvis
+from mcts.pygraphviz import render_pygraphviz
 from flask_server import FlaskServer
 import time
 import argparse
+import pickle
+from copy import deepcopy
 
 class ToyMeasurementControl:
     def __init__(self, one_iteration=False):
@@ -31,11 +34,14 @@ class ToyMeasurementControl:
         self.velocity_options = 3  # number of discrete options for velocity
         self.steering_angle_options = 3  # number of discrete options for steering angle
         self.horizon = 5 # length of the planning horizon
-        self.expansion_branch_factor = 3  # number of branches when expanding a node (at least two for algorithm to work properly)
+        self.expansion_branch_factor = -1  # number of branches when expanding a node (at least two, -1 for all possible actions)
         self.learn_iterations = 100  # number of learning iterations for MCTS
         self.alpha = 0.2  # for evaluation, the weight of the distance error
         self.beta = 0.8   # for evaluation, the weight of the heading error
-        self.evaluation_multiplier = 1000.0  # multiplier for evaluation function
+        self.evaluation_multiplier = 10.0  # multiplier for evaluation function
+        self.soft_collision_buffer = 2.0  # buffer for soft collision (length from outline of OOI to new outline for all points)
+        self.hard_collision_punishment = 1e8  # punishment for hard collision
+        self.soft_collision_punishment = 1e3  # punishment for soft collision
         
         # Raise an error if alpha and beta do not sum to 1
         if self.alpha + self.beta != 1:
@@ -53,9 +59,13 @@ class ToyMeasurementControl:
         
         # Create an OOI object
         self.ooi = OOI(self.ui, position=(50,50), car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
-        
+         
         # Create a Static Vectorized Kalman Filter object
-        self.vkf = VectorizedStaticKalmanFilter(np.array([50.0]*8), np.diag([8.0]*8), 4.0)
+        # self.vkf = VectorizedStaticKalmanFilter(np.array([50.0]*8), np.diag([8.0]*8), 4.0)
+        self.vkf = VectorizedStaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([8.0, 8.0, 0.001, 0.001, 0.001, 0.001, 8.0, 8.0]), 4.0)
+        
+        # Compute all possible actions
+        self.all_actions = self.get_all_actions()
         
         # Save the last action (mainly used for relative manual control)
         self.last_action = np.array([0.0, 0.0])
@@ -120,6 +130,8 @@ class ToyMeasurementControl:
                 # Only render the MCTS tree if the UI was not paused before the last iteration so that the tree is not rendered multiple times
                 if not self.ui_was_paused:
                     render_pyvis(mcts.root)
+                    # render_pygraphviz(mcts.root)
+                    # render_graph(mcts.root, open=True)
                     self.ui_was_paused = True
                     
                 # Check if a node has been clicked
@@ -147,6 +159,13 @@ class ToyMeasurementControl:
                 self.car.draw()
                 self.ooi.draw()
                 self.vkf.draw(self.ui)
+                
+                # ooi_poly = self.ooi.get_collision_polygon()
+                # soft_ooi_poly = ooi_poly.buffer(self.soft_collision_buffer)
+        
+                # # Draw the soft ooi poly to see if it is correct
+                # for x, y in soft_ooi_poly.exterior.coords:
+                #     self.ui.draw_circle((x, y), 0.1)
             
             # Update the ui to display the new state
             self.ui.update()
@@ -220,6 +239,19 @@ class ToyMeasurementControl:
         # Find the reward
         reward = -trace
         
+        # Remove large reward when car enters hard or soft boundary
+        car_poly = self.car.get_car_polygon()
+        ooi_poly = self.ooi.get_collision_polygon()
+        soft_ooi_poly = ooi_poly.buffer(self.soft_collision_buffer)
+        
+        # If car is in collision with OOI, give a large negative reward
+        if car_poly.overlaps(ooi_poly):
+            reward -= self.hard_collision_punishment
+            
+        # If car comes very close to OOI (soft collision), give a less large negative reward
+        if car_poly.overlaps(soft_ooi_poly):
+            reward -= self.soft_collision_punishment
+        
         return reward, done
     
     def action_space_sample(self) -> np.ndarray:
@@ -236,7 +268,12 @@ class ToyMeasurementControl:
         # Uniform Discrete sampling with a specified number of options
         if self.action_space_sample_heuristic == 'uniform_discrete':
             velocity = np.random.choice(np.linspace(0, self.car.max_velocity, self.velocity_options))
-            steering_angle = np.random.choice(np.linspace(-self.car.max_steering_angle, self.car.max_steering_angle, self.steering_angle_options))
+            
+            # If velocity is 0, steering angle must be 0 as well since the car cannot turn without moving
+            if velocity == 0:
+                steering_angle = 0
+            else:
+                steering_angle = np.random.choice(np.linspace(-self.car.max_steering_angle, self.car.max_steering_angle, self.steering_angle_options))
             
         return np.array([velocity, steering_angle])
     
@@ -252,6 +289,28 @@ class ToyMeasurementControl:
         actions = np.array(np.meshgrid(velocity, steering_angle)).T.reshape(-1, 2)
             
         return actions
+    
+    def get_all_actions(self) -> np.ndarray:
+        """
+        Get all possible actions in the action space.
+        
+        :return: (np.ndarray) the possible actions
+        """
+        # Create a meshgrid of all possible actions
+        velocity = np.linspace(0, self.car.max_velocity, self.velocity_options)
+        steering_angle = np.linspace(-self.car.max_steering_angle, self.car.max_steering_angle, self.steering_angle_options)
+        actions = np.array(np.meshgrid(velocity, steering_angle)).T.reshape(-1, 2)
+            
+        # Iterate through the actions and remove the 0 velocity actions with non-zero steering angle
+        possible_actions = deepcopy(actions)
+        deletion_rows = []
+        for i in range(len(actions)):
+            if actions[i][0] == 0 and actions[i][1] != 0:
+                deletion_rows.append(i)
+            
+        possible_actions = np.delete(possible_actions, deletion_rows, axis=0)
+            
+        return possible_actions
     
     
 if __name__ == '__main__':

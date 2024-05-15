@@ -55,9 +55,6 @@ class VectorizedStaticKalmanFilter:
             R[i*2:i*2+2, i*2:i*2+2] = r
         
         return R
-        
-        # Old static method
-        # return self.p_dev**2 * np.eye(len(obs_indices) * 2)
     
     # Update step of KF, get posterior distribution, function of measurement and sensor
     def update(self, z, obs_indices, car_state, simulate=False, s_k_=None, P_k_=None):
