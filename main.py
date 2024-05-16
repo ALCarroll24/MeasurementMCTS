@@ -7,7 +7,6 @@ from vkf import VectorizedStaticKalmanFilter
 from mcts.mcts import MCTS
 from mcts.hash import hash_action, hash_state
 from mcts.tree_viz import render_graph, render_pyvis
-from mcts.pygraphviz import render_pygraphviz
 from flask_server import FlaskServer
 import time
 import argparse
@@ -33,12 +32,14 @@ class ToyMeasurementControl:
         self.action_space_sample_heuristic = 'uniform_discrete'
         self.velocity_options = 3  # number of discrete options for velocity
         self.steering_angle_options = 3  # number of discrete options for steering angle
+        self.reverse_option = False # whether to include a reverse option in the action space
+        self.reverse_speed = 5.0  # speed for reverse option
         self.horizon = 5 # length of the planning horizon
         self.expansion_branch_factor = -1  # number of branches when expanding a node (at least two, -1 for all possible actions)
         self.learn_iterations = 100  # number of learning iterations for MCTS
-        self.alpha = 0.2  # for evaluation, the weight of the distance error
-        self.beta = 0.8   # for evaluation, the weight of the heading error
-        self.evaluation_multiplier = 10.0  # multiplier for evaluation function
+        self.alpha = 0.  # for evaluation, the weight of the distance error
+        self.beta = 1.   # for evaluation, the weight of the heading error
+        self.evaluation_multiplier = 0.1  # multiplier for evaluation function
         self.soft_collision_buffer = 2.0  # buffer for soft collision (length from outline of OOI to new outline for all points)
         self.hard_collision_punishment = 1e8  # punishment for hard collision
         self.soft_collision_punishment = 1e3  # punishment for soft collision
@@ -55,14 +56,15 @@ class ToyMeasurementControl:
             self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
         
         # Create a car object
-        self.car = Car(self.ui, np.array([50.0, 40.0]), 90, self.hz)
+        self.car = Car(self.ui, np.array([30.0, 60.0]), 90, self.hz)
         
         # Create an OOI object
         self.ooi = OOI(self.ui, position=(50,50), car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
          
         # Create a Static Vectorized Kalman Filter object
         # self.vkf = VectorizedStaticKalmanFilter(np.array([50.0]*8), np.diag([8.0]*8), 4.0)
-        self.vkf = VectorizedStaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([8.0, 8.0, 0.001, 0.001, 0.001, 0.001, 8.0, 8.0]), 4.0)
+        self.vkf = VectorizedStaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([8.0]*8), 4.0)
+        # self.vkf = VectorizedStaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([8.0, 8.0, 0.001, 0.001, 0.001, 0.001, 8.0, 8.0]), 4.0)
         
         # Compute all possible actions
         self.all_actions = self.get_all_actions()
@@ -277,18 +279,6 @@ class ToyMeasurementControl:
             
         return np.array([velocity, steering_angle])
     
-    def get_all_actions(self) -> np.ndarray:
-        """
-        Get all possible actions in the action space.
-        
-        :return: (np.ndarray) the possible actions
-        """
-        # Create a meshgrid of all possible actions
-        velocity = np.linspace(0, self.car.max_velocity, self.velocity_options)
-        steering_angle = np.linspace(-self.car.max_steering_angle, self.car.max_steering_angle, self.steering_angle_options)
-        actions = np.array(np.meshgrid(velocity, steering_angle)).T.reshape(-1, 2)
-            
-        return actions
     
     def get_all_actions(self) -> np.ndarray:
         """
@@ -308,7 +298,13 @@ class ToyMeasurementControl:
             if actions[i][0] == 0 and actions[i][1] != 0:
                 deletion_rows.append(i)
             
+        # Remove the rows with 0 velocity and non-zero steering angle
         possible_actions = np.delete(possible_actions, deletion_rows, axis=0)
+        
+        # # If reverse option is enabled, add a reverse option
+        # if self.reverse_option:
+        #     reverse_option = np.array([self.reverse_speed, 0.0])
+        #     possible_actions = np.vstack((possible_actions, reverse_option))
             
         return possible_actions
     

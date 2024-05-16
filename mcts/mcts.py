@@ -242,24 +242,38 @@ class MCTS:
         ooi_state = state[1]
         ooi_reshaped = np.reshape(ooi_state, (4, 2))
         
+        # Pull out covariances of corners and get trace for each corner
+        cov_state = state[2]
+        cov_diag = np.diag(cov_state)
+        corner_traces = np.zeros((int(cov_diag.shape[0]/2),))
+        
+        # Iterate through covariance diagonal elements
+        for i in range(corner_traces.shape[0]):
+            # Calculate trace of covariance matrix for each corner
+            corner_traces[i] = cov_diag[i*2] + cov_diag[(i*2) + 1]
+        
         # Calculate squared distance of Car to OOI points
         squared_dists = np.sum((ooi_reshaped - car_pos)**2, axis=1)
         
-        # Get smallest squared distance by finding the index of the minimum squared distance and then getting the value
-        closest_ooi_pt_index = np.argmin(squared_dists)
-        smallest_squared_dist = squared_dists[closest_ooi_pt_index]
+        # Create scaled cumulative distance and bearing outputs
+        cum_dist = 0.
+        cum_bearing = 0.
         
-        # Find bearing to closest OOI point (0 to 2pi)
-        ooi_bearing = np.arctan2(ooi_reshaped[closest_ooi_pt_index, 1] - car_pos[1], ooi_reshaped[closest_ooi_pt_index, 0] - car_pos[0])
+        # Iterate through each corner trace
+        for i in range(corner_traces.shape[0]):
+            # Find bearing to current corner
+            ooi_bearing = np.arctan2(ooi_reshaped[i, 1] - car_pos[1], ooi_reshaped[i, 0] - car_pos[0])
+            
+            # Subtract the car yaw to get the relative bearing to the OOI point
+            bearing_delta = abs(ooi_bearing - car_yaw)
+            
+            # Add covariance trace weighted bearing and squared distance to cumulative distance and bearing
+            cum_dist += corner_traces[i] * squared_dists[i]
+            cum_bearing += corner_traces[i] * bearing_delta
         
-        # Subtract the car yaw to get the relative bearing to the OOI point
-        raw_bearing_delta = ooi_bearing - car_yaw
-        
-        # Wrap the angle to be between -pi and pi and take the absolute value, this ensures we get the smallest angle to the OOI and it is positive
-        bearing_delta = np.abs(wrap_angle(raw_bearing_delta))
-        
-        # Return weighted convex combination (alpha and beta add to 1) of distance to closest OOI point and angle to OOI
-        return self.evaluation_multiplier * self.alpha * smallest_squared_dist + self.beta * bearing_delta
+        # Return weighted convex combination (alpha and beta add to 1) of cumulative covariance weighted distance and bearing
+        # This is negative because we want to minimize the distance and bearing (punishment for being far away or off bearing)
+        return -self.evaluation_multiplier * (self.alpha * cum_dist + self.beta * cum_bearing)
 
 
     # Random action evaluation, doesn't really make sense for this problem

@@ -86,7 +86,7 @@ def render_pyvis(root):
     
     ### Both show buttons and setting options don't work together
     # net.show_buttons()
-    # Set the hierarchical layout
+    # Set the hierarchical layout options
     hierarchical_options  = {
       "layout": {
         "hierarchical": {

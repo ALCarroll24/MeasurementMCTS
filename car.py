@@ -7,7 +7,7 @@ from typing import Tuple
 from shapely import Polygon
 
 class Car:
-    def __init__(self, ui, position, yaw, update_rate, length=4.0, width=2.0, max_range=20.0, max_bearing=45.0, max_velocity=10.0, max_steering_angle=45.0):
+    def __init__(self, ui, position, yaw, update_rate, length=4., width=2., max_range=20., max_bearing=45., min_velocity=-10., max_velocity=10., max_steering_angle=45.):
         self.ui = ui
         self.position = position  # x, y
         self.yaw = np.radians(yaw)  # Orientation
@@ -17,6 +17,7 @@ class Car:
         self.width = width
         self.max_range = max_range
         self.max_bearing = max_bearing
+        self.min_velocity = min_velocity
         self.max_velocity = max_velocity
         self.max_steering_angle = max_steering_angle
         self.velocity = 0.0
