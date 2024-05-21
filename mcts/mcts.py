@@ -8,7 +8,7 @@ import numpy as np
 # import gym
 from .nodes import DecisionNode, RandomNode
 from typing import Callable, List, Tuple, Any, Optional
-from utils import wrap_angle
+from utils import wrap_angle, min_max_normalize
 
 
 class MCTS:
@@ -267,9 +267,13 @@ class MCTS:
             # Subtract the car yaw to get the relative bearing to the OOI point
             bearing_delta = abs(ooi_bearing - car_yaw)
             
+            # Normalize both the distance and bearing to be between 0 and 1
+            norm_dist = min_max_normalize(squared_dists[i], 0., 2000.)
+            norm_bearing = min_max_normalize(bearing_delta, -np.pi, np.pi)
+            
             # Add covariance trace weighted bearing and squared distance to cumulative distance and bearing
-            cum_dist += corner_traces[i] * squared_dists[i]
-            cum_bearing += corner_traces[i] * bearing_delta
+            cum_dist += corner_traces[i] * norm_dist
+            cum_bearing += corner_traces[i] * norm_bearing
         
         # Return weighted convex combination (alpha and beta add to 1) of cumulative covariance weighted distance and bearing
         # This is negative because we want to minimize the distance and bearing (punishment for being far away or off bearing)
@@ -373,19 +377,45 @@ class MCTS:
 
         return a
 
-    ############################ Open Source Version ############################
     def best_action(self):
         """
-        At the end of the simulations returns the most visited action
-
-        :return: (float) the best action according to the number of visits
+        At the end of the simulations returns the highest mean reward action
+        
+        : return: (tuple) the best action according to the mean reward
         """
-
-        number_of_visits_children = [node.visits for node in self.root.children.values()]
-        index_best_action = np.argmax(number_of_visits_children)
-
-        a = list(self.root.children.values())[index_best_action].action
+        
+        # Create a list of the mean rewards of the children
+        children_key = list(self.root.children.keys())
+        children_values = list(self.root.children.values())
+        
+        # Initialize mean reward list
+        children_mean_rew = [0.0] * len(children_key)
+        
+        # Calculate the mean reward for each child
+        for i in range(len(children_key)):
+            children_mean_rew[i] = children_values[i].cumulative_reward / children_values[i].visits
+            
+        # Get the index of the highest mean reward
+        index_best_action = np.argmax(children_mean_rew)
+        
+        # Return the action corresponding to the highest mean reward
+        a = children_key[index_best_action]
+        
         return a
+
+    # ############################ Open Source Version ############################
+    # def best_action(self):
+    #     """
+    #     At the end of the simulations returns the most visited action
+
+    #     :return: (float) the best action according to the number of visits
+    #     """
+
+    #     number_of_visits_children = [node.visits for node in self.root.children.values()]
+    #     index_best_action = np.argmax(number_of_visits_children)
+
+    #     a = list(self.root.children.values())[index_best_action].action
+    #     return a
 
     ############################ Tianqi's Version ############################
     # def best_action(self) -> Any:

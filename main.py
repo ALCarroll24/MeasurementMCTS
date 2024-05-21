@@ -37,12 +37,12 @@ class ToyMeasurementControl:
         self.horizon = 5 # length of the planning horizon
         self.expansion_branch_factor = -1  # number of branches when expanding a node (at least two, -1 for all possible actions)
         self.learn_iterations = 100  # number of learning iterations for MCTS
-        self.alpha = 0.  # for evaluation, the weight of the distance error
-        self.beta = 1.   # for evaluation, the weight of the heading error
+        self.alpha = 0.7  # for evaluation, the weight of the distance error
+        self.beta = 0.3   # for evaluation, the weight of the heading error
         self.evaluation_multiplier = 0.1  # multiplier for evaluation function
-        self.soft_collision_buffer = 2.0  # buffer for soft collision (length from outline of OOI to new outline for all points)
+        self.soft_collision_buffer = 4.0  # buffer for soft collision (length from outline of OOI to new outline for all points)
         self.hard_collision_punishment = 1e8  # punishment for hard collision
-        self.soft_collision_punishment = 1e3  # punishment for soft collision
+        self.soft_collision_punishment = 1e8  # punishment for soft collision
         
         # Raise an error if alpha and beta do not sum to 1
         if self.alpha + self.beta != 1:
@@ -56,14 +56,19 @@ class ToyMeasurementControl:
             self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
         
         # Create a car object
-        self.car = Car(self.ui, np.array([30.0, 60.0]), 90, self.hz)
+        self.car = Car(self.ui, np.array([30.0, 60.0]), 90)
         
         # Create an OOI object
         self.ooi = OOI(self.ui, position=(50,50), car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
-         
+        
+        # Get and set OOI collision polygons
+        self.ooi_poly = self.ooi.get_collision_polygon()
+        self.ooi.soft_collision_polygon = self.ooi_poly.buffer(self.soft_collision_buffer)
+        self.soft_ooi_poly = self.ooi.soft_collision_polygon
+
         # Create a Static Vectorized Kalman Filter object
         # self.vkf = VectorizedStaticKalmanFilter(np.array([50.0]*8), np.diag([8.0]*8), 4.0)
-        self.vkf = VectorizedStaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([8.0]*8), 4.0)
+        self.vkf = VectorizedStaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([8.0]*8), 1.0)
         # self.vkf = VectorizedStaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([8.0, 8.0, 0.001, 0.001, 0.001, 0.001, 8.0, 8.0]), 4.0)
         
         # Compute all possible actions
@@ -117,6 +122,12 @@ class ToyMeasurementControl:
                 if self.one_iteration:
                     exit()
                 
+                # Get the next state by looking through tree based on action    
+                next_state = list(mcts.root.children[hash_action(action_vector)].children.values())[0].state
+                
+                # Call reward to print useful information about the state from reward function
+                reward, done = self.get_reward(next_state, action_vector, print_rewards=True)
+                print(f'Total Reward: {reward}')
                 
                 ############################ MANUAL CONTROL ############################
                 # Get the control inputs from the arrow keys, pass them to the car for update
@@ -132,13 +143,10 @@ class ToyMeasurementControl:
                 # Only render the MCTS tree if the UI was not paused before the last iteration so that the tree is not rendered multiple times
                 if not self.ui_was_paused:
                     render_pyvis(mcts.root)
-                    # render_pygraphviz(mcts.root)
-                    # render_graph(mcts.root, open=True)
                     self.ui_was_paused = True
                     
                 # Check if a node has been clicked
                 if self.last_node_hash_clicked != self.flask_server.node_clicked:
-                    
                     clicked_node = mcts.get_node(self.flask_server.node_clicked)
                     
                     if clicked_node is None:
@@ -161,13 +169,6 @@ class ToyMeasurementControl:
                 self.car.draw()
                 self.ooi.draw()
                 self.vkf.draw(self.ui)
-                
-                # ooi_poly = self.ooi.get_collision_polygon()
-                # soft_ooi_poly = ooi_poly.buffer(self.soft_collision_buffer)
-        
-                # # Draw the soft ooi poly to see if it is correct
-                # for x, y in soft_ooi_poly.exterior.coords:
-                #     self.ui.draw_circle((x, y), 0.1)
             
             # Update the ui to display the new state
             self.ui.update()
@@ -221,7 +222,7 @@ class ToyMeasurementControl:
         # Return the reward and the new state
         return new_state, reward, done
     
-    def get_reward(self, state, action) -> Tuple[float, bool]:
+    def get_reward(self, state, action, print_rewards=False) -> Tuple[float, bool]:
         """
         Get the reward of the new state-action pair.
         
@@ -241,18 +242,27 @@ class ToyMeasurementControl:
         # Find the reward
         reward = -trace
         
+        # Print trace for debugging
+        if print_rewards:
+            print(f'Trace Reward: {reward}')    
+        
         # Remove large reward when car enters hard or soft boundary
-        car_poly = self.car.get_car_polygon()
-        ooi_poly = self.ooi.get_collision_polygon()
-        soft_ooi_poly = ooi_poly.buffer(self.soft_collision_buffer)
+        car_poly = self.car.get_car_polygon(car_state)
         
         # If car is in collision with OOI, give a large negative reward
-        if car_poly.overlaps(ooi_poly):
+        if car_poly.overlaps(self.ooi_poly):
             reward -= self.hard_collision_punishment
             
+            if print_rewards:
+                print("Hard Collision")
+            
         # If car comes very close to OOI (soft collision), give a less large negative reward
-        if car_poly.overlaps(soft_ooi_poly):
+        if car_poly.overlaps(self.soft_ooi_poly):
             reward -= self.soft_collision_punishment
+            
+            if print_rewards:
+                print("Soft Collision")
+        
         
         return reward, done
     

@@ -7,21 +7,19 @@ from typing import Tuple
 from shapely import Polygon
 
 class Car:
-    def __init__(self, ui, position, yaw, update_rate, length=4., width=2., max_range=20., max_bearing=45., min_velocity=-10., max_velocity=10., max_steering_angle=45.):
+    def __init__(self, ui, position, yaw, length=4., width=2., max_range=100., max_bearing=45., max_velocity=10., max_steering_angle=45., range_arrow_length=10.0):
         self.ui = ui
         self.position = position  # x, y
         self.yaw = np.radians(yaw)  # Orientation
-        self.hz = update_rate
-        self.period = 1.0 / self.hz
         self.length = length
         self.width = width
         self.max_range = max_range
         self.max_bearing = max_bearing
-        self.min_velocity = min_velocity
         self.max_velocity = max_velocity
         self.max_steering_angle = max_steering_angle
         self.velocity = 0.0
         self.steering_angle = 0.0
+        self.range_arrow_length = range_arrow_length
 
     def update(self, dt, action,  simulate=False, starting_state=None):
         # Pull the inputs from the action tuple
@@ -57,14 +55,24 @@ class Car:
         else:
             return np.array([position[0], position[1], yaw])
             
-    def get_car_polygon(self):
-        points_no_yaw = [[self.position[0] + self.width / 2, self.position[1] + self.length / 2],
-                         [self.position[0] + self.width / 2, self.position[1] - self.length / 2],
-                         [self.position[0] - self.width / 2, self.position[1] - self.length / 2],
-                         [self.position[0] - self.width / 2, self.position[1] + self.length / 2]]
+    def get_car_polygon(self, car_state=None):
+        # If we are calculating the polygon for a different state, use that state
+        if car_state is not None:
+            position = car_state[0:2]
+            yaw = car_state[2]
+            
+        # Otherwise, use the current state
+        else:
+            position = self.position
+            yaw = self.yaw
+        
+        points_no_yaw = [[position[0] + self.width / 2, position[1] + self.length / 2],
+                         [position[0] + self.width / 2, position[1] - self.length / 2],
+                         [position[0] - self.width / 2, position[1] - self.length / 2],
+                         [position[0] - self.width / 2, position[1] + self.length / 2]]
         
         # Rotate the points by the yaw
-        points = rotate(np.array(points_no_yaw) - self.position, self.yaw - np.radians(90)) + self.position
+        points = rotate(np.array(points_no_yaw) - position, yaw - np.radians(90)) + position
         
         return Polygon(points)
         
@@ -74,10 +82,10 @@ class Car:
         self.ui.draw_rectangle(self.position, self.length, self.width, self.yaw)
         
         # Draw range and bearing indicators
-        self.ui.draw_arrow(self.position, self.position + np.array([np.cos(self.yaw + np.radians(self.max_bearing))*self.max_range,
-                                                                    np.sin(self.yaw + np.radians(self.max_bearing))*self.max_range]))
-        self.ui.draw_arrow(self.position, self.position + np.array([np.cos(self.yaw - np.radians(self.max_bearing))*self.max_range,
-                                                                    np.sin(self.yaw - np.radians(self.max_bearing))*self.max_range]))
+        self.ui.draw_arrow(self.position, self.position + np.array([np.cos(self.yaw + np.radians(self.max_bearing))*self.range_arrow_length,
+                                                                    np.sin(self.yaw + np.radians(self.max_bearing))*self.range_arrow_length]))
+        self.ui.draw_arrow(self.position, self.position + np.array([np.cos(self.yaw - np.radians(self.max_bearing))*self.range_arrow_length,
+                                                                    np.sin(self.yaw - np.radians(self.max_bearing))*self.range_arrow_length]))
         
         # # Draw the car's polygon to check it is working
         # x, y = self.get_car_polygon().exterior.xy
@@ -90,10 +98,10 @@ class Car:
         self.ui.draw_rectangle(state[0:2], self.length, self.width, state[2])
                                
         # Draw range and bearing indicators
-        self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[2] + np.radians(self.max_bearing))*self.max_range,
-                                                                np.sin(state[2] + np.radians(self.max_bearing))*self.max_range]))
-        self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[2] - np.radians(self.max_bearing))*self.max_range,
-                                                                np.sin(state[2] - np.radians(self.max_bearing))*self.max_range]))
+        self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[2] + np.radians(self.max_bearing))*self.range_arrow_length,
+                                                                np.sin(state[2] + np.radians(self.max_bearing))*self.range_arrow_length]))
+        self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[2] - np.radians(self.max_bearing))*self.range_arrow_length,
+                                                                np.sin(state[2] - np.radians(self.max_bearing))*self.range_arrow_length]))
         
     def test_actions(self):
         # Test drive the car around using a for loop

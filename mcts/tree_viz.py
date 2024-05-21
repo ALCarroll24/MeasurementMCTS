@@ -91,8 +91,8 @@ def render_pyvis(root):
       "layout": {
         "hierarchical": {
           "enabled": True,
-          "levelSeparation": 410,
-          "nodeSpacing": 250,
+          "levelSeparation": 700,
+          "nodeSpacing": 180,
           "sortMethod": "directed" # hubsize, directed
         }
       },

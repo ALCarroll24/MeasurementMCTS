@@ -1,5 +1,5 @@
 import numpy as np
-from shapely import Polygon
+from shapely import Polygon, Point, LineString
 from utils import wrap_angle, wrapped_angle_diff, angle_in_interval
 from typing import Union
 
@@ -21,6 +21,9 @@ class OOI:
         
         # Calculate corner positions
         self.corners = self.get_corners()
+        
+        # Calculate the collision polygon
+        self.collision_polygon = self.get_collision_polygon()
         
     def get_corners(self):
         # Calculate corner positions
@@ -77,11 +80,57 @@ class OOI:
         
         # Create an OOI polygon from the corners
         return Polygon(corners)
+    
+    def simulate_observation(self, car_state, nearest_observable=False, draw=False):
+        car_pos = Point(car_state[0:2])
+        
+        # Get the coordinates of the corners of the OOI
+        ooi_corners = list(self.collision_polygon.exterior.coords)[:-1]  # Exclude the repeated first/last point
+
+        # Create line of sight from the car center to each corner of the OOI
+        lines_of_sight = [LineString([car_pos, Point(corner)]) for corner in ooi_corners]
+        
+        # Check if each line of sight intersects with the OOI
+        intersections = [line.crosses(ooi) for line in lines_of_sight]
+        
+        for i, corner in enumerate(ooi_corners):
+            # If point is non-observable and nearest_observable is set
+            if not intersections[i] and nearest_observable:
+                # Return car position projected to corner observable line
+                extension_length = 100
+                
+                # Get direction vector and extend it then add back the initial corner
+                prev_corner = (ooi_corners[i-1] - corner) * extension_length + ooi_corners[i-1]
+                next_corner = (ooi_corners[(i+1)%4] - corner) * extension_length + ooi_corners[(i+1)%4]
+                
+                # Make these into Line Strings to do math
+                obs_line1 = LineString([corner, prev_corner])
+                obs_line2 = LineString([corner, next_corner])
+                
+                # Project the car position onto the line, get length along line
+                obs_len1 = obs_line1.project(car_pos)
+                obs_len2 = obs_line2.project(car_pos)
+                
+                # Use length along line to get projected point
+                obs_pt1 = obs_line1.interpolate(obs_len1)
+                obs_pt2 = obs_line2.interpolate(obs_len2)
+                
+                # Draw the projected points
+                if draw:
+                    self.ui.draw_arrow(car_pos, obs_pt1)
+                    self.ui.draw_arrow(car_pos, obs_pt2)
+                
+
         
         
     def draw(self):
         # Draw main rectangle
         self.ui.draw_rectangle(self.position, self.width, self.length, 0)
+        
+        # Draw soft collision polygon if available
+        if self.soft_collision_polygon is not None:
+            for x, y in self.soft_collision_polygon.exterior.coords:
+                self.ui.draw_circle((x, y), 0.12)
         
         # Draw the collision polygon to ensure it matches
         # for x, y in self.get_collision_polygons().exterior.coords:
