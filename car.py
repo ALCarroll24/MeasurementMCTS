@@ -20,6 +20,13 @@ class Car:
         self.velocity = 0.0
         self.steering_angle = 0.0
         self.range_arrow_length = range_arrow_length
+        
+        self.A = np.eye(3)
+        
+    def B(self, dt, yaw):
+        return np.array([[np.cos(yaw) * dt, 0],
+                         [np.sin(yaw) * dt, 0],
+                         [0, dt]])
 
     def update(self, dt, action,  simulate=False, starting_state=None):
         # Pull the inputs from the action tuple
@@ -38,10 +45,6 @@ class Car:
         position[0] += velocity * np.cos(yaw) * dt
         position[1] += velocity * np.sin(yaw) * dt
         yaw += (velocity / self.length) * np.tan(steering_angle) * dt
-        
-        # Saturate inputs
-        velocity = sat_value(velocity, self.max_velocity)
-        steering_angle = sat_value(steering_angle, np.radians(self.max_steering_angle))
         
         # Keep angle between [-pi, pi]
         yaw = wrap_angle(yaw)

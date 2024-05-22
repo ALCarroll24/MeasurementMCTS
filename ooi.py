@@ -90,7 +90,7 @@ class OOI:
         # Create line of sight from the car center to each corner of the OOI
         lines_of_sight = [LineString([car_pos, Point(corner)]) for corner in ooi_corners]
         
-        # Check if each line of sight intersects with the OOI
+        # Check if each line of sight cross the OOI (which means it is not observable)
         intersections = [line.crosses(ooi) for line in lines_of_sight]
         
         for i, corner in enumerate(ooi_corners):
