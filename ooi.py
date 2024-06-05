@@ -1,5 +1,5 @@
 import numpy as np
-from shapely import Polygon, Point, LineString
+from shapely import Polygon
 from utils import wrap_angle, wrapped_angle_diff, angle_in_interval
 from typing import Union
 
@@ -32,7 +32,7 @@ class OOI:
         corners[1, :] = self.position + np.array([self.width / 2, -self.length / 2])
         corners[2, :] = self.position + np.array([-self.width / 2, -self.length / 2])
         corners[3, :] = self.position + np.array([-self.width / 2, self.length / 2])
-        
+            
         # Find the angle range with which this corner is observable
         self.corner_bearing_ranges = np.zeros((4, 2))
         for i, corner in enumerate(corners):
@@ -69,8 +69,9 @@ class OOI:
         # print("Corner bearing ranges:", np.degrees(corner_bearing_ranges))
         
         # Rotate corners TODO: This rotates around (0,0) and needs to be done some other way
-        # rotation_matrix = np.array([[np.cos(self.yaw), -np.sin(self.yaw)], [np.sin(self.yaw), np.cos(self.yaw)]])
-        # corners = np.matmul(rotation_matrix, corners.T).T
+        # R = np.array([[np.cos(self.yaw), -np.sin(self.yaw)], [np.sin(self.yaw), np.cos(self.yaw)]])
+        # corners = R @ (corners.T - self.position).T + self.position
+        
         return corners
     
     # Return the collision polygon for the OOI
@@ -80,47 +81,6 @@ class OOI:
         
         # Create an OOI polygon from the corners
         return Polygon(corners)
-    
-    def simulate_observation(self, car_state, nearest_observable=False, draw=False):
-        car_pos = Point(car_state[0:2])
-        
-        # Get the coordinates of the corners of the OOI
-        ooi_corners = list(self.collision_polygon.exterior.coords)[:-1]  # Exclude the repeated first/last point
-
-        # Create line of sight from the car center to each corner of the OOI
-        lines_of_sight = [LineString([car_pos, Point(corner)]) for corner in ooi_corners]
-        
-        # Check if each line of sight cross the OOI (which means it is not observable)
-        intersections = [line.crosses(ooi) for line in lines_of_sight]
-        
-        for i, corner in enumerate(ooi_corners):
-            # If point is non-observable and nearest_observable is set
-            if not intersections[i] and nearest_observable:
-                # Return car position projected to corner observable line
-                extension_length = 100
-                
-                # Get direction vector and extend it then add back the initial corner
-                prev_corner = (ooi_corners[i-1] - corner) * extension_length + ooi_corners[i-1]
-                next_corner = (ooi_corners[(i+1)%4] - corner) * extension_length + ooi_corners[(i+1)%4]
-                
-                # Make these into Line Strings to do math
-                obs_line1 = LineString([corner, prev_corner])
-                obs_line2 = LineString([corner, next_corner])
-                
-                # Project the car position onto the line, get length along line
-                obs_len1 = obs_line1.project(car_pos)
-                obs_len2 = obs_line2.project(car_pos)
-                
-                # Use length along line to get projected point
-                obs_pt1 = obs_line1.interpolate(obs_len1)
-                obs_pt2 = obs_line2.interpolate(obs_len2)
-                
-                # Draw the projected points
-                if draw:
-                    self.ui.draw_arrow(car_pos, obs_pt1)
-                    self.ui.draw_arrow(car_pos, obs_pt2)
-                
-
         
         
     def draw(self):

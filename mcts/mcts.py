@@ -8,7 +8,6 @@ import numpy as np
 # import gym
 from .nodes import DecisionNode, RandomNode
 from typing import Callable, List, Tuple, Any, Optional
-from utils import wrap_angle, min_max_normalize
 
 
 class MCTS:
@@ -30,9 +29,6 @@ class MCTS:
         _hash_state: Callable[[Any], Tuple],
         expansion_branch_factor: int = 2,
         deterministic: bool = True,
-        alpha: float = 0.5,
-        beta: float = 0.5,
-        evaluation_multiplier: float = 1.0,
     ):
         
         self.env = env
@@ -41,9 +37,6 @@ class MCTS:
         self._initialize_hash(_hash_action, _hash_state)
         self.expansion_branch_factor = expansion_branch_factor
         self.deterministic = deterministic
-        self.alpha = alpha
-        self.beta = beta
-        self.evaluation_multiplier = evaluation_multiplier
 
     def get_node(self, node_hash: int) -> Optional[DecisionNode]:
         """
@@ -203,8 +196,8 @@ class MCTS:
         
         
         ### SIMULATION PHASE
-        # Currently utilizing random actions to evaluate reward (general evaluation, the monte carlo part)
-        cumulative_reward = self.evaluate(decision_node.state)
+        # Custom evaluation function in the environment class
+        cumulative_reward = self.env.evaluate(decision_node.state)
         decision_node.evaluation_reward = cumulative_reward
         
         
@@ -225,60 +218,6 @@ class MCTS:
         new_decision_node = self.update_decision_node(new_decision_node, new_random_node, self._hash_state)
         new_decision_node.reward = r
         new_random_node.reward = r
-
-    def evaluate(self, state) -> float:
-        """
-        Evaluates a DecisionNode by using a convex combination of distance to closest OOI point and angle to OOI.
-        
-        :param env: (gym.env) gym environemt that describes the state at the node to evaulate.
-        :return: (float) the cumulative reward observed during the tree traversing.
-        """
-        # Pull out the car position and yaw from the state
-        car_state = state[0]
-        car_pos = car_state[0:2]
-        car_yaw = car_state[2]
-        
-        # Pull out the OOI corner positions from the state
-        ooi_state = state[1]
-        ooi_reshaped = np.reshape(ooi_state, (4, 2))
-        
-        # Pull out covariances of corners and get trace for each corner
-        cov_state = state[2]
-        cov_diag = np.diag(cov_state)
-        corner_traces = np.zeros((int(cov_diag.shape[0]/2),))
-        
-        # Iterate through covariance diagonal elements
-        for i in range(corner_traces.shape[0]):
-            # Calculate trace of covariance matrix for each corner
-            corner_traces[i] = cov_diag[i*2] + cov_diag[(i*2) + 1]
-        
-        # Calculate squared distance of Car to OOI points
-        squared_dists = np.sum((ooi_reshaped - car_pos)**2, axis=1)
-        
-        # Create scaled cumulative distance and bearing outputs
-        cum_dist = 0.
-        cum_bearing = 0.
-        
-        # Iterate through each corner trace
-        for i in range(corner_traces.shape[0]):
-            # Find bearing to current corner
-            ooi_bearing = np.arctan2(ooi_reshaped[i, 1] - car_pos[1], ooi_reshaped[i, 0] - car_pos[0])
-            
-            # Subtract the car yaw to get the relative bearing to the OOI point
-            bearing_delta = abs(ooi_bearing - car_yaw)
-            
-            # Normalize both the distance and bearing to be between 0 and 1
-            norm_dist = min_max_normalize(squared_dists[i], 0., 2000.)
-            norm_bearing = min_max_normalize(bearing_delta, -np.pi, np.pi)
-            
-            # Add covariance trace weighted bearing and squared distance to cumulative distance and bearing
-            cum_dist += corner_traces[i] * norm_dist
-            cum_bearing += corner_traces[i] * norm_bearing
-        
-        # Return weighted convex combination (alpha and beta add to 1) of cumulative covariance weighted distance and bearing
-        # This is negative because we want to minimize the distance and bearing (punishment for being far away or off bearing)
-        return -self.evaluation_multiplier * (self.alpha * cum_dist + self.beta * cum_bearing)
-
 
     # Random action evaluation, doesn't really make sense for this problem
     # def evaluate(self, env, state) -> float:
