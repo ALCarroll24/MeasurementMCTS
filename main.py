@@ -40,12 +40,13 @@ class ToyMeasurementControl:
         self.horizon = 5 # length of the planning horizon
         self.expansion_branch_factor = -1  # number of branches when expanding a node (at least two, -1 for all possible actions)
         self.learn_iterations = 100  # number of learning iterations for MCTS
+        self.exploration_factor = 0  # exploration factor for MCTS
         
-        self.eval_dist_scale = 0.      # for evaluation, the weight of the distance error
-        self.eval_bearing_scale = 0.   # for evaluation, the weight of the heading error
+        self.eval_dist_scale = 0.2      # for evaluation, the weight of the distance error
+        self.eval_bearing_scale = 0.8   # for evaluation, the weight of the heading error
         self.eval_ocl_turn_scale = 0.  # for evaluation, the weight of the occlusion turn steps
         self.eval_ocl_dist_scale = 0.  # for evaluation, the weight of the occlusion distance steps
-        self.evaluation_multiplier = 0.1  # multiplier for evaluation function
+        self.evaluation_multiplier = 0.  # multiplier for evaluation function
         
         self.soft_collision_buffer = 4.0  # buffer for soft collision (length from outline of OOI to new outline for all points)
         self.hard_collision_punishment = 1e8  # punishment for hard collision
@@ -112,16 +113,19 @@ class ToyMeasurementControl:
                 # print("NEW MCTS ITERATION-------------------")
                 # print()
                 # print("Initial State: ", self.get_state())
-                mcts = MCTS(initial_obs=self.get_state(), env=self, K=0.3**5,
+                mcts = MCTS(initial_obs=self.get_state(), env=self, K=self.exploration_factor,
                             _hash_action=hash_action, _hash_state=hash_state,
                             expansion_branch_factor=self.expansion_branch_factor)
                 mcts.learn(self.learn_iterations, progress_bar=False)
-                action_vector = mcts.best_action()
-                print("MCTS Action: ", action_vector)
                 
                 # If we are doing one iteration for profiling, exit
                 if self.one_iteration:
+                    render_pyvis(mcts.root)
                     exit()
+                    
+                # Get the best action from the MCTS tree
+                action_vector = mcts.best_action()
+                print("MCTS Action: ", action_vector)
                 
                 # Get the next state by looking through tree based on action    
                 next_state = list(mcts.root.children[hash_action(action_vector)].children.values())[0].state
@@ -404,7 +408,7 @@ class ToyMeasurementControl:
         # Return weighted convex combination (alpha and beta add to 1) of cumulative covariance weighted distance and bearing
         # This is negative because we want to minimize the distance and bearing (punishment for being far away or off bearing)
         evaluation_value = -self.evaluation_multiplier * (self.eval_dist_scale * cum_dist + self.eval_bearing_scale * cum_bearing + cum_occlusion)
-        print("Evaluation Value: ", evaluation_value)
+
         return evaluation_value
     
     def action_space_sample(self) -> np.ndarray:
