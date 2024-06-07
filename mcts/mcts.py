@@ -171,10 +171,6 @@ class MCTS:
             # Set the reward of the new nodes
             new_decision_node.reward = r
             new_random_node.reward = r
-            
-            # If this is a new decision node (cumulative reward 0), set the random node cumulative reward to the reward
-            if new_random_node.cumulative_reward == 0:
-                new_random_node.cumulative_reward = r
 
             # Continue the tree traversal
             decision_node = new_decision_node
@@ -206,7 +202,11 @@ class MCTS:
         # Custom evaluation function in the environment class
         cumulative_reward = self.env.evaluate(decision_node.state)
         decision_node.evaluation_reward = cumulative_reward
-        print(f'Evaluation reward: {cumulative_reward}')
+        
+        # print("Evaluation reward: ", cumulative_reward)
+        
+        # Add the reward step reward to the cumulative reward
+        cumulative_reward += decision_node.reward
         
         ### BACKPROPAGATION PHASE
         # Back propagate the reward back to the root
@@ -262,45 +262,6 @@ class MCTS:
         """
         new_state, r, done = env.step(random_node.parent.state, random_node.action)
         return DecisionNode(state=new_state, parent=random_node, is_final=done), r
-
-    # def select(
-    #     self, 
-    #     x: DecisionNode,
-    # ) -> Any:
-    #     """
-    #     Selects the action to play from the current decision node
-
-    #     :param x: (DecisionNode) current decision node
-    #     :return: action to play
-    #     """
-    #     scoring = False
-    #     # If there are no random node children (actions) of this decision node
-    #     if len(x.children) == 0:            
-    #         # Create all of the random nodes for the actions and create the next decision node (state) to get reward
-    #         for a in self.env.get_all_actions():
-    #             # Use environment to get the next state and reward
-    #             new_state, r, done = self.env.step(x.state, a)
-                
-    #             # Add the random node (action) to the decision node
-    #             x.add_children(RandomNode(a, parent=x), hash_preprocess=self._hash_action)
-                
-    #             # Add the decision node (state) as a child of the random node we just made
-    #             new_decision_node = DecisionNode(state=new_state, parent=x.children[self._hash_action(a)], is_final=done)
-    #             x.children[self._hash_action(a)].add_children(new_decision_node, hash_preprocess=self._hash_state)
-
-    #     def scoring(k):
-    #         if x.children[k].visits > 0:
-    #             print("In scoring function")
-    #             scoring = True
-    #             return x.children[k].cumulative_reward/x.children[k].visits + \
-    #                 self.K*np.sqrt(np.log(x.visits)/x.children[k].visits)
-    #         else:
-    #             return np.inf
-
-    #     a = max(x.children, key=scoring)
-    #     if scoring:
-    #         print("Action selected: ", a)
-    #     return a
     
     def select(
         self, 
@@ -320,11 +281,6 @@ class MCTS:
                 return np.inf
 
         a = max(x.children, key=scoring)
-        
-        if x.is_root:
-            for k, v in x.children.items():
-                print(f'Action: {k}, Visits: {v.visits}, UCB: {scoring(k)}, Reward: {v.cumulative_reward}')
-            print()
 
         return a
 
@@ -353,61 +309,6 @@ class MCTS:
         a = children_key[index_best_action]
         
         return a
-
-    # ############################ Open Source Version ############################
-    # def best_action(self):
-    #     """
-    #     At the end of the simulations returns the most visited action
-
-    #     :return: (float) the best action according to the number of visits
-    #     """
-
-    #     number_of_visits_children = [node.visits for node in self.root.children.values()]
-    #     index_best_action = np.argmax(number_of_visits_children)
-
-    #     a = list(self.root.children.values())[index_best_action].action
-    #     return a
-
-    ############################ Tianqi's Version ############################
-    # def best_action(self) -> Any:
-    #     """
-    #     At the end of the simulations returns the most visited action
-
-    #     :return: (float) the best action according to the number of visits
-    #     """
-
-    #     action_vector = list()
-
-    #     decision_node = self.root
-    #     # depth = 0
-    #     while not decision_node.is_final:
-    #         # depth += 1
-    #         number_of_visits_children = [node.visits for node in decision_node.children.values()]
-    #         # avg_reward_children = [node.cumulative_reward/node.visits for node in decision_node.children.values()]
-    #         # print(f'layer {depth}: {number_of_visits_children}')
-    #         indices_most_visit = np.argwhere(number_of_visits_children == np.amax(number_of_visits_children)).flatten().tolist()
-    #         # this may contain more than 1 children
-    #         if len(indices_most_visit) == 1:
-    #             index_best_action = indices_most_visit[0]
-    #         else:
-    #             avg_reward_list = []
-    #             for index in indices_most_visit:
-    #                 node = list(decision_node.children.values())[index]
-    #                 element = (index, node.cumulative_reward/node.visits)
-    #                 avg_reward_list.append(element)
-    #             index_best_action = max(avg_reward_list, key = lambda x: x[1])[0]
-
-    #         # index_best_action = np.argmax(number_of_visits_children)
-    #         random_node = list(decision_node.children.values())[index_best_action]
-    #         a = random_node.action
-    #         action_vector.append(a)
-    #         # find next decision state, only for determinisitic case
-    #         # TODO need to consider the stochastic case
-    #         assert len(random_node.children) == 1, print(random_node.children)
-    #         decision_node = list(random_node.children.values())[0]
-
-    #     # print("action output is {}".format(a))
-    #     return action_vector
 
     def learn(
         self, 

@@ -42,11 +42,11 @@ class ToyMeasurementControl:
         self.learn_iterations = 100  # number of learning iterations for MCTS
         self.exploration_factor = 0  # exploration factor for MCTS
         
-        self.eval_dist_scale = 0.2      # for evaluation, the weight of the distance error
+        self.eval_dist_scale = 0.2    # for evaluation, the weight of the distance error
         self.eval_bearing_scale = 0.8   # for evaluation, the weight of the heading error
-        self.eval_ocl_turn_scale = 0.  # for evaluation, the weight of the occlusion turn steps
-        self.eval_ocl_dist_scale = 0.  # for evaluation, the weight of the occlusion distance steps
-        self.evaluation_multiplier = 0.  # multiplier for evaluation function
+        self.eval_ocl_turn_scale = 1000.  # for evaluation, the weight of the occlusion turn steps
+        self.eval_ocl_dist_scale = 1000.  # for evaluation, the weight of the occlusion distance steps
+        self.evaluation_multiplier = 10.  # multiplier for evaluation function
         
         self.soft_collision_buffer = 4.0  # buffer for soft collision (length from outline of OOI to new outline for all points)
         self.hard_collision_punishment = 1e8  # punishment for hard collision
@@ -60,7 +60,7 @@ class ToyMeasurementControl:
             self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
         
         # Create a car object
-        self.car = Car(self.ui, np.array([30.0, 60.0]), 90)
+        self.car = Car(self.ui, np.array([10.0, 60.0]), 0)
         
         # Create an OOI object
         self.ooi = OOI(self.ui, position=(50,50), car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
@@ -131,8 +131,8 @@ class ToyMeasurementControl:
                 next_state = list(mcts.root.children[hash_action(action_vector)].children.values())[0].state
                 
                 # Call reward to print useful information about the state from reward function
-                reward, done = self.get_reward(next_state, action_vector, print_rewards=True)
-                print(f'Total Reward: {reward}')
+                # reward, done = self.get_reward(next_state, action_vector, print_rewards=True)
+                # print(f'Total Reward: {reward}')
                 
                 ############################ MANUAL CONTROL ############################
                 # Get the control inputs from the arrow keys, pass them to the car for update
@@ -355,7 +355,7 @@ class ToyMeasurementControl:
                     ##### First weighting is based on the number of timesteps to reach the observable point
                     
                     # Start with the difference in angle between the car and direction to observe the corner (extension point to corner angle)
-                    yaw_err = angle_difference(car_yaw, np.arctan2(obs_pt[1] - ooi_reshaped[i][1], obs_pt[0] - ooi_reshaped[i][0]))
+                    yaw_err = angle_difference(car_yaw, np.arctan2(ooi_reshaped[i][1] - obs_pt[1], ooi_reshaped[i][0] - obs_pt[0]))
                     
                     # Subtract half of the car fov since we can see the corner if it is within half of the fov
                     yaw_err -= np.deg2rad(self.car.max_bearing / 2)
@@ -369,6 +369,8 @@ class ToyMeasurementControl:
                     # Get number of timesteps to turn to be able to observe the corner
                     turn_steps = yaw_err / max_yaw
                     
+                    # print("Yaw Error ", j, "(degrees):", np.rad2deg(yaw_err), "Turn Steps:", turn_steps)
+                    
                     #### Second weighting is based on the distance to the observable point
                     # Find the squared distance to the observable point
                     dist_err = np.sum((obs_pt - car_pos)**2)
@@ -376,7 +378,7 @@ class ToyMeasurementControl:
                     # Get the number of steps to reach that point
                     dist_steps = np.sqrt(dist_err) / self.car.max_velocity
                     
-                    # print("Turn steps:", turn_steps, "Dist steps:", dist_steps)
+                    print("Distance Error ", j, "(m):", np.sqrt(dist_err), "Distance Steps:", dist_steps)
                     
                     #### Normalize the turn and distance steps to a max of 10 steps
                     turn_steps = min_max_normalize(turn_steps, 0, 10)
@@ -387,6 +389,9 @@ class ToyMeasurementControl:
                     
                 # Add the weighted minimum cost of the observable points to the cumulative occlusion
                 cum_occlusion += corner_traces[i] * np.min(obs_pt_costs)
+                print("Minimum index: ", np.argmin(obs_pt_costs))
+                print("Chosen observable point coords: ", obs_pts[np.argmin(obs_pt_costs)])
+                # print("Chosen observable point cost: ", np.min(obs_pt_costs))
 
                 
             # Otherwise weight based on bearing and distance to corner
@@ -408,6 +413,8 @@ class ToyMeasurementControl:
         # Return weighted convex combination (alpha and beta add to 1) of cumulative covariance weighted distance and bearing
         # This is negative because we want to minimize the distance and bearing (punishment for being far away or off bearing)
         evaluation_value = -self.evaluation_multiplier * (self.eval_dist_scale * cum_dist + self.eval_bearing_scale * cum_bearing + cum_occlusion)
+
+        print("Evaluation Value: ", evaluation_value)
 
         return evaluation_value
     
