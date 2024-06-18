@@ -31,26 +31,26 @@ class ToyMeasurementControl:
         
         # Parameters
         self.final_cov_trace = 0.1
-        self.velocity_options = 3  # number of discrete options for velocity
-        self.steering_angle_options = 3  # number of discrete options for steering angle
-        self.reverse_option = False # whether to include a reverse option in the action space
-        self.reverse_speed = 5.0  # speed for reverse option
+        self.velocity_options = 1  # number of discrete options for velocity
+        self.steering_angle_options = 9  # number of discrete options for steering angle
+        # self.reverse_option = False # whether to include a reverse option in the action space
+        # self.reverse_speed = 5.0  # speed for reverse option
         
         self.action_space_sample_heuristic = 'uniform_discrete'
         self.horizon = 5 # length of the planning horizon
         self.expansion_branch_factor = -1  # number of branches when expanding a node (at least two, -1 for all possible actions)
         self.learn_iterations = 100  # number of learning iterations for MCTS
-        self.exploration_factor = 0  # exploration factor for MCTS
+        self.exploration_factor = np.sqrt(2)  # exploration factor for MCTS
         
-        self.eval_dist_scale = 0.2    # for evaluation, the weight of the distance error
-        self.eval_bearing_scale = 0.8   # for evaluation, the weight of the heading error
-        self.eval_ocl_turn_scale = 1000.  # for evaluation, the weight of the occlusion turn steps
-        self.eval_ocl_dist_scale = 1000.  # for evaluation, the weight of the occlusion distance steps
-        self.evaluation_multiplier = 10.  # multiplier for evaluation function
+        self.eval_dist_scale = 0.1    # for evaluation, the weight of the distance error
+        self.eval_bearing_scale = 0.1   # for evaluation, the weight of the heading error
+        self.eval_ocl_dist_scale = 0.9  # for evaluation, the weight of the occlusion distance steps
+        self.eval_ocl_turn_scale = 0.1  # for evaluation, the weight of the occlusion turn steps
+        self.evaluation_multiplier = 0.1  # multiplier for evaluation function
         
         self.soft_collision_buffer = 4.0  # buffer for soft collision (length from outline of OOI to new outline for all points)
-        self.hard_collision_punishment = 1e8  # punishment for hard collision
-        self.soft_collision_punishment = 1e8  # punishment for soft collision
+        self.hard_collision_punishment = 1e4  # punishment for hard collision
+        self.soft_collision_punishment = 100  # punishment for soft collision
 
         # Create a plotter object unless we are profiling
         if self.one_iteration:
@@ -60,7 +60,7 @@ class ToyMeasurementControl:
             self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
         
         # Create a car object
-        self.car = Car(self.ui, np.array([10.0, 60.0]), 0)
+        self.car = Car(self.ui, np.array([10.0, 10.0]), 180)
         
         # Create an OOI object
         self.ooi = OOI(self.ui, position=(50,50), car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
@@ -71,12 +71,14 @@ class ToyMeasurementControl:
         self.soft_ooi_poly = self.ooi.soft_collision_polygon
 
         # Create a Static Vectorized Kalman Filter object
-        # self.vkf = VectorizedStaticKalmanFilter(np.array([50.0]*8), np.diag([8.0]*8), 4.0)
-        self.vkf = VectorizedStaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([8.0]*8), 1.0)
+        self.initial_variance_scalar = 8.0
+        self.vkf = VectorizedStaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([self.initial_variance_scalar]*8), 1.0)
+        # self.vkf = VectorizedStaticKalmanFilter(np.array([50.0]*8), np.diag([self.initial_variance_scalar]*8), 4.0)
         # self.vkf = VectorizedStaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([8.0, 8.0, 0.001, 0.001, 0.001, 0.001, 8.0, 8.0]), 4.0)
         
         # Compute all possible actions
         self.all_actions = self.get_all_actions()
+        print("Action Space: ", self.all_actions)
         
         # Save the last action (mainly used for relative manual control)
         self.last_action = np.array([0.0, 0.0])
@@ -128,7 +130,7 @@ class ToyMeasurementControl:
                 print("MCTS Action: ", action_vector)
                 
                 # Get the next state by looking through tree based on action    
-                next_state = list(mcts.root.children[hash_action(action_vector)].children.values())[0].state
+                # next_state = list(mcts.root.children[hash_action(action_vector)].children.values())[0].state
                 
                 # Call reward to print useful information about the state from reward function
                 # reward, done = self.get_reward(next_state, action_vector, print_rewards=True)
@@ -243,9 +245,12 @@ class ToyMeasurementControl:
         
         # Find whether the episode is done TODO: done needs to also account for horizon length
         done = trace < self.final_cov_trace
-
-        # Find the reward
-        reward = -trace
+        
+        # Normalize the trace between 0 and 1 (in this case this just divides by initial variance times the dimensions)
+        trace_norm = min_max_normalize(trace, 0, 8 * self.initial_variance_scalar)
+        
+        # Negate the trace to make it a reward (punishment for high trace)
+        reward = -trace_norm
         
         # Print trace for debugging
         if print_rewards:
@@ -261,9 +266,16 @@ class ToyMeasurementControl:
             if print_rewards:
                 print("Hard Collision")
             
-        # If car comes very close to OOI (soft collision), give a less large negative reward
+        # If car comes very close to OOI (soft collision), give a less large negative reward based on distance inside soft boundary
         if car_poly.overlaps(self.soft_ooi_poly):
-            reward -= self.soft_collision_punishment
+            # Find the car polygon's distance to the hard boundary
+            dist_to_ooi = car_poly.distance(self.ooi_poly)
+            
+            # Find the distance inside the soft boundary
+            dist_in_soft = self.soft_collision_buffer - dist_to_ooi
+            
+            # Reward is the percentage of the buffer distance inside the soft boundary squared
+            reward -= self.soft_collision_punishment * (dist_in_soft / self.soft_collision_buffer)**2
             
             if print_rewards:
                 print("Soft Collision")
@@ -341,11 +353,6 @@ class ToyMeasurementControl:
                 obs_pt1 = obs_line1.interpolate(obs_len1)
                 obs_pt2 = obs_line2.interpolate(obs_len2)
                 
-                # Draw the projected closest observation points
-                if draw:
-                    self.ui.draw_arrow(car_pos, *obs_pt1.coords)
-                    self.ui.draw_arrow(car_pos, *obs_pt2.coords)
-                    
                 # Convert into a numpy array
                 obs_pts = np.array([*obs_pt1.coords, *obs_pt2.coords])
                 
@@ -369,7 +376,7 @@ class ToyMeasurementControl:
                     # Get number of timesteps to turn to be able to observe the corner
                     turn_steps = yaw_err / max_yaw
                     
-                    # print("Yaw Error ", j, "(degrees):", np.rad2deg(yaw_err), "Turn Steps:", turn_steps)
+                    print("Yaw Error ", j, "(degrees):", np.rad2deg(yaw_err), "Turn Steps:", turn_steps)
                     
                     #### Second weighting is based on the distance to the observable point
                     # Find the squared distance to the observable point
@@ -387,6 +394,13 @@ class ToyMeasurementControl:
                     # Add the weighted turn and distance steps to the observable point costs to later find the minimum
                     obs_pt_costs[j] = self.eval_ocl_turn_scale * turn_steps + self.eval_ocl_dist_scale * dist_steps
                     
+                # Draw the minimum cost projected point we are using
+                if draw:
+                    if np.argmin(obs_pt_costs) == 0:
+                        self.ui.draw_arrow(car_pos, *obs_pt1.coords)
+                    else:
+                        self.ui.draw_arrow(car_pos, *obs_pt2.coords)
+
                 # Add the weighted minimum cost of the observable points to the cumulative occlusion
                 cum_occlusion += corner_traces[i] * np.min(obs_pt_costs)
                 print("Minimum index: ", np.argmin(obs_pt_costs))
@@ -448,8 +462,13 @@ class ToyMeasurementControl:
         
         :return: (np.ndarray) the possible actions
         """
+        # Check if velocity options is 1, if so, only one velocity option
+        if self.velocity_options == 1:
+            velocity = np.array([self.car.max_velocity])
+        else:
+            velocity = np.linspace(0, self.car.max_velocity, self.velocity_options)
+            
         # Create a meshgrid of all possible actions
-        velocity = np.linspace(0, self.car.max_velocity, self.velocity_options)
         steering_angle = np.linspace(-self.car.max_steering_angle, self.car.max_steering_angle, self.steering_angle_options)
         actions = np.array(np.meshgrid(velocity, steering_angle)).T.reshape(-1, 2)
             
