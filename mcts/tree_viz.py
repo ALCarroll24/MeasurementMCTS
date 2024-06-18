@@ -45,9 +45,14 @@ def add_nodes_and_edges_pyvis(node, net, parent_hash=None):
     
     # If this is a random node, make it square
     if "RandomNode" in str(type(node)):
+        # Check if mean reward can be calculated
+        if node.visits > 0:
+            mean_reward = node.cumulative_reward/(node.visits)
+        else:
+            mean_reward = 0
         # Build the text string label for the node
         label = "Action: " + " " + str(np.around(node.action, 2)) + "\n" + \
-            "Mean Reward: " + " " + str(round(node.cumulative_reward/(node.visits+1), 2)) + "\n" + \
+            "Mean Reward: " + " " + str(round(mean_reward, 2)) + "\n" + \
             "Cum Reward: " + " " + str(round(node.cumulative_reward, 2)) + "\n" + \
             "Visits: " + " " + str(round(node.visits, 2))
         net.add_node(node_hash, label=label, shape='square')
@@ -70,7 +75,7 @@ def add_nodes_and_edges_pyvis(node, net, parent_hash=None):
             "Reward: " + " " + str(round(node.reward, 2)) + "\n" + \
             "Visits: " + " " + str(round(node.visits, 2)) + "\n" + \
             "Evaluation Reward: " + " " + str(round(node.evaluation_reward, 2)) + "\n" + \
-            "Is Final: " + " " + str(node.is_final)
+            "Horizon Step: " + " " + str(node.state[3])
         net.add_node(node_hash, label=label)
     
     if parent_hash is not None:

@@ -51,3 +51,7 @@ def rotate(points: np.ndarray, angle):
 def min_max_normalize(value, min_value, max_value):
     # Normalize a value to the range [0, 1]
     return (value - min_value) / (max_value - min_value)
+
+def angle_difference(angle1, angle2):
+    # Find the difference between two angles
+    return np.abs(np.arctan2(np.sin(angle1 - angle2), np.cos(angle1 - angle2)))
