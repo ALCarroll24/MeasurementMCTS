@@ -55,7 +55,12 @@ def add_nodes_and_edges_pyvis(node, net, parent_hash=None):
             "Mean Reward: " + " " + str(round(mean_reward, 2)) + "\n" + \
             "Cum Reward: " + " " + str(round(node.cumulative_reward, 2)) + "\n" + \
             "Visits: " + " " + str(round(node.visits, 2))
-        net.add_node(node_hash, label=label, shape='square')
+            
+        # Find the node level (2 times the horizon step + 1 for the random node)
+        horizon_step = node.parent.state[3]
+        level = 2 * horizon_step + 1
+        
+        net.add_node(node_hash, label=label, shape='square', level=level)
     else:
         # Get corner covariance diagonals
         corner_covariance = np.diag(node.state[2])
@@ -76,7 +81,10 @@ def add_nodes_and_edges_pyvis(node, net, parent_hash=None):
             "Visits: " + " " + str(round(node.visits, 2)) + "\n" + \
             "Evaluation Reward: " + " " + str(round(node.evaluation_reward, 2)) + "\n" + \
             "Horizon Step: " + " " + str(node.state[3])
-        net.add_node(node_hash, label=label)
+            
+        # Find the level (2 times the horizon step)
+        level = 2 * node.state[3]
+        net.add_node(node_hash, label=label, level=level)
     
     if parent_hash is not None:
         net.add_edge(parent_hash, node_hash)
