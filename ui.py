@@ -6,20 +6,25 @@ import threading
 import webbrowser
 
 class MatPlotLibUI:
-    def __init__(self, update_rate=10, figsize=(8, 8), async_loop=False):
+    def __init__(self, update_rate=10, figsize=(8, 8), async_loop=False, title=None):
         # Initialize the Matplotlib figure and axes
         self.fig, self.ax = plt.subplots(figsize=figsize)
         # self.fig.canvas.mpl_connect('button_press_event', self.on_click)
         self.fig.canvas.mpl_connect('close_event', self.handle_close)
         self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
         
+        # If title is not none, set the title of the plot
+        if title is not None:
+            self.title = title
+            self.ax.set_title(title)
+        
         # Create Buttons
-        play_button_ax = self.fig.add_axes([0.3, 0.9, 0.2, 0.07])  # Adjust as necessary
+        play_button_ax = self.fig.add_axes([0.3, 0.94, 0.2, 0.03])  # Adjust as necessary
         self.play_button = Button(play_button_ax, 'Play/Pause', color='lightgoldenrodyellow', hovercolor='0.975')
         self.play_button.on_clicked(self.on_play_button_click)
         self.paused = False
         
-        viz_button_ax = self.fig.add_axes([0.52, 0.9, 0.2, 0.07])  # Adjust as necessary
+        viz_button_ax = self.fig.add_axes([0.52, 0.94, 0.2, 0.03])  # Adjust as necessary
         self.viz_button = Button(viz_button_ax, 'Visualize', color='lightgoldenrodyellow', hovercolor='0.975')
         self.viz_button.on_clicked(self.on_viz_button_click)
         
@@ -143,6 +148,9 @@ class MatPlotLibUI:
         """
         # Clear the current axes
         self.ax.clear()
+        
+        # Set title
+        self.ax.set_title(self.title)
         
         # Set the aspect of the plot to be equal
         self.ax.set_aspect('equal', adjustable='box')

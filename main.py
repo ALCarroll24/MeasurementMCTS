@@ -26,7 +26,7 @@ class ToyMeasurementControl:
             self.draw = True
             
         # Determine update rate
-        self.hz = 20.0
+        self.hz = 5.0
         self.period = 1.0 / self.hz
         
         # Parameters
@@ -37,16 +37,16 @@ class ToyMeasurementControl:
         # self.reverse_speed = 5.0  # speed for reverse option
         
         self.action_space_sample_heuristic = 'uniform_discrete'
-        self.horizon = 5 # length of the planning horizon
+        self.horizon = 20 # length of the planning horizon
         self.expansion_branch_factor = -1  # number of branches when expanding a node (at least two, -1 for all possible actions)
-        self.learn_iterations = 100  # number of learning iterations for MCTS
-        self.exploration_factor = np.sqrt(2)  # exploration factor for MCTS
+        self.learn_iterations = 400  # number of learning iterations for MCTS
+        self.exploration_factor = 0.001  # exploration factor for MCTS
         
-        self.eval_dist_scale = 0.1    # for evaluation, the weight of the distance error
-        self.eval_bearing_scale = 0.1   # for evaluation, the weight of the heading error
+        self.eval_dist_scale = 0.    # for evaluation, the weight of the distance error
+        self.eval_bearing_scale = 0.   # for evaluation, the weight of the heading error
         self.eval_ocl_dist_scale = 0.9  # for evaluation, the weight of the occlusion distance steps
         self.eval_ocl_turn_scale = 0.1  # for evaluation, the weight of the occlusion turn steps
-        self.evaluation_multiplier = 0.1  # multiplier for evaluation function
+        self.evaluation_multiplier = 0.  # multiplier for evaluation function
         
         self.soft_collision_buffer = 4.0  # buffer for soft collision (length from outline of OOI to new outline for all points)
         self.hard_collision_punishment = 1e4  # punishment for hard collision
@@ -56,11 +56,13 @@ class ToyMeasurementControl:
         if self.one_iteration:
             self.ui = None
         else:
-            self.ui = MatPlotLibUI(update_rate=self.hz)
+            title = f'period={self.period}, Explore factor={self.exploration_factor}, Horizon={self.horizon}, Learn Iterations={self.learn_iterations}\n' + \
+                    f'eval_all={self.evaluation_multiplier}, eval_dist={self.eval_dist_scale}, eval_bearing={self.eval_bearing_scale}, eval_ocl_dist={self.eval_ocl_dist_scale}, eval_ocl_turn={self.eval_ocl_turn_scale}'
+            self.ui = MatPlotLibUI(update_rate=self.hz, title=title)
             self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
         
         # Create a car object
-        self.car = Car(self.ui, np.array([10.0, 10.0]), 180)
+        self.car = Car(self.ui, np.array([10.0, 10.0]), 0)
         
         # Create an OOI object
         self.ooi = OOI(self.ui, position=(50,50), car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
@@ -376,7 +378,7 @@ class ToyMeasurementControl:
                     # Get number of timesteps to turn to be able to observe the corner
                     turn_steps = yaw_err / max_yaw
                     
-                    print("Yaw Error ", j, "(degrees):", np.rad2deg(yaw_err), "Turn Steps:", turn_steps)
+                    # print("Yaw Error ", j, "(degrees):", np.rad2deg(yaw_err), "Turn Steps:", turn_steps)
                     
                     #### Second weighting is based on the distance to the observable point
                     # Find the squared distance to the observable point
@@ -385,7 +387,7 @@ class ToyMeasurementControl:
                     # Get the number of steps to reach that point
                     dist_steps = np.sqrt(dist_err) / self.car.max_velocity
                     
-                    print("Distance Error ", j, "(m):", np.sqrt(dist_err), "Distance Steps:", dist_steps)
+                    # print("Distance Error ", j, "(m):", np.sqrt(dist_err), "Distance Steps:", dist_steps)
                     
                     #### Normalize the turn and distance steps to a max of 10 steps
                     turn_steps = min_max_normalize(turn_steps, 0, 10)
@@ -403,8 +405,8 @@ class ToyMeasurementControl:
 
                 # Add the weighted minimum cost of the observable points to the cumulative occlusion
                 cum_occlusion += corner_traces[i] * np.min(obs_pt_costs)
-                print("Minimum index: ", np.argmin(obs_pt_costs))
-                print("Chosen observable point coords: ", obs_pts[np.argmin(obs_pt_costs)])
+                # print("Minimum index: ", np.argmin(obs_pt_costs))
+                # print("Chosen observable point coords: ", obs_pts[np.argmin(obs_pt_costs)])
                 # print("Chosen observable point cost: ", np.min(obs_pt_costs))
 
                 
@@ -428,7 +430,7 @@ class ToyMeasurementControl:
         # This is negative because we want to minimize the distance and bearing (punishment for being far away or off bearing)
         evaluation_value = -self.evaluation_multiplier * (self.eval_dist_scale * cum_dist + self.eval_bearing_scale * cum_bearing + cum_occlusion)
 
-        print("Evaluation Value: ", evaluation_value)
+        # print("Evaluation Value: ", evaluation_value)
 
         return evaluation_value
     

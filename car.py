@@ -29,9 +29,10 @@ class Car:
                          [0, dt]])
 
     def update(self, dt, action,  simulate=False, starting_state=None):
-        # Pull the inputs from the action tuple
-        velocity, steering_angle = action
-            
+        # Pull the inputs from the action tuple and convert steering to radians
+        velocity, steering_angle_deg = action
+        steering_angle = np.radians(steering_angle_deg)
+        
         # If we are doing forward simulation, we need to pass in the starting state
         # MUY IMPORTANTE - take a copy of the state, otherwise we will be modifying the original state object
         if simulate is not None and starting_state is not None:
