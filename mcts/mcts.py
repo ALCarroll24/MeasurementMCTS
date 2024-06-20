@@ -8,6 +8,8 @@ import numpy as np
 # import gym
 from .nodes import DecisionNode, RandomNode
 from typing import Callable, List, Tuple, Any, Optional
+import concurrent.futures
+import os
 
 
 class MCTS:
@@ -126,7 +128,8 @@ class MCTS:
             decision_node.parent = random_node
             random_node.add_children(decision_node, hash_preprocess)
         else:
-            decision_node = random_node.children[hash_preprocess(decision_node.state)]
+            with random_node.lock:
+                decision_node = random_node.children[hash_preprocess(decision_node.state)]
 
         return decision_node
 
@@ -144,8 +147,10 @@ class MCTS:
         while (not decision_node.is_final) and decision_node.visits > 0:
             # print("Starting Decision node: ", decision_node)
             
-            # Get action from this decision node using UCB
-            a = self.select(decision_node)
+            # Get action from this decision node using UCB, acquire lock to prevent
+            # changes to the node while we are selecting
+            with decision_node.lock:
+                a = self.select(decision_node)
             # print(f"Action selected: {a}")
 
             # Create new random node or get the existing one from the action
@@ -169,8 +174,10 @@ class MCTS:
             # print(f"Updated Decision node: {new_decision_node}")
 
             # Set the reward of the new nodes
-            new_decision_node.reward = r
-            new_random_node.reward = r
+            with new_decision_node.lock:
+                new_decision_node.reward = r
+            with new_random_node.lock:
+                new_random_node.reward = r
 
             # Continue the tree traversal
             decision_node = new_decision_node
@@ -195,13 +202,16 @@ class MCTS:
                     decision_node.add_children(new_random_node, self._hash_action)
 
         # Add a visit since we ended traversal on this decision node
-        decision_node.visits += 1
+        with decision_node.lock:
+            decision_node.visits += 1
         
         
         ### SIMULATION PHASE
         # Custom evaluation function in the environment class
         cumulative_reward = self.env.evaluate(decision_node.state)
-        decision_node.evaluation_reward = cumulative_reward
+        
+        with decision_node.lock:
+            decision_node.evaluation_reward = cumulative_reward
         
         # print("Evaluation reward: ", cumulative_reward)
         
@@ -212,19 +222,26 @@ class MCTS:
         # Back propagate the reward back to the root
         while not decision_node.is_root:
             random_node = decision_node.parent
-            # cumulative_reward += random_node.reward
-            random_node.cumulative_reward += cumulative_reward
-            random_node.visits += 1
-            decision_node = random_node.parent
-            decision_node.visits += 1
 
-    def expand(self, decision_node: DecisionNode, action: np.ndarray):
-        # Random action -> random node -> environment step -> decision node
-        new_random_node = decision_node.next_random_node(action, self._hash_action)
-        (new_decision_node, r) = self.select_outcome(self.env, new_random_node)
-        new_decision_node = self.update_decision_node(new_decision_node, new_random_node, self._hash_state)
-        new_decision_node.reward = r
-        new_random_node.reward = r
+            with random_node.lock:
+                random_node.cumulative_reward += cumulative_reward
+                random_node.visits += 1
+
+            with decision_node.lock:
+                decision_node = random_node.parent
+                decision_node.visits += 1
+        
+        # Return True to indicate that the tree has been expanded
+        return True
+
+    # def expand(self, decision_node: DecisionNode, action: np.ndarray):
+    #     # Random action -> random node -> environment step -> decision node
+    #     new_random_node = decision_node.next_random_node(action, self._hash_action)
+    #     (new_decision_node, r) = self.select_outcome(self.env, new_random_node)
+    #     new_decision_node = self.update_decision_node(new_decision_node, new_random_node, self._hash_state)
+        
+    #     new_decision_node.reward = r
+    #     new_random_node.reward = r
 
     # Random action evaluation, doesn't really make sense for this problem
     # def evaluate(self, env, state) -> float:
@@ -327,12 +344,23 @@ class MCTS:
             iterations = range(Nsim)
         else:
             iterations = range(Nsim)
-        for _ in iterations:
             
-            # print("Next Learning Iteration")
-            # print("Node hash: ", self.root.__hash__())
-            # print("Root node: ", self.root)
+        for _ in iterations:
             self.grow_tree()
+
+    def learn_multithreaded(self, Nsim: int, num_threads: int):
+        """
+        Run learning iterations with multiple threads
+
+        :param: Nsim: (int) number of tree traversals to do
+        :param: num_threads: (int) number of threads to spread the work over
+        """
+
+        iterations_per_thread = Nsim // num_threads
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            for _ in range(num_threads):
+                executor.submit(self.learn(iterations_per_thread))
 
     # TODO: visualize the MCTS process
     def save(self, path=None, action_vector: Any = None):

@@ -1,3 +1,4 @@
+from threading import Lock
 from typing import List, Dict, Any, Tuple, Optional
 
 class DecisionNode:
@@ -27,6 +28,7 @@ class DecisionNode:
         self.evaluation_reward = evaluation_reward
         self.visits: int = 0
         self.reward: float = 0.0
+        self.lock = Lock()
 
     def add_children(
         self, 
@@ -41,8 +43,9 @@ class DecisionNode:
         if hash_preprocess is None:
             def hash_preprocess(x):
                 return x
-
-        self.children[hash_preprocess(random_node.action)] = random_node
+            
+        with self.lock:
+            self.children[hash_preprocess(random_node.action)] = random_node
 
     def next_random_node(
         self, 
@@ -64,7 +67,8 @@ class DecisionNode:
             new_random_node = RandomNode(action, parent=self)
             self.add_children(new_random_node, hash_preprocess)
         else:
-            new_random_node = self.children[hash_preprocess(action)]
+            with self.lock:
+                new_random_node = self.children[hash_preprocess(action)]
 
         return new_random_node
 
@@ -100,6 +104,7 @@ class RandomNode:
         self.cumulative_reward: float = cumulative_reward
         self.visits: int = visits
         self.parent: DecisionNode = parent
+        self.lock = Lock()
 
     def add_children(
         self, 
@@ -111,7 +116,9 @@ class RandomNode:
 
         :param x: (DecisinNode) the decision node to add to the children dict
         """
-        self.children[hash_preprocess(x.state)] = x
+        
+        with self.lock:
+            self.children[hash_preprocess(x.state)] = x
 
     def __repr__(self):
         mean_rew = round(self.cumulative_reward/(self.visits+1), 2)

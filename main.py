@@ -11,12 +11,14 @@ from mcts.hash import hash_action, hash_state
 from mcts.tree_viz import render_graph, render_pyvis
 from flask_server import FlaskServer
 import time
+import os
 import argparse
 import pickle
 from copy import deepcopy
+import time
 
 class ToyMeasurementControl:
-    def __init__(self, one_iteration=False):
+    def __init__(self, one_iteration=True):
         # Flag for whether to run one iteration for profiling
         self.one_iteration = one_iteration
         if self.one_iteration:
@@ -37,10 +39,11 @@ class ToyMeasurementControl:
         # self.reverse_speed = 5.0  # speed for reverse option
         
         self.action_space_sample_heuristic = 'uniform_discrete'
-        self.horizon = 20 # length of the planning horizon
+        self.horizon = 100 # length of the planning horizon
         self.expansion_branch_factor = -1  # number of branches when expanding a node (at least two, -1 for all possible actions)
-        self.learn_iterations = 400  # number of learning iterations for MCTS
-        self.exploration_factor = 0.001  # exploration factor for MCTS
+        self.learn_iterations = 10000  # number of learning iterations for MCTS
+        self.exploration_factor = 4  # exploration factor for MCTS
+        self.num_threads = os.cpu_count()  # number of threads for MCTS
         
         self.eval_dist_scale = 0.    # for evaluation, the weight of the distance error
         self.eval_bearing_scale = 0.   # for evaluation, the weight of the heading error
@@ -120,11 +123,20 @@ class ToyMeasurementControl:
                 mcts = MCTS(initial_obs=self.get_state(), env=self, K=self.exploration_factor,
                             _hash_action=hash_action, _hash_state=hash_state,
                             expansion_branch_factor=self.expansion_branch_factor)
-                mcts.learn(self.learn_iterations, progress_bar=False)
+                
+                # Check how long it takes to run MCTS
+                start_time = time.time()
+                mcts.learn_multithreaded(self.learn_iterations, self.num_threads)
+                print("Time to run MCTS: ", time.time() - start_time)
+                
+                # if self.num_threads > 1:
+                # else:
+                    # mcts.learn(self.learn_iterations)
+                    
                 
                 # If we are doing one iteration for profiling, exit
                 if self.one_iteration:
-                    render_pyvis(mcts.root)
+                    # render_pyvis(mcts.root)
                     exit()
                     
                 # Get the best action from the MCTS tree
@@ -497,7 +509,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run Toy Measurement Control')
     
     # Add arguments
-    parser.add_argument('--one_iteration', type=bool)
+    parser.add_argument('--one_iteration', type=bool, default=True)
     
     # Parse arguments
     args = parser.parse_args()
