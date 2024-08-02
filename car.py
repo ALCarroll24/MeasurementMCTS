@@ -1,7 +1,7 @@
 import numpy as np
 import threading
 from ui import MatPlotLibUI
-from utils import wrap_angle, sat_value, rotate
+from utils import wrap_angle, sat_value, rotate, angle_difference
 import time
 from typing import Tuple
 from shapely import Polygon
@@ -58,7 +58,94 @@ class Car:
         # Otherwise return the new state
         else:
             return np.array([position[0], position[1], yaw])
+        
+    def update_pure_pursuit(self, dt: float, target_point: np.ndarray, simulate: bool = False, starting_state: np.ndarray = None):
+        # Use the update function to update the car state based on pure pursuit and target point
+
+        # Retrieve the current or starting state
+        if simulate and starting_state is not None:
+            position = np.copy(starting_state[0:2])
+            yaw = np.copy(starting_state[2])
+        else:
+            position = self.position
+            yaw = self.yaw
+
+        # Calculate the vector to the target point in the global frame
+        vector_to_target = target_point - position
+
+        # Rotate the vector into the car's frame of reference
+        rotated_vector = rotate(vector_to_target, -yaw)
+        dx, dy = rotated_vector
+
+        # Compute the lookahead distance (distance to the target point)
+        lookahead_distance = np.hypot(dx, dy)
+
+        # Ensure lookahead_distance is not zero to avoid division by zero
+        if lookahead_distance == 0:
+            return
+
+        # Calculate the curvature of the path to the target point
+        curvature = 2 * dy / (lookahead_distance ** 2)
+
+        # Compute the required steering angle based on the curvature
+        required_steering_angle = np.arctan(curvature * self.length)
+
+        # Limit the steering angle to the car's maximum steering angle
+        required_steering_angle = np.clip(required_steering_angle, -np.radians(self.max_steering_angle), np.radians(self.max_steering_angle))
+
+        # Determine the velocity; in pure pursuit, it is often kept constant or can be adjusted
+        velocity = self.max_velocity
+
+        # Use the update method to compute the next state
+        return self.update(dt, (velocity, np.degrees(required_steering_angle)), simulate, starting_state)
+    
+    def update_follow_path(self, dt: float, path: np.ndarray, look_ahead_dist: float, return_target_point: bool = True, simulate: bool = False, starting_state: np.ndarray = None):
+        # Use the update function to update the car state based on following a path
+
+        # Retrieve the current or starting state
+        if simulate and starting_state is not None:
+            position = np.copy(starting_state[0:2])
+            yaw = np.copy(starting_state[2])
+        else:
+            position = self.position
+            yaw = self.yaw
+
+        # Find the index of the closest point
+        closest_point_index = np.argmin(np.linalg.norm(path - position, axis=1))
+
+        # See which direction we are going in the path
+        high_index_yaw = np.arctan2((path[closest_point_index + 1] - path[closest_point_index])[1], 
+                                    (path[closest_point_index + 1] - path[closest_point_index])[0])
+        low_index_yaw = np.arctan2((path[closest_point_index - 1] - path[closest_point_index])[1], 
+                                   (path[closest_point_index - 1] - path[closest_point_index])[0])
+        
+        # Find the direction most aligned with car yaw and set the iteration direction
+        min_direction = np.argmin([angle_difference(yaw, high_index_yaw), 
+                                   angle_difference(yaw, low_index_yaw)])
+        iter_direction = 1 if min_direction == 0 else -1
+        
+        # Find the lookahead point on the path
+        lookahead_index = closest_point_index
+        while np.linalg.norm(path[lookahead_index] - position) < look_ahead_dist:
+            lookahead_index += iter_direction
             
+            # If we reach the end or beginning of the path wrap the index
+            if lookahead_index >= len(path):
+                lookahead_index = 0
+            elif lookahead_index < 0:
+                lookahead_index = len(path) - 1
+        
+        # If returning target point
+        if return_target_point:
+            update_ret = self.update_pure_pursuit(dt, path[lookahead_index], simulate, starting_state)
+            if update_ret is not None:
+                return update_ret, path[lookahead_index]
+            
+            return path[lookahead_index]
+
+        # Use the update_pure_pursuit method to update the car state based on the lookahead point
+        return self.update_pure_pursuit(dt, path[lookahead_index], simulate, starting_state)
+
     def get_car_polygon(self, car_state=None):
         # If we are calculating the polygon for a different state, use that state
         if car_state is not None:

@@ -140,7 +140,7 @@ class MCTS:
         internal_env = self.env
 
         ## SELECTION PHASE
-        # While goal has not been reached and we are not at a leaf node (has been visited)
+        # While goal has not been reached and we are not at a leaf node (has been visited)``
         while (not decision_node.is_final) and decision_node.visits > 0:
             # print("Starting Decision node: ", decision_node)
             
@@ -148,7 +148,7 @@ class MCTS:
             a = self.select(decision_node)
             # print(f"Action selected: {a}")
 
-            # Create new random node or get the existing one from the action
+            # Get the existing random node from the action and decision node
             new_random_node = decision_node.next_random_node(a, self._hash_action)
             # print(f"New Random node: {new_random_node}")
 

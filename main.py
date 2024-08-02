@@ -40,7 +40,7 @@ class ToyMeasurementControl:
         self.horizon = 20 # length of the planning horizon
         self.expansion_branch_factor = -1  # number of branches when expanding a node (at least two, -1 for all possible actions)
         self.learn_iterations = 400  # number of learning iterations for MCTS
-        self.exploration_factor = 0.001  # exploration factor for MCTS
+        self.exploration_factor = 0.  # exploration factor for MCTS
         
         self.eval_dist_scale = 0.    # for evaluation, the weight of the distance error
         self.eval_bearing_scale = 0.   # for evaluation, the weight of the heading error
@@ -80,7 +80,7 @@ class ToyMeasurementControl:
         
         # Compute all possible actions
         self.all_actions = self.get_all_actions()
-        print("Action Space: ", self.all_actions)
+        # print("Action Space: ", self.all_actions)
         
         # Save the last action (mainly used for relative manual control)
         self.last_action = np.array([0.0, 0.0])

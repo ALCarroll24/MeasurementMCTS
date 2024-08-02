@@ -41,10 +41,15 @@ def rotate(points: np.ndarray, angle):
     rot_matrix = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
     rotated_points = np.zeros(points.shape)
     
-    # Iterate through the points
-    for i, point in enumerate(points):
-        # Rotate a point around the origin by a given angle
-        rotated_points[i] = rot_matrix @ point
+    # If the points are 1D, we can just rotate them directly
+    if points.ndim == 1:
+        # Rotate a single point around the origin by a given angle
+        return rot_matrix @ points
+    else:
+        # Iterate through the points
+        for i, point in enumerate(points):
+            # Rotate a point around the origin by a given angle
+            rotated_points[i] = rot_matrix @ point
         
     return rotated_points
 
