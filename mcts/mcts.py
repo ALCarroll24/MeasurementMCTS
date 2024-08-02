@@ -161,8 +161,6 @@ class MCTS:
             else:
                 new_decision_node = list(new_random_node.children.values())[0]
                 r = new_decision_node.reward
-            
-            # print(f"New Decision node: {new_decision_node}")
 
             # Ensure that the decision node is connected to its parent random node (not sure why it wouldn't be though...?)
             new_decision_node = self.update_decision_node(new_decision_node, new_random_node, self._hash_state)

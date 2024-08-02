@@ -1,4 +1,5 @@
 import numpy as np
+from shapely.geometry import Polygon, LineString
 
 def wrap_angle(angle):
     # Wrap an angle to the range [-pi, pi]
@@ -60,3 +61,8 @@ def min_max_normalize(value, min_value, max_value):
 def angle_difference(angle1, angle2):
     # Find the difference between two angles
     return np.abs(np.arctan2(np.sin(angle1 - angle2), np.cos(angle1 - angle2)))
+
+def get_interpolated_polygon_points(polygon: Polygon, num_points: int = 200):
+    line = LineString(polygon.exterior.coords)
+    densified_coords = [line.interpolate(float(i) / num_points, normalized=True).coords[0] for i in range(num_points + 1)]
+    return np.array(densified_coords)

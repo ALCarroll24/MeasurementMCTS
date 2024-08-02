@@ -59,7 +59,7 @@ class Car:
         else:
             return np.array([position[0], position[1], yaw])
         
-    def update_pure_pursuit(self, dt: float, target_point: np.ndarray, simulate: bool = False, starting_state: np.ndarray = None):
+    def get_action_pure_pursuit(self, target_point: np.ndarray, simulate: bool = False, starting_state: np.ndarray = None):
         # Use the update function to update the car state based on pure pursuit and target point
 
         # Retrieve the current or starting state
@@ -96,10 +96,9 @@ class Car:
         # Determine the velocity; in pure pursuit, it is often kept constant or can be adjusted
         velocity = self.max_velocity
 
-        # Use the update method to compute the next state
-        return self.update(dt, (velocity, np.degrees(required_steering_angle)), simulate, starting_state)
+        return velocity, np.degrees(required_steering_angle)
     
-    def update_follow_path(self, dt: float, path: np.ndarray, look_ahead_dist: float, return_target_point: bool = True, simulate: bool = False, starting_state: np.ndarray = None):
+    def get_action_follow_path(self, path: np.ndarray, look_ahead_dist: float, return_target_point: bool = False, simulate: bool = False, starting_state: np.ndarray = None):
         # Use the update function to update the car state based on following a path
 
         # Retrieve the current or starting state
@@ -137,14 +136,10 @@ class Car:
         
         # If returning target point
         if return_target_point:
-            update_ret = self.update_pure_pursuit(dt, path[lookahead_index], simulate, starting_state)
-            if update_ret is not None:
-                return update_ret, path[lookahead_index]
-            
-            return path[lookahead_index]
+            return self.get_action_pure_pursuit(path[lookahead_index], simulate, starting_state), path[lookahead_index]
 
         # Use the update_pure_pursuit method to update the car state based on the lookahead point
-        return self.update_pure_pursuit(dt, path[lookahead_index], simulate, starting_state)
+        return self.get_action_pure_pursuit(path[lookahead_index], simulate, starting_state)
 
     def get_car_polygon(self, car_state=None):
         # If we are calculating the polygon for a different state, use that state
@@ -166,7 +161,6 @@ class Car:
         points = rotate(np.array(points_no_yaw) - position, yaw - np.radians(90)) + position
         
         return Polygon(points)
-        
 
     def draw(self):
         # Draw the car as a rectangle in the UI

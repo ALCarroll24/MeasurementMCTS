@@ -4,7 +4,7 @@ from ui import MatPlotLibUI
 from car import Car
 from ooi import OOI
 from vkf import VectorizedStaticKalmanFilter
-from utils import wrap_angle, min_max_normalize, angle_difference
+from utils import wrap_angle, min_max_normalize, angle_difference, get_interpolated_polygon_points
 from shapely import Point, LineString, Polygon
 from mcts.mcts import MCTS
 from mcts.hash import hash_action, hash_state
@@ -16,7 +16,7 @@ import pickle
 from copy import deepcopy
 
 class ToyMeasurementControl:
-    def __init__(self, one_iteration=False):
+    def __init__(self, one_iteration=True):
         # Flag for whether to run one iteration for profiling
         self.one_iteration = one_iteration
         if self.one_iteration:
@@ -30,34 +30,34 @@ class ToyMeasurementControl:
         self.period = 1.0 / self.hz
         
         # Parameters
-        self.final_cov_trace = 0.1
+        self.final_cov_trace = 0.1 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
         self.velocity_options = 1  # number of discrete options for velocity
         self.steering_angle_options = 9  # number of discrete options for steering angle
         # self.reverse_option = False # whether to include a reverse option in the action space
         # self.reverse_speed = 5.0  # speed for reverse option
         
         self.action_space_sample_heuristic = 'uniform_discrete'
-        self.horizon = 20 # length of the planning horizon
+        self.horizon = 5 # length of the planning horizon
         self.expansion_branch_factor = -1  # number of branches when expanding a node (at least two, -1 for all possible actions)
-        self.learn_iterations = 400  # number of learning iterations for MCTS
-        self.exploration_factor = 0.  # exploration factor for MCTS
+        self.learn_iterations = 100  # number of learning iterations for MCTS
+        self.exploration_factor = 0.4  # exploration factor for MCTS
         
-        self.eval_dist_scale = 0.    # for evaluation, the weight of the distance error
-        self.eval_bearing_scale = 0.   # for evaluation, the weight of the heading error
-        self.eval_ocl_dist_scale = 0.9  # for evaluation, the weight of the occlusion distance steps
-        self.eval_ocl_turn_scale = 0.1  # for evaluation, the weight of the occlusion turn steps
-        self.evaluation_multiplier = 0.  # multiplier for evaluation function
+        # New evaluation parameters based on base policy
+        self.eval_steps = 100  # number of steps to evaluate the base policy
+        self.eval_dt = 0.1  # time step for evaluation
         
-        self.soft_collision_buffer = 4.0  # buffer for soft collision (length from outline of OOI to new outline for all points)
-        self.hard_collision_punishment = 1e4  # punishment for hard collision
+        self.soft_collision_buffer = 0.25  # buffer for soft collision (length from outline of OOI to new outline for all points)
+        self.hard_collision_punishment = 1000  # punishment for hard collision
         self.soft_collision_punishment = 100  # punishment for soft collision
 
         # Create a plotter object unless we are profiling
         if self.one_iteration:
             self.ui = None
         else:
+            # title = f'period={self.period}, Explore factor={self.exploration_factor}, Horizon={self.horizon}, Learn Iterations={self.learn_iterations}\n' + \
+            #         f'eval_all={self.evaluation_multiplier}, eval_dist={self.eval_dist_scale}, eval_bearing={self.eval_bearing_scale}, eval_ocl_dist={self.eval_ocl_dist_scale}, eval_ocl_turn={self.eval_ocl_turn_scale}'
             title = f'period={self.period}, Explore factor={self.exploration_factor}, Horizon={self.horizon}, Learn Iterations={self.learn_iterations}\n' + \
-                    f'eval_all={self.evaluation_multiplier}, eval_dist={self.eval_dist_scale}, eval_bearing={self.eval_bearing_scale}, eval_ocl_dist={self.eval_ocl_dist_scale}, eval_ocl_turn={self.eval_ocl_turn_scale}'
+                    f'Evaluation Steps={self.eval_steps}, Evaluation dt={self.eval_dt}'
             self.ui = MatPlotLibUI(update_rate=self.hz, title=title)
             self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
         
@@ -71,6 +71,10 @@ class ToyMeasurementControl:
         self.ooi_poly = self.ooi.get_collision_polygon()
         self.ooi.soft_collision_polygon = self.ooi_poly.buffer(self.soft_collision_buffer)
         self.soft_ooi_poly = self.ooi.soft_collision_polygon
+        
+        # Get evaluation path for circling around OOI and collecting observations
+        eval_poly = self.ooi_poly.buffer(5)
+        self.eval_path = get_interpolated_polygon_points(eval_poly, num_points=200)
 
         # Create a Static Vectorized Kalman Filter object
         self.initial_variance_scalar = 8.0
@@ -112,11 +116,12 @@ class ToyMeasurementControl:
                 observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state(), draw=self.draw)
                 self.vkf.update(observable_corners, indeces, self.car.get_state())
                 
+                # Print normalized covariance trace compared to final trace
+                trace_normalized = min_max_normalize(np.trace(self.vkf.P_k), 0, 8 * self.initial_variance_scalar)
+                print(f'Normalized Covariance Trace: {trace_normalized} Final: {self.final_cov_trace}')
+                
                 ############################ AUTONOMOUS CONTROL ############################
                 # Create an MCTS object
-                # print("NEW MCTS ITERATION-------------------")
-                # print()
-                # print("Initial State: ", self.get_state())
                 mcts = MCTS(initial_obs=self.get_state(), env=self, K=self.exploration_factor,
                             _hash_action=hash_action, _hash_state=hash_state,
                             expansion_branch_factor=self.expansion_branch_factor)
@@ -221,8 +226,8 @@ class ToyMeasurementControl:
         # Combine the updated car state, mean, covariance and horizon into a new state
         new_state = (new_car_state, new_mean, new_cov, horizon)
         
-        # Find the reward based on updated state
-        reward, done = self.get_reward(new_state, action)
+        # Find the reward based prior vs new covariance matrix and car collision with OOI
+        reward, done = self.get_reward(state[2], new_state[2], car_state)
         
         # Check if we are at the end of the horizon
         if not done and horizon == self.horizon:
@@ -231,7 +236,7 @@ class ToyMeasurementControl:
         # Return the reward and the new state
         return new_state, reward, done
     
-    def get_reward(self, state, action, print_rewards=False) -> Tuple[float, bool]:
+    def get_reward(self, prior_cov, new_cov, car_state, print_rewards=False) -> Tuple[float, bool]:
         """
         Get the reward of the new state-action pair.
         
@@ -239,20 +244,14 @@ class ToyMeasurementControl:
         :param action: (np.ndarray) the control input to the car (velocity, steering angle)
         :return: (float, bool) the reward of the state-action pair, and whether the episode is done
         """
-        # Pull out the state elements
-        car_state, corner_means, corner_cov, horizon = state
-        
-        # Find the sum of the diagonals
-        trace = np.trace(corner_cov)
-        
-        # Find whether the episode is done TODO: done needs to also account for horizon length
-        done = trace < self.final_cov_trace
         
         # Normalize the trace between 0 and 1 (in this case this just divides by initial variance times the dimensions)
-        trace_norm = min_max_normalize(trace, 0, 8 * self.initial_variance_scalar)
+        prior_cov_trace = min_max_normalize(np.trace(prior_cov), 0, 8 * self.initial_variance_scalar)
+        new_cov_trace = min_max_normalize(np.trace(new_cov), 0, 8 * self.initial_variance_scalar)
         
-        # Negate the trace to make it a reward (punishment for high trace)
-        reward = -trace_norm
+        # Reward is the difference in trace (higher difference is better)
+        # This is the amount of information gained by the KF (by covariance getting smaller)
+        reward = prior_cov_trace - new_cov_trace
         
         # Print trace for debugging
         if print_rewards:
@@ -282,157 +281,26 @@ class ToyMeasurementControl:
             if print_rewards:
                 print("Soft Collision")
         
+        # Find whether the episode is done TODO: done needs to also account for horizon length
+        done = new_cov_trace < self.final_cov_trace
         
         return reward, done
-                        
+
+    # New base policy based evaluation function
     def evaluate(self, state, draw=False) -> float:
-        """
-        Evaluates a DecisionNode by using a convex combination of distance to closest OOI point and angle to OOI.
-        
-        :param state: (np.ndarray) the state of the car and OOI (position(0:2), corner means(2:10), corner covariances(10:74))
-        :return: (float) the cumulative reward observed during the tree traversing.
-        """
-        #### Basic data extraction
-        # Pull out the car position and yaw from the state
-        car_state = state[0]
-        car_pos = car_state[0:2]
-        car_yaw = car_state[2]
-        
-        # Pull out the OOI corner positions from the state
-        ooi_state = state[1]
-        ooi_reshaped = np.reshape(ooi_state, (4, 2))
-        
-        # Pull out covariances of corners and get trace for each corner
-        cov_state = state[2]
-        cov_diag = np.diag(cov_state)
-        corner_traces = np.zeros((int(cov_diag.shape[0]/2),))
-        
-        # Iterate through covariance diagonal elements
-        for i in range(corner_traces.shape[0]):
-            # Calculate trace of covariance matrix for each corner
-            corner_traces[i] = cov_diag[i*2] + cov_diag[(i*2) + 1]
-        
-
-        #### Find what corners are occluded by front of object using shapely
-        # Create line of sight from the car center to each corner of the OOI
-        car_pt = Point(car_pos)
-        lines_of_sight = [LineString([car_pos, Point(corner)]) for corner in ooi_reshaped]
-        
-        # Check if each line of sight cross the OOI (which means it is not observable)
-        ooi_polygon = Polygon(ooi_reshaped)
-        intersection_bools = [line.crosses(ooi_polygon) for line in lines_of_sight]
-        
-        
-        #### Calculate squared distance and bearing to each corner
-        # Calculate squared distance of Car to OOI points
-        squared_dists = np.sum((ooi_reshaped - car_pos)**2, axis=1)
-        
-        # Create scaled cumulative distance, bearing, occlusion turn steps, and occlusion distance steps
-        cum_dist = 0.
-        cum_bearing = 0.
-        cum_occlusion = 0.
-        
-        # Iterate through each corner trace
-        for i in range(corner_traces.shape[0]):
-            # If corner is occluded use closest observable point weighting
-            if intersection_bools[i]:
-                # Return car position projected to corner observable line
-                extension_length = 100
-                
-                # Extend vector from corner to prev and next corners by subtracting tail, multiplying by extension and then adding tail back
-                prev_corner_extended = (ooi_reshaped[i-1] - ooi_reshaped[i]) * extension_length + ooi_reshaped[i-1]
-                next_corner_extended = (ooi_reshaped[(i+1)%4] - ooi_reshaped[i]) * extension_length + ooi_reshaped[(i+1)%4]
-                
-                # Make these into Line Strings to use shapely functions
-                obs_line1 = LineString([ooi_reshaped[i], prev_corner_extended])
-                obs_line2 = LineString([ooi_reshaped[i], next_corner_extended])
-                
-                # Project the car position onto the line, get length along line
-                obs_len1 = obs_line1.project(car_pt)
-                obs_len2 = obs_line2.project(car_pt)
-                
-                # Use length along line to get projected point
-                obs_pt1 = obs_line1.interpolate(obs_len1)
-                obs_pt2 = obs_line2.interpolate(obs_len2)
-                
-                # Convert into a numpy array
-                obs_pts = np.array([*obs_pt1.coords, *obs_pt2.coords])
-                
-                # Iterate through each observable point to find the lowest cost point
-                obs_pt_costs = np.zeros((obs_pts.shape[0],))
-                for j, obs_pt in enumerate(obs_pts):
-                    ##### First weighting is based on the number of timesteps to reach the observable point
-                    
-                    # Start with the difference in angle between the car and direction to observe the corner (extension point to corner angle)
-                    yaw_err = angle_difference(car_yaw, np.arctan2(ooi_reshaped[i][1] - obs_pt[1], ooi_reshaped[i][0] - obs_pt[0]))
-                    
-                    # Subtract half of the car fov since we can see the corner if it is within half of the fov
-                    yaw_err -= np.deg2rad(self.car.max_bearing / 2)
-                    
-                    # Make sure this is positive
-                    yaw_err = max(yaw_err, 0)
-                    
-                    # Find maximum angle car can turn in one timestep
-                    max_yaw = self.car.max_velocity * np.tan(np.deg2rad(self.car.max_steering_angle)) / self.car.length
-                    
-                    # Get number of timesteps to turn to be able to observe the corner
-                    turn_steps = yaw_err / max_yaw
-                    
-                    # print("Yaw Error ", j, "(degrees):", np.rad2deg(yaw_err), "Turn Steps:", turn_steps)
-                    
-                    #### Second weighting is based on the distance to the observable point
-                    # Find the squared distance to the observable point
-                    dist_err = np.sum((obs_pt - car_pos)**2)
-                    
-                    # Get the number of steps to reach that point
-                    dist_steps = np.sqrt(dist_err) / self.car.max_velocity
-                    
-                    # print("Distance Error ", j, "(m):", np.sqrt(dist_err), "Distance Steps:", dist_steps)
-                    
-                    #### Normalize the turn and distance steps to a max of 10 steps
-                    turn_steps = min_max_normalize(turn_steps, 0, 10)
-                    dist_steps = min_max_normalize(dist_steps, 0, 10)
-                    
-                    # Add the weighted turn and distance steps to the observable point costs to later find the minimum
-                    obs_pt_costs[j] = self.eval_ocl_turn_scale * turn_steps + self.eval_ocl_dist_scale * dist_steps
-                    
-                # Draw the minimum cost projected point we are using
-                if draw:
-                    if np.argmin(obs_pt_costs) == 0:
-                        self.ui.draw_arrow(car_pos, *obs_pt1.coords)
-                    else:
-                        self.ui.draw_arrow(car_pos, *obs_pt2.coords)
-
-                # Add the weighted minimum cost of the observable points to the cumulative occlusion
-                cum_occlusion += corner_traces[i] * np.min(obs_pt_costs)
-                # print("Minimum index: ", np.argmin(obs_pt_costs))
-                # print("Chosen observable point coords: ", obs_pts[np.argmin(obs_pt_costs)])
-                # print("Chosen observable point cost: ", np.min(obs_pt_costs))
-
-                
-            # Otherwise weight based on bearing and distance to corner
-            else:
-                # Find bearing to current corner
-                ooi_bearing = np.arctan2(ooi_reshaped[i, 1] - car_pos[1], ooi_reshaped[i, 0] - car_pos[0])
-                
-                # Subtract the car yaw to get the relative bearing to the OOI point
-                bearing_delta = abs(ooi_bearing - car_yaw)
-                
-                # Normalize both the distance and bearing to be between 0 and 1
-                norm_dist = min_max_normalize(squared_dists[i], 0., 2000.)
-                norm_bearing = min_max_normalize(bearing_delta, 0., np.pi)
-                
-                # Add covariance trace weighted bearing and squared distance to cumulative distance and bearing
-                cum_dist += corner_traces[i] * norm_dist
-                cum_bearing += corner_traces[i] * norm_bearing
-        
-        # Return weighted convex combination (alpha and beta add to 1) of cumulative covariance weighted distance and bearing
-        # This is negative because we want to minimize the distance and bearing (punishment for being far away or off bearing)
-        evaluation_value = -self.evaluation_multiplier * (self.eval_dist_scale * cum_dist + self.eval_bearing_scale * cum_bearing + cum_occlusion)
-
-        # print("Evaluation Value: ", evaluation_value)
-
-        return evaluation_value
+        cumulative_reward = 0.
+        for i in range(self.eval_steps):
+            # Get the action from the base policy
+            action = self.car.get_action_follow_path(self.eval_path, self.eval_dt)
+            
+            # Step the environment
+            state, reward, done = self.step(state, action)
+            cumulative_reward += reward
+            # If we are done, break
+            if done:
+                return cumulative_reward
+            
+        return cumulative_reward
     
     def action_space_sample(self) -> np.ndarray:
         """
