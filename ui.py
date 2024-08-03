@@ -142,15 +142,16 @@ class MatPlotLibUI:
         self.ax.add_patch(arrow)
         self.patches.append(arrow)
         
-    def draw_polygon(self, path, color='b'):
+    def draw_polygon(self, points, color='b', linestyle='--', linewidth=1, closed=True, alpha=1.0):
         """
         Draw a path on the plot.
         :param path: List of tuples [(x1, y1), (x2, y2), ...] for the path.
         """
         # Create a scatter plot and add it to the plot with line markers
-        x, y = zip(*path)
-        path = patches.Polygon(np.column_stack((x, y)), closed=False, edgecolor=color, facecolor='none')
-        self.patches.append(path)
+        x, y = zip(*points)
+        poly_patch = patches.Polygon(np.column_stack((x, y)), closed=closed, edgecolor=color, facecolor='none', 
+                                     linestyle=linestyle, linewidth=linewidth, alpha=alpha)
+        self.patches.append(poly_patch)
 
     def update_display(self):
         """

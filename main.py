@@ -3,7 +3,7 @@ from typing import Tuple
 from ui import MatPlotLibUI
 from car import Car
 from ooi import OOI
-from static_kf import StaticKalmanFilter
+from static_kf import StaticKalmanFilter, measurement_model
 from utils import wrap_angle, min_max_normalize, angle_difference, get_interpolated_polygon_points
 from shapely.affinity import rotate
 from mcts.mcts import MCTS
@@ -42,7 +42,9 @@ class ToyMeasurementControl:
         # self.reverse_option = False # whether to include a reverse option in the action space
         # self.reverse_speed = 5.0  # speed for reverse option
         
-        # Simulated sensor parameters
+        # Simulated car and attached sensor parameters
+        car_init_position = np.array([10.0, 20.0]) # TODO: Placing the car far away causes it to pick the first action and just spin in a circle
+        car_init_yaw = 0.0
         self.sensor_max_bearing = 60 # degrees
         self.sensor_max_range = 40 # meters
         
@@ -53,10 +55,22 @@ class ToyMeasurementControl:
         self.lookahead_distance = 4.0  # distance to look ahead for path following
         
         # Collision parameters
-        self.soft_collision_buffer = 0.25  # buffer for soft collision (length from outline of OOI to new outline for all points)
+        self.soft_collision_buffer = 4. # buffer for soft collision (length from outline of OOI to new outline for all points)
         self.hard_collision_punishment = 1000  # punishment for hard collision
         self.soft_collision_punishment = 100  # punishment for soft collision
-
+        
+        # OOI parameters
+        self.p_dev = 1.0 # standard deviation of the observation noise
+        initial_noise = 8. # standard deviation of the noise for the OOI centroid and corners
+        ooi_ground_truth_corners = np.array([[54., 52.], [54., 48.], [46., 48.], [46., 52.]]) # Ground truth corners of the OOI
+        
+        # Use parameters to initialize noisy centroid and calculate initial covariance matrix using measurement model
+        ooi_noisy_centroid = np.mean(ooi_ground_truth_corners, axis=0) + np.random.normal(0, initial_noise, 2) # Noisy centroid of the OOI
+        ooi_noisy_centroid_4x4 = np.tile(ooi_noisy_centroid, (4, 1)) # Duplicate points going down rows to make it a 4x4 array
+        ooi_init_covariance = measurement_model(ooi_noisy_centroid_4x4, np.arange(4), car_init_position, car_init_yaw, # Initial Covariance matrix for the OOI
+                                                range_dev=initial_noise, bearing_dev=initial_noise)
+        self.covariance_trace_init = np.trace(ooi_init_covariance)
+        
         # Create a plotter object unless we are profiling
         if self.one_iteration:
             self.ui = None
@@ -67,14 +81,15 @@ class ToyMeasurementControl:
             self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
         
         # Create a car object
-        self.car = Car(self.ui, np.array([10.0, 40.0]), 0, max_bearing=self.sensor_max_bearing, max_range=self.sensor_max_range)
+        self.car = Car(self.ui, car_init_position, car_init_yaw, max_bearing=self.sensor_max_bearing, max_range=self.sensor_max_range)
         
         # Create an OOI object
-        self.ooi = OOI(self.ui, position=(50,50), car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
+        self.ooi = OOI(self.ui, ooi_ground_truth_corners, car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
         
         # Get and set OOI collision polygons
         self.ooi_poly = self.ooi.get_collision_polygon()
         self.ooi.soft_collision_polygon = self.ooi_poly.buffer(self.soft_collision_buffer)
+        self.ooi.soft_collision_points = get_interpolated_polygon_points(self.ooi.soft_collision_polygon, num_points=50)
         self.soft_ooi_poly = self.ooi.soft_collision_polygon
         
         # Get evaluation path for circling around OOI and collecting observations
@@ -83,10 +98,7 @@ class ToyMeasurementControl:
         self.eval_path = get_interpolated_polygon_points(eval_poly, num_points=200)
         
         # Create a Static Vectorized Kalman Filter object
-        self.initial_variance_scalar = 8.0
-        self.vkf = StaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([self.initial_variance_scalar]*8), 1.0)
-        # self.vkf = StaticKalmanFilter(np.array([50.0]*8), np.diag([self.initial_variance_scalar]*8), 4.0)
-        # self.vkf = StaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([8.0, 8.0, 0.001, 0.001, 0.001, 0.001, 8.0, 8.0]), 4.0)
+        self.skf = StaticKalmanFilter(np.array(self.ooi.get_corners()), ooi_init_covariance, self.p_dev)
         
         # If we are just plotting the evaluation, do that and exit
         if display_evaluation:
@@ -106,11 +118,12 @@ class ToyMeasurementControl:
         else:
             self.flask_server = FlaskServer()
             self.flask_server.run_thread()
-            
+        
+        # Initialize variables for clicked node display
         self.last_node_clicked = None
         self.last_node_hash_clicked = None
         
-        # Flag for whether simulated state is being drawn
+        # Flag for whether simulated state is being drawn (Used for pausing UI and clicking nodes to display simulated state)
         self.drawing_simulated_state = False
 
 
@@ -125,10 +138,10 @@ class ToyMeasurementControl:
                 
                 # Get the observation from the OOI, pass it to the KF for update
                 observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state(), draw=self.draw)
-                self.vkf.update(observable_corners, indeces, self.car.get_state())
+                self.skf.update(observable_corners, indeces, self.car.get_state())
                 
                 # Print normalized covariance trace compared to final trace
-                trace_normalized = min_max_normalize(np.trace(self.vkf.P_k), 0, 8 * self.initial_variance_scalar)
+                trace_normalized = min_max_normalize(np.trace(self.skf.P_k), 0, self.covariance_trace_init)
                 print(f'Normalized Covariance Trace: {trace_normalized} Final: {self.final_cov_trace}')
                 
                 ############################ AUTONOMOUS CONTROL ############################
@@ -187,13 +200,13 @@ class ToyMeasurementControl:
             if self.drawing_simulated_state:
                 # Update displays based on clicked node
                 self.car.draw_state(self.last_node_clicked.state[0])
-                self.vkf.draw_state(self.last_node_clicked.state[1], self.last_node_clicked.state[2], self.ui)
+                self.skf.draw_state(self.last_node_clicked.state[1], self.last_node_clicked.state[2], self.ui)
                 self.ooi.draw() # Just draw rectangles for now
             else:
                 # Update current state displays
                 self.car.draw()
                 self.ooi.draw()
-                self.vkf.draw(self.ui)
+                self.skf.draw(self.ui)
             
             # Update the ui to display the new state
             self.ui.update()
@@ -207,7 +220,7 @@ class ToyMeasurementControl:
         '''
         Returns full state -> Tuple[Car State, Corner Mean, Corner Covariance, Horizon]
         '''
-        return self.car.get_state(), self.vkf.get_mean(), self.vkf.get_covariance(), horizon
+        return self.car.get_state(), self.skf.get_mean(), self.skf.get_covariance(), horizon
     
     def step(self, state, action, dt=None) -> Tuple[float, np.ndarray]:
         """
@@ -233,7 +246,7 @@ class ToyMeasurementControl:
         
         # Get the observation from the OOI, pass it to the KF for update
         observable_corners, indeces = self.ooi.get_observation(new_car_state, draw=False) # TODO: In forward simulation, observations should come from mean of KF
-        new_mean, new_cov = self.vkf.update(observable_corners, indeces, new_car_state, 
+        new_mean, new_cov = self.skf.update(observable_corners, indeces, new_car_state, 
                                             simulate=True, s_k_=corner_means, P_k_=corner_cov)
         
         # Combine the updated car state, mean, covariance and horizon into a new state
@@ -259,8 +272,8 @@ class ToyMeasurementControl:
         """
         
         # Normalize the trace between 0 and 1 (in this case this just divides by initial variance times the dimensions)
-        prior_cov_trace = min_max_normalize(np.trace(prior_cov), 0, 8 * self.initial_variance_scalar)
-        new_cov_trace = min_max_normalize(np.trace(new_cov), 0, 8 * self.initial_variance_scalar)
+        prior_cov_trace = min_max_normalize(np.trace(prior_cov), 0, self.covariance_trace_init)
+        new_cov_trace = min_max_normalize(np.trace(new_cov), 0, self.covariance_trace_init)
         
         # Reward is the difference in trace (higher difference is better)
         # This is the amount of information gained by the KF (by covariance getting smaller)
@@ -332,7 +345,7 @@ class ToyMeasurementControl:
             
             # Draw the state
             self.car.draw_state(state[0])
-            self.vkf.draw_state(state[1], state[2], self.ui)
+            self.skf.draw_state(state[1], state[2], self.ui)
             self.ooi.draw()
             
             # Draw the target point
