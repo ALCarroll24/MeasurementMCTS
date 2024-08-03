@@ -1,7 +1,7 @@
 import numpy as np
 from math import *
 
-class VectorizedStaticKalmanFilter:
+class StaticKalmanFilter:
     def __init__(self, _s, _P, p_dev):
         # Load noise scaling values
         self.p_dev = np.array(p_dev)
@@ -94,24 +94,6 @@ class VectorizedStaticKalmanFilter:
         # Otherwise return the updated state and covariance
         else:
             return s_k, P_k
-
-    # Update step of KF, but with vectorized matrices
-    def update_vectorized(self, z, obs_indices, car_pos, car_yaw):
-        H = self.H(obs_indices)
-        R = self.R(z, obs_indices, car_pos, car_yaw)
-        P_vec_k = self.P_k.reshape((self.s_dim,self.s_dim))
-        I = np.eye(self.s_dim)
-        
-        S_k = H @ P_vec_k @ H.T + R
-        K_k = P_vec_k @ H.T @ np.linalg.inv(S_k)
-
-        z_bar = z - H @ self.s_k
-        
-        # Create kronecker product matrix which allows for vectorized matrix operations
-        O = np.kron(I - K_k @ H, I)
-
-        self.s_k = self.s_k + K_k @ z_bar
-        self.P_k = O @ self.P_k
         
     # Draw the mean and covariance on the UI
     def draw(self, ui):

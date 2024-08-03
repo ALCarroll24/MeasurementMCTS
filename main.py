@@ -3,7 +3,7 @@ from typing import Tuple
 from ui import MatPlotLibUI
 from car import Car
 from ooi import OOI
-from vkf import VectorizedStaticKalmanFilter
+from static_kf import StaticKalmanFilter
 from utils import wrap_angle, min_max_normalize, angle_difference, get_interpolated_polygon_points
 from shapely.affinity import rotate
 from mcts.mcts import MCTS
@@ -84,9 +84,9 @@ class ToyMeasurementControl:
         
         # Create a Static Vectorized Kalman Filter object
         self.initial_variance_scalar = 8.0
-        self.vkf = VectorizedStaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([self.initial_variance_scalar]*8), 1.0)
-        # self.vkf = VectorizedStaticKalmanFilter(np.array([50.0]*8), np.diag([self.initial_variance_scalar]*8), 4.0)
-        # self.vkf = VectorizedStaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([8.0, 8.0, 0.001, 0.001, 0.001, 0.001, 8.0, 8.0]), 4.0)
+        self.vkf = StaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([self.initial_variance_scalar]*8), 1.0)
+        # self.vkf = StaticKalmanFilter(np.array([50.0]*8), np.diag([self.initial_variance_scalar]*8), 4.0)
+        # self.vkf = StaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([8.0, 8.0, 0.001, 0.001, 0.001, 0.001, 8.0, 8.0]), 4.0)
         
         # If we are just plotting the evaluation, do that and exit
         if display_evaluation:
