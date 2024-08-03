@@ -5,7 +5,7 @@ from car import Car
 from ooi import OOI
 from vkf import VectorizedStaticKalmanFilter
 from utils import wrap_angle, min_max_normalize, angle_difference, get_interpolated_polygon_points
-from shapely import Point, LineString, Polygon
+from shapely.affinity import rotate
 from mcts.mcts import MCTS
 from mcts.hash import hash_action, hash_state
 from mcts.tree_viz import render_graph, render_pyvis
@@ -14,9 +14,10 @@ import time
 import argparse
 import pickle
 from copy import deepcopy
+from time import sleep
 
 class ToyMeasurementControl:
-    def __init__(self, one_iteration=True):
+    def __init__(self, one_iteration=False, display_evaluation=False):
         # Flag for whether to run one iteration for profiling
         self.one_iteration = one_iteration
         if self.one_iteration:
@@ -26,26 +27,32 @@ class ToyMeasurementControl:
             self.draw = True
             
         # Determine update rate
-        self.hz = 5.0
-        self.period = 1.0 / self.hz
+        self.ui_update_rate = 20.0 # Hz
+        self.simulation_dt = 0.1 # time step size for forward simulation search
         
-        # Parameters
+        # Parameters for MCTS
         self.final_cov_trace = 0.1 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
         self.velocity_options = 1  # number of discrete options for velocity
         self.steering_angle_options = 9  # number of discrete options for steering angle
-        # self.reverse_option = False # whether to include a reverse option in the action space
-        # self.reverse_speed = 5.0  # speed for reverse option
-        
         self.action_space_sample_heuristic = 'uniform_discrete'
         self.horizon = 5 # length of the planning horizon
         self.expansion_branch_factor = -1  # number of branches when expanding a node (at least two, -1 for all possible actions)
         self.learn_iterations = 100  # number of learning iterations for MCTS
         self.exploration_factor = 0.4  # exploration factor for MCTS
+        # self.reverse_option = False # whether to include a reverse option in the action space
+        # self.reverse_speed = 5.0  # speed for reverse option
+        
+        # Simulated sensor parameters
+        self.sensor_max_bearing = 60 # degrees
+        self.sensor_max_range = 40 # meters
         
         # New evaluation parameters based on base policy
-        self.eval_steps = 100  # number of steps to evaluate the base policy
-        self.eval_dt = 0.1  # time step for evaluation
+        self.eval_path_buffer = 6.0  # buffer around OOI for evaluation path
+        self.eval_steps = 40  # number of steps to evaluate the base policy
+        self.eval_dt = 0.2  # time step size for evaluation
+        self.lookahead_distance = 4.0  # distance to look ahead for path following
         
+        # Collision parameters
         self.soft_collision_buffer = 0.25  # buffer for soft collision (length from outline of OOI to new outline for all points)
         self.hard_collision_punishment = 1000  # punishment for hard collision
         self.soft_collision_punishment = 100  # punishment for soft collision
@@ -54,15 +61,13 @@ class ToyMeasurementControl:
         if self.one_iteration:
             self.ui = None
         else:
-            # title = f'period={self.period}, Explore factor={self.exploration_factor}, Horizon={self.horizon}, Learn Iterations={self.learn_iterations}\n' + \
-            #         f'eval_all={self.evaluation_multiplier}, eval_dist={self.eval_dist_scale}, eval_bearing={self.eval_bearing_scale}, eval_ocl_dist={self.eval_ocl_dist_scale}, eval_ocl_turn={self.eval_ocl_turn_scale}'
-            title = f'period={self.period}, Explore factor={self.exploration_factor}, Horizon={self.horizon}, Learn Iterations={self.learn_iterations}\n' + \
+            title = f'sim step size={self.simulation_dt}, Explore factor={self.exploration_factor}, Horizon={self.horizon}, Learn Iterations={self.learn_iterations}\n' + \
                     f'Evaluation Steps={self.eval_steps}, Evaluation dt={self.eval_dt}'
-            self.ui = MatPlotLibUI(update_rate=self.hz, title=title)
+            self.ui = MatPlotLibUI(update_rate=self.ui_update_rate, title=title)
             self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
         
         # Create a car object
-        self.car = Car(self.ui, np.array([10.0, 10.0]), 0)
+        self.car = Car(self.ui, np.array([10.0, 40.0]), 0, max_bearing=self.sensor_max_bearing, max_range=self.sensor_max_range)
         
         # Create an OOI object
         self.ooi = OOI(self.ui, position=(50,50), car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
@@ -73,15 +78,21 @@ class ToyMeasurementControl:
         self.soft_ooi_poly = self.ooi.soft_collision_polygon
         
         # Get evaluation path for circling around OOI and collecting observations
-        eval_poly = self.ooi_poly.buffer(5)
+        eval_poly = self.ooi_poly.buffer(self.eval_path_buffer)
+        eval_poly = rotate(eval_poly, 90, origin='centroid')
         self.eval_path = get_interpolated_polygon_points(eval_poly, num_points=200)
-
+        
         # Create a Static Vectorized Kalman Filter object
         self.initial_variance_scalar = 8.0
         self.vkf = VectorizedStaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([self.initial_variance_scalar]*8), 1.0)
         # self.vkf = VectorizedStaticKalmanFilter(np.array([50.0]*8), np.diag([self.initial_variance_scalar]*8), 4.0)
         # self.vkf = VectorizedStaticKalmanFilter(np.array(self.ooi.get_corners()).flatten(), np.diag([8.0, 8.0, 0.001, 0.001, 0.001, 0.001, 8.0, 8.0]), 4.0)
         
+        # If we are just plotting the evaluation, do that and exit
+        if display_evaluation:
+            self.display_evaluation(self.get_state(), pause_time=0.)
+            exit()
+            
         # Compute all possible actions
         self.all_actions = self.get_all_actions()
         # print("Action Space: ", self.all_actions)
@@ -149,7 +160,7 @@ class ToyMeasurementControl:
                 # action_vector = self.car.add_input(relative_action_vector, self.last_action)   # This adds the control input rather than directly setting it (easier for keyboard control)
                 
                 # Update the car's state based on the control inputs
-                self.car.update(self.period, action_vector)
+                self.car.update(self.simulation_dt, action_vector)
                 
                 self.drawing_simulated_state = False
                 
@@ -198,7 +209,7 @@ class ToyMeasurementControl:
         '''
         return self.car.get_state(), self.vkf.get_mean(), self.vkf.get_covariance(), horizon
     
-    def step(self, state, action) -> Tuple[float, np.ndarray]:
+    def step(self, state, action, dt=None) -> Tuple[float, np.ndarray]:
         """
         Step the environment by one time step. The action is applied to the car, and the state is observed by the OOI.
         The observation is then passed to the KF for update.
@@ -207,7 +218,9 @@ class ToyMeasurementControl:
         :param action: (np.ndarray) the control input to the car (velocity, steering angle)
         :return: (float, np.ndarray) the reward of the state-action pair, and the new state
         """
-        # print("Starting forward simulation state: ", state)
+        # If dt is not specified, use the default period
+        if dt is None:
+            dt = self.simulation_dt
         
         # Pull out the state elements
         car_state, corner_means, corner_cov, horizon = state
@@ -216,7 +229,7 @@ class ToyMeasurementControl:
         horizon += 1
         
         # Apply the action to the car
-        new_car_state = self.car.update(self.period, action, simulate=True, starting_state=car_state)
+        new_car_state = self.car.update(dt, action, simulate=True, starting_state=car_state)
         
         # Get the observation from the OOI, pass it to the KF for update
         observable_corners, indeces = self.ooi.get_observation(new_car_state, draw=False) # TODO: In forward simulation, observations should come from mean of KF
@@ -291,16 +304,50 @@ class ToyMeasurementControl:
         cumulative_reward = 0.
         for i in range(self.eval_steps):
             # Get the action from the base policy
-            action = self.car.get_action_follow_path(self.eval_path, self.eval_dt)
+            action = self.car.get_action_follow_path(self.eval_path, self.lookahead_distance, simulate=True, starting_state=state[0])
             
             # Step the environment
-            state, reward, done = self.step(state, action)
+            state, reward, done = self.step(state, action, dt=self.eval_dt)
             cumulative_reward += reward
             # If we are done, break
             if done:
                 return cumulative_reward
             
         return cumulative_reward
+    
+    # Run evaluation with display from starting state for debugging
+    def display_evaluation(self, state, pause_time=0.1) -> None:
+        # Loop through the evaluation steps
+        cumulative_reward = 0.
+        for i in range(self.eval_steps):
+            # Get the action from the base policy
+            action, target_point= self.car.get_action_follow_path(self.eval_path, self.lookahead_distance, simulate=True, starting_state=state[0], return_target_point=True)
+            print(f'car state: {state[0]}')
+            print(f'action: {action}')
+            
+            # Step the environment
+            state, reward, done = self.step(state, action, dt=self.eval_dt)
+            print(f'Reward: {reward}')
+            cumulative_reward += reward
+            
+            # Draw the state
+            self.car.draw_state(state[0])
+            self.vkf.draw_state(state[1], state[2], self.ui)
+            self.ooi.draw()
+            
+            # Draw the target point
+            self.ui.draw_point(target_point, color='r')
+            
+            # Draw the evaluation path
+            self.ui.draw_polygon(self.eval_path, color='g')
+            
+            # Update the UI
+            self.ui.update()
+            
+            # Pause for a specified amount of time
+            sleep(pause_time)
+        
+        print(f'Total Cumulative Reward: {cumulative_reward}')
     
     def action_space_sample(self) -> np.ndarray:
         """
@@ -366,10 +413,11 @@ if __name__ == '__main__':
     
     # Add arguments
     parser.add_argument('--one_iteration', type=bool)
+    parser.add_argument('--display_evaluation', type=bool)
     
     # Parse arguments
     args = parser.parse_args()
     
     # Create an instance of ToyMeasurementControl using command line arguments
-    tmc = ToyMeasurementControl(one_iteration=args.one_iteration)
+    tmc = ToyMeasurementControl(one_iteration=args.one_iteration, display_evaluation=args.display_evaluation)
     tmc.run()
