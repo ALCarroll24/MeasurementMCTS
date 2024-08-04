@@ -224,28 +224,6 @@ class MCTS:
         new_decision_node.reward = r
         new_random_node.reward = r
 
-    # Random action evaluation, doesn't really make sense for this problem
-    # def evaluate(self, env, state) -> float:
-    #     """
-    #     a customized function, don't have to be
-
-    #     Evaluates a DecionNode playing until an terminal node using the rollotPolicy,
-        
-
-    #     :param env: (gym.env) gym environemt that describes the state at the node to evaulate.
-    #     :return: (float) the cumulative reward observed during the tree traversing.
-    #     """
-    #     R = 0
-    #     done = False
-    #     iter = 0
-    #     while ((not done) and (iter < self.random_iterations)):
-    #         iter += 1
-    #         a = env.action_space_sample()
-    #         s, r, done = env.step(state, a)
-    #         R += r
-
-    #     return R
-
     def select_outcome(
         self, 
         env, 

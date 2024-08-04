@@ -4,15 +4,13 @@ from ui import MatPlotLibUI
 from car import Car
 from ooi import OOI
 from static_kf import StaticKalmanFilter, measurement_model
-from utils import wrap_angle, min_max_normalize, angle_difference, get_interpolated_polygon_points
+from utils import wrap_angle, min_max_normalize, get_interpolated_polygon_points, rotate_about_point
 from shapely.affinity import rotate
 from mcts.mcts import MCTS
 from mcts.hash import hash_action, hash_state
 from mcts.tree_viz import render_graph, render_pyvis
 from flask_server import FlaskServer
-import time
 import argparse
-import pickle
 from copy import deepcopy
 from time import sleep
 
@@ -38,7 +36,7 @@ class ToyMeasurementControl:
         self.horizon = 5 # length of the planning horizon
         self.expansion_branch_factor = -1  # number of branches when expanding a node (at least two, -1 for all possible actions)
         self.learn_iterations = 200  # number of learning iterations for MCTS
-        self.exploration_factor = 0.0  # exploration factor for MCTS
+        self.exploration_factor = 0.5  # exploration factor for MCTS
         # self.reverse_option = False # whether to include a reverse option in the action space
         # self.reverse_speed = 5.0  # speed for reverse option
         
@@ -69,6 +67,8 @@ class ToyMeasurementControl:
         
         # OOI Real location
         ooi_ground_truth_corners = np.array([[54., 52.], [54., 48.], [46., 48.], [46., 52.]]) # Ground truth corners of the OOI
+        rotatation_angle = 45
+        ooi_ground_truth_corners = rotate_about_point(ooi_ground_truth_corners, np.radians(rotatation_angle), ooi_ground_truth_corners.mean(axis=0))
         
         # Use parameters to initialize noisy corners and calculate initial covariance matrix using measurement model
         ooi_noisy_corners = ooi_ground_truth_corners + np.random.normal(0, initial_corner_std_dev, (4, 2)) # Noisy corners of the OOI

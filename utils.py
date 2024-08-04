@@ -54,6 +54,10 @@ def rotate(points: np.ndarray, angle):
         
     return rotated_points
 
+def rotate_about_point(points: np.ndarray, angle, center):
+    # Subtract the center from the points, rotate them, and add the center back
+    return rotate(points - center, angle) + center
+
 def min_max_normalize(value, min_value, max_value):
     # Normalize a value to the range [0, 1]
     return (value - min_value) / (max_value - min_value)
