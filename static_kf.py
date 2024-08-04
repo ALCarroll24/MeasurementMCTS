@@ -3,7 +3,7 @@ from math import *
 from utils import wrapped_angle_diff
 
 # Measurement noise, size needs to be 2 * number of observations for x and y (row length = column length)
-def measurement_model(z, obs_indices, car_pos, car_yaw, min_dist=1, range_dev=1., bearing_dev=1.):
+def measurement_model(z, obs_indices, car_pos, car_yaw, min_dist=1, min_bearing=5, range_dev=1., bearing_dev=1.):
     # Create output array of length 2 * number of observations x 2 * number of observations
     R = np.zeros((2 * len(obs_indices), 2 * len(obs_indices)))
     
@@ -12,13 +12,14 @@ def measurement_model(z, obs_indices, car_pos, car_yaw, min_dist=1, range_dev=1.
         # Calculate the range and bearing to the corner
         dist = max(np.linalg.norm(car_pos - z[i,:]), min_dist) # Distance to observation
         abs_bearing = np.arctan2(z[i, 1] - car_pos[1], z[i, 0] - car_pos[0]) - car_yaw # Direction of observation
-        bearing_diff = wrapped_angle_diff(abs_bearing, car_yaw) # Angle between center of sensor and observation
+        sensor_bearing = wrapped_angle_diff(abs_bearing, car_yaw) # Angle between center of sensor and observation
+        bearing_scale = np.clip(np.abs(sensor_bearing), np.radians(min_bearing), np.pi/2) # Lateral scaling in magnitude matrix
         
         # Rotation matrix to rotate distribution before scaling
-        G = np.array([[np.cos(abs_bearing), -np.sin(abs_bearing)], [np.sin(abs_bearing), np.cos(abs_bearing)]])
+        G = np.array([[np.cos(sensor_bearing), -np.sin(sensor_bearing)], [np.sin(sensor_bearing), np.cos(sensor_bearing)]])
         
         # Magnitude matrix to scale distribution
-        M = np.diag([range_dev**2 * dist, bearing_dev**2 * np.pi * dist])
+        M = np.diag([range_dev**2 * dist, bearing_dev**2 * np.pi * bearing_scale * dist])
         
         # Calculate covariance matrix for this corner
         r = G @ M @ G.T
@@ -106,35 +107,38 @@ class StaticKalmanFilter:
     # Draw the mean and covariance on the UI
     def draw(self, ui):
         for i in range(0, self.s_dim, 2):
-            # Find the eigenvectors and eigenvalues of the covariance matrix
-            eig_vals, eig_vecs = np.linalg.eig(self.P_k[i:i+2, i:i+2])
+            # Get the scalings and angle of ellipse
+            scalings, angle = self.get_ellipse_scaling(self.P_k[i:i+2, i:i+2])
             
-            # Calculate the angle of the eigenvector with the largest eigenvalue
-            angle = np.arctan2(eig_vecs[1, np.argmax(eig_vals)], eig_vecs[0, np.argmax(eig_vals)])
-            
-            # Draw the mean and covariance ellipse
+            # Draw the mean point and covariance ellipse
             ui.draw_point(self.s_k[i:i+2], color='g')
-            ui.draw_ellipse(self.s_k[i:i+2], eig_vals[0], eig_vals[1], angle=angle, color='b')
+            ui.draw_ellipse(self.s_k[i:i+2], scalings[0], scalings[1], angle=angle, color='b', alpha=0.25, linestyle='-')
         
         # Draw a polygon between the points
         ui.draw_polygon(self.s_k.reshape(4, 2), color='r', closed=True, linestyle='-')
     
     # Draw the state on the UI
     def draw_state(self, mean, cov, ui):
-        for i in range(0, self.s_dim, 2):
-            # For now average the variance of the x and y components
-            avg_var = np.mean([cov[i, i], cov[i+1, i+1]])
-            
-            # Find the eigenvectors and eigenvalues of the covariance matrix
-            eig_vals, eig_vecs = np.linalg.eig(cov[i:i+2, i:i+2])
-            
-            # Calculate the angle of the eigenvector with the largest eigenvalue
-            angle = np.arctan2(eig_vecs[1, np.argmax(eig_vals)], eig_vecs[0, np.argmax(eig_vals)])
+        for i in range(0, self.s_dim, 2):            
+            # Get the scalings and angle of ellipse
+            scalings, angle = self.get_ellipse_scaling(cov[i:i+2, i:i+2])
             
             # Draw the mean point and covariance ellipse
             ui.draw_point(mean[i:i+2], color='g')
-            ui.draw_ellipse(mean[i:i+2], eig_vals[0], eig_vals[1], angle=angle, color='b')
+            ui.draw_ellipse(mean[i:i+2], scalings[0], scalings[1], angle=angle, color='b')
             
+        # Draw a polygon between the points
+        ui.draw_polygon(mean.reshape(4, 2), color='r', closed=True, linestyle='-')
+            
+    def get_ellipse_scaling(self, cov):
+        eigvals, eigvecs = np.linalg.eig(cov)
+
+        # Angle of first eigen column vector
+        eigvec1 = eigvecs[:,0] # First column
+        eigvec1_angle = np.arctan2(eigvec1[1], eigvec1[0])
+        
+        # Return eigenvalues [width, height] and angle of first eigenvector (rotation)
+        return eigvals, eigvec1_angle
             
     def get_mean(self):
         return self.s_k
@@ -150,8 +154,8 @@ if __name__ == '__main__':
     P_vec = P.flatten()
 
     # Create KF object
-    kf = VectorizedStaticKalmanFilter(s, P, std_dev)
-    kf_vec = VectorizedStaticKalmanFilter(s, P_vec, std_dev)
+    kf = StaticKalmanFilter(s, P, std_dev)
+    kf_vec = StaticKalmanFilter(s, P_vec, std_dev)
 
     # Create measurement vector
     z = np.array([0.1, 0.1])

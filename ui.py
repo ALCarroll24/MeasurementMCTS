@@ -105,7 +105,7 @@ class MatPlotLibUI:
         self.ax.add_patch(circle)
         self.patches.append(circle)
         
-    def draw_ellipse(self, center, width, length, angle=0, color='r'):
+    def draw_ellipse(self, center, width, length, angle=0, color='r', alpha=1.0, linestyle='-', linewidth=1):
         """
         Draw an ellipse on the plot.
         :param center: Tuple (x, y) for the center of the ellipse.
@@ -114,7 +114,7 @@ class MatPlotLibUI:
         :param angle: Rotation angle of the ellipse in degrees.
         """
         # Create an ellipse and add it to the plot
-        ellipse = patches.Ellipse(center, width, length, linewidth=1, edgecolor=color, facecolor='none')
+        ellipse = patches.Ellipse(center, width, length, edgecolor=color, facecolor='none', linestyle=linestyle, linewidth=linewidth, alpha=alpha)
         ellipse.set_angle(np.degrees(angle))
         
         self.ax.add_patch(ellipse)

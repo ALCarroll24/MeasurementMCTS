@@ -37,8 +37,8 @@ class ToyMeasurementControl:
         self.action_space_sample_heuristic = 'uniform_discrete'
         self.horizon = 5 # length of the planning horizon
         self.expansion_branch_factor = -1  # number of branches when expanding a node (at least two, -1 for all possible actions)
-        self.learn_iterations = 100  # number of learning iterations for MCTS
-        self.exploration_factor = 0.4  # exploration factor for MCTS
+        self.learn_iterations = 200  # number of learning iterations for MCTS
+        self.exploration_factor = 0.0  # exploration factor for MCTS
         # self.reverse_option = False # whether to include a reverse option in the action space
         # self.reverse_speed = 5.0  # speed for reverse option
         
@@ -60,11 +60,14 @@ class ToyMeasurementControl:
         self.hard_collision_punishment = 1000  # punishment for hard collision
         self.soft_collision_punishment = 100  # punishment for soft collision
         
-        # OOI parameters
-        self.p_dev = 1.0 # standard deviation of the observation noise
-        initial_corner_std_dev = 2. # standard deviation of the noise for the OOI corners
-        initial_range_std_dev = 0.5 # standard deviation of the noise for the range of the OOI corners
+        # Kalman Filter parameters parameters
+        range_dev = 1. # standard deviation of the range scaling
+        bearing_dev = 1. # standard deviation of the bearing scaling
+        initial_corner_std_dev = 1.5 # standard deviation of the noise for the OOI corners
+        initial_range_std_dev = 0.5  # standard deviation of the noise for the range of the OOI corners
         initial_bearing_std_dev = 0.5 # standard deviation of the noise for the bearing of the OOI corners
+        
+        # OOI Real location
         ooi_ground_truth_corners = np.array([[54., 52.], [54., 48.], [46., 48.], [46., 52.]]) # Ground truth corners of the OOI
         
         # Use parameters to initialize noisy corners and calculate initial covariance matrix using measurement model
@@ -89,7 +92,7 @@ class ToyMeasurementControl:
         self.ooi = OOI(self.ui, ooi_ground_truth_corners, car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
         
         # Create a Static Vectorized Kalman Filter object
-        self.skf = StaticKalmanFilter(ooi_noisy_corners, ooi_init_covariance, self.p_dev)
+        self.skf = StaticKalmanFilter(ooi_noisy_corners, ooi_init_covariance, range_dev=range_dev, bearing_dev=bearing_dev)
         
         # Get and set OOI collision polygons
         self.ooi_poly = self.ooi.get_collision_polygon()
@@ -212,7 +215,7 @@ class ToyMeasurementControl:
                 # Update displays based on clicked node
                 self.car.draw_state(self.last_node_clicked.state[0])
                 self.skf.draw_state(self.last_node_clicked.state[1], self.last_node_clicked.state[2], self.ui)
-                self.ooi.draw() # Just draw rectangles for now
+                self.ooi.draw() # Just draw rectangles same ground truth
             else:
                 # Update current state displays
                 self.car.draw()
