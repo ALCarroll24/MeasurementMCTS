@@ -66,6 +66,10 @@ class ToyMeasurementControl:
         initial_range_std_dev = 0.5  # standard deviation of the noise for the range of the OOI corners
         initial_bearing_std_dev = 0.5 # standard deviation of the noise for the bearing of the OOI corners
         
+        # For displaying the evaluation, match the means to the real corners
+        if display_evaluation:
+            initial_corner_std_dev = 0.
+        
         # OOI Real location
         ooi_ground_truth_corners = np.array([[54., 52.], [54., 48.], [46., 48.], [46., 52.]]) # Ground truth corners of the OOI
         rotatation_angle = 45 # Rotate simulated OOI by this angle (degrees)
