@@ -29,14 +29,15 @@ class ToyMeasurementControl:
         self.simulation_dt = 0.1 # time step size for forward simulation search
         
         # Parameters for MCTS
+        self.discount_factor = 0.9  # discount factor for MCTS
         self.final_cov_trace = 0.03 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
         self.velocity_options = 1  # number of discrete options for velocity
         self.steering_angle_options = 9  # number of discrete options for steering angle
         self.action_space_sample_heuristic = 'uniform_discrete'
         self.horizon = 5 # length of the planning horizon
         self.expansion_branch_factor = -1  # number of branches when expanding a node (at least two, -1 for all possible actions)
-        self.learn_iterations = 200  # number of learning iterations for MCTS
-        self.exploration_factor = 0.5  # exploration factor for MCTS
+        self.learn_iterations = 50  # number of learning iterations for MCTS
+        self.exploration_factor = np.sqrt(2)  # exploration factor for MCTS (Using sqrt(2) as recommended for rewards in [0,1])
         # self.reverse_option = False # whether to include a reverse option in the action space
         # self.reverse_speed = 5.0  # speed for reverse option
         
@@ -47,14 +48,14 @@ class ToyMeasurementControl:
         self.sensor_max_range = 40 # meters
         
         # New evaluation parameters based on base policy
-        self.eval_path_buffer = 6.0  # buffer around OOI for evaluation path
-        self.eval_steps = 40  # number of steps to evaluate the base policy
+        self.eval_path_buffer = 7.  # buffer around OOI for evaluation path
+        self.eval_steps = 10  # number of steps to evaluate the base policy
         self.eval_dt = 0.2  # time step size for evaluation
-        self.lookahead_distance = 4.0  # distance to look ahead for path following
+        self.lookahead_distance = 4.  # distance to look ahead for path following
         eval_path_rotation = 90  # degrees to rotate the evaluation path (This helps the car get more observations of corners)
         
         # Collision parameters
-        self.soft_collision_buffer = 4. # buffer for soft collision (length from outline of OOI to new outline for all points)
+        self.soft_collision_buffer = 2. # buffer for soft collision (length from outline of OOI to new outline for all points)
         self.hard_collision_punishment = 1000  # punishment for hard collision
         self.soft_collision_punishment = 100  # punishment for soft collision
         
@@ -67,7 +68,7 @@ class ToyMeasurementControl:
         
         # OOI Real location
         ooi_ground_truth_corners = np.array([[54., 52.], [54., 48.], [46., 48.], [46., 52.]]) # Ground truth corners of the OOI
-        rotatation_angle = 45
+        rotatation_angle = 45 # Rotate simulated OOI by this angle (degrees)
         ooi_ground_truth_corners = rotate_about_point(ooi_ground_truth_corners, np.radians(rotatation_angle), ooi_ground_truth_corners.mean(axis=0))
         
         # Use parameters to initialize noisy corners and calculate initial covariance matrix using measurement model
@@ -107,7 +108,7 @@ class ToyMeasurementControl:
         
         # If we are just plotting the evaluation, do that and exit
         if display_evaluation:
-            self.display_evaluation(self.get_state(), pause_time=0.)
+            self.display_evaluation(self.get_state(), pause_time=0.1)
             exit()
             
         # Compute all possible actions
@@ -162,7 +163,7 @@ class ToyMeasurementControl:
                 # Create an MCTS object
                 mcts = MCTS(initial_obs=self.get_state(), env=self, K=self.exploration_factor,
                             _hash_action=hash_action, _hash_state=hash_state,
-                            expansion_branch_factor=self.expansion_branch_factor)
+                            discount_factor=self.discount_factor, expansion_branch_factor=self.expansion_branch_factor)
                 mcts.learn(self.learn_iterations, progress_bar=False)
                 
                 # If we are doing one iteration for profiling, exit
@@ -236,7 +237,7 @@ class ToyMeasurementControl:
         '''
         return self.car.get_state(), self.skf.get_mean(), self.skf.get_covariance(), horizon
     
-    def step(self, state, action, dt=None) -> Tuple[float, np.ndarray]:
+    def step(self, state, action, dt=None, done_by_horizon=True) -> Tuple[float, np.ndarray]:
         """
         Step the environment by one time step. The action is applied to the car, and the state is observed by the OOI.
         The observation is then passed to the KF for update.
@@ -259,7 +260,7 @@ class ToyMeasurementControl:
         new_car_state = self.car.update(dt, action, simulate=True, starting_state=car_state)
         
         # Get the observation from the OOI, pass it to the KF for update
-        observable_corners, indeces = self.ooi.get_observation(new_car_state, draw=False) # TODO: In forward simulation, observations should come from mean of KF
+        observable_corners, indeces = self.ooi.get_noisy_observation(new_car_state, corners=corner_means.reshape(4,2), draw=False)
         new_mean, new_cov = self.skf.update(observable_corners, indeces, new_car_state, 
                                             simulate=True, s_k_=corner_means, P_k_=corner_cov)
         
@@ -270,7 +271,7 @@ class ToyMeasurementControl:
         reward, done = self.get_reward(state[2], new_state[2], car_state)
         
         # Check if we are at the end of the horizon
-        if not done and horizon == self.horizon:
+        if done_by_horizon and not done and horizon == self.horizon:
             done = True
         
         # Return the reward and the new state
@@ -347,8 +348,11 @@ class ToyMeasurementControl:
             action = self.car.get_action_follow_path(self.eval_path, self.lookahead_distance, simulate=True, starting_state=state[0])
             
             # Step the environment
-            state, reward, done = self.step(state, action, dt=self.eval_dt)
-            cumulative_reward += reward
+            state, reward, done = self.step(state, action, dt=self.eval_dt, done_by_horizon=False)
+            
+            # Calculate and add discounted reward based on depth (steps in horizon) of evaluation
+            cumulative_reward += self.discount_factor**state[3] * reward
+            
             # If we are done, break
             if done:
                 return cumulative_reward

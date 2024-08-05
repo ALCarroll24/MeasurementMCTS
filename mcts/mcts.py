@@ -27,6 +27,7 @@ class MCTS:
         K: float,
         _hash_action: Callable[[Any], Tuple],
         _hash_state: Callable[[Any], Tuple],
+        discount_factor: float = 0.99,
         expansion_branch_factor: int = 2,
         deterministic: bool = True,
     ):
@@ -35,6 +36,7 @@ class MCTS:
         self.K = K
         self.root = DecisionNode(state=initial_obs, is_root=True)
         self._initialize_hash(_hash_action, _hash_state)
+        self.discount_factor = discount_factor
         self.expansion_branch_factor = expansion_branch_factor
         self.deterministic = deterministic
 
@@ -139,14 +141,33 @@ class MCTS:
         decision_node = self.root
         internal_env = self.env
 
-        ## SELECTION PHASE
         # While goal has not been reached and we are not at a leaf node (has been visited)``
         while (not decision_node.is_final) and decision_node.visits > 0:
             # print("Starting Decision node: ", decision_node)
             
+            ### EXPANSION PHASE
+            # If we have not yet visited (expanded) this decision node, expand it (add children nodes)
+            # No need to do this if we are done (at the horizon)
+            if decision_node.children == {} and not decision_node.is_final:
+                # If we are expanding with all actions
+                if self.expansion_branch_factor == -1:
+                    for a in self.env.all_actions:
+                        # Action -> random node -> attach to decision node
+                        new_random_node = RandomNode(a, parent=decision_node)
+                        decision_node.add_children(new_random_node, self._hash_action)
+                
+                # Otherwise if we are sampling a number of times from the action space
+                else:
+                    for i in range(self.expansion_branch_factor):
+                        # Random action -> random node -> attach to decision node
+                        new_random_node = RandomNode(a, parent=decision_node)
+                        decision_node.add_children(new_random_node, self._hash_action)
+
+            ## SELECTION PHASE
             # Get action from this decision node using UCB
             a = self.select(decision_node)
             # print(f"Action selected: {a}")
+            
 
             # Get the existing random node from the action and decision node
             new_random_node = decision_node.next_random_node(a, self._hash_action)
@@ -173,38 +194,17 @@ class MCTS:
             # Continue the tree traversal
             decision_node = new_decision_node
 
-
-        ### EXPANSION PHASE
-        # If we have not yet visited (expanded) this decision node, expand it (add children nodes)
-        # No need to do this if we are done (at the horizon)
-        if decision_node.visits == 0 and not decision_node.is_final:
-            # If we are expanding with all actions
-            if self.expansion_branch_factor == -1:
-                for a in self.env.all_actions:
-                    # Action -> random node -> attach to decision node
-                    new_random_node = RandomNode(a, parent=decision_node)
-                    decision_node.add_children(new_random_node, self._hash_action)
-            
-            # Otherwise if we are sampling a number of times from the action space
-            else:
-                for i in range(self.expansion_branch_factor):
-                    # Random action -> random node -> attach to decision node
-                    new_random_node = RandomNode(a, parent=decision_node)
-                    decision_node.add_children(new_random_node, self._hash_action)
-
         # Add a visit since we ended traversal on this decision node
         decision_node.visits += 1
         
         
         ### SIMULATION PHASE
         # Custom evaluation function in the environment class
-        cumulative_reward = self.env.evaluate(decision_node.state)
-        decision_node.evaluation_reward = cumulative_reward
+        eval_reward = self.env.evaluate(decision_node.state)
+        decision_node.evaluation_reward = eval_reward
         
-        # print("Evaluation reward: ", cumulative_reward)
-        
-        # Add the reward step reward to the cumulative reward
-        cumulative_reward += decision_node.reward
+        # Calculate return for this node (already discounted evaluation reward + discounted reward)
+        cumulative_reward = eval_reward + self.discount_factor**decision_node.get_depth() * decision_node.reward
         
         ### BACKPROPAGATION PHASE
         # Back propagate the reward back to the root

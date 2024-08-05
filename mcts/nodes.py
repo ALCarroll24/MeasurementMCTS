@@ -70,6 +70,14 @@ class DecisionNode:
             new_random_node = self.children[hash_preprocess(action)]
 
         return new_random_node
+    
+    def get_depth(self) -> int:
+        """
+        Returns the depth of the node in the tree
+
+        :return: (int) the depth of the node
+        """
+        return self.state[3]
 
     def __repr__(self):
         s = ""

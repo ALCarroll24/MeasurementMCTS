@@ -34,39 +34,43 @@ class OOI:
         self.ui.draw_polygon(self.soft_collision_points, color='b', closed=True, linestyle='--', alpha=0.2)
     
     # Return the corners of the OOI which are observable from the car (observation vectors do not intersect walls)
-    def get_observation(self, car_state, draw=True):
+    def get_observation(self, car_state, corners=None, draw=True):
+        # If corners are not provided, use the corners of the OOI
+        if corners is None:
+            corners = self.corners
+        
         # Get needed parameters from car
         car_position = car_state[0:2]
         car_range = self.max_range
         
         # Do initial distance check to see if we can see any corners
         # If not, return empty list (avoid needless computation)
-        distances = np.linalg.norm(self.corners - car_position, axis=1)
+        distances = np.linalg.norm(corners - car_position, axis=1)
         if np.all(distances >= car_range):
             return np.array([]), []
         
         # Filter out observations of corners that are out of sensor fov
         # Calculate bearing to each corner
         car_yaw = car_state[2]
-        bearings = np.arctan2(self.corners[:, 1] - car_position[1], self.corners[:, 0] - car_position[0])
-        corner_in_fov = np.full(self.corners.shape[0], False, dtype=bool) # corners x 1 length boolean array for fov check
+        bearings = np.arctan2(corners[:, 1] - car_position[1], corners[:, 0] - car_position[0])
+        corner_in_fov = np.full(corners.shape[0], False, dtype=bool) # corners x 1 length boolean array for fov check
         for i, bearing in enumerate(bearings):
             # If the absolute value of the angle difference is less than the max sensor fov, the corner is in fov
             corner_in_fov[i] = np.abs(wrapped_angle_diff(bearing, car_yaw)) < np.radians(self.max_bearing)
         
         #### Find what corners are occluded by front of object using shapely
         # Create line of sight from the car center to each corner of the OOI
-        lines_of_sight = [LineString([car_position, Point(corner)]) for corner in self.corners]
+        lines_of_sight = [LineString([car_position, Point(corner)]) for corner in corners]
         
         # Check if each line of sight cross the OOI (which means it is not observable)
-        ooi_polygon = Polygon(self.corners)
+        ooi_polygon = Polygon(corners)
         not_intersect_ooi = np.array([not line.crosses(ooi_polygon) for line in lines_of_sight])
         
         # Get the usable corners by taking the element-wise AND of the two boolean arrays
         observable_corner_idx = np.logical_and(corner_in_fov, not_intersect_ooi)
         
         # Take only the rows (corners) that are not occluded
-        observable_corners = self.corners[observable_corner_idx == True]
+        observable_corners = corners[observable_corner_idx == True]
         
         if draw:
             # Draw observable corners
@@ -76,8 +80,8 @@ class OOI:
         return observable_corners, np.where(observable_corner_idx)[0]
     
     # Call get_observation and add noise to the observation
-    def get_noisy_observation(self, car_state, draw=True):
-        observable_corners, indeces = self.get_observation(car_state, draw=False)
+    def get_noisy_observation(self, car_state, corners=None, draw=True):
+        observable_corners, indeces = self.get_observation(car_state, corners=corners, draw=False)
         
         # Add noise to the observation
         mean = 0
