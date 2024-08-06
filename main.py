@@ -13,9 +13,10 @@ from flask_server import FlaskServer
 import argparse
 from copy import deepcopy
 from time import sleep
+import time
 
 class ToyMeasurementControl:
-    def __init__(self, one_iteration=False, display_evaluation=False):
+    def __init__(self, one_iteration=False, display_evaluation=False, no_flask_server=False):
         # Flag for whether to run one iteration for profiling
         self.one_iteration = one_iteration
         if self.one_iteration:
@@ -23,27 +24,29 @@ class ToyMeasurementControl:
             self.draw = False
         else:
             self.draw = True
+        
+        self.enable_flask_server = not no_flask_server
             
         # Determine update rate
         self.ui_update_rate = 20.0 # Hz
         self.simulation_dt = 0.1 # time step size for forward simulation search
         
-        # Parameters for MCTS
-        self.discount_factor = 0.9  # discount factor for MCTS
-        self.final_cov_trace = 0.03 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
-        self.velocity_options = 1  # number of discrete options for velocity
-        self.steering_angle_options = 9  # number of discrete options for steering angle
-        self.action_space_sample_heuristic = 'uniform_discrete'
+        # MCTS search parameters
         self.horizon = 5 # length of the planning horizon
-        self.expansion_branch_factor = -1  # number of branches when expanding a node (at least two, -1 for all possible actions)
         self.learn_iterations = 50  # number of learning iterations for MCTS
         self.exploration_factor = np.sqrt(2)  # exploration factor for MCTS (Using sqrt(2) as recommended for rewards in [0,1])
-        # self.reverse_option = False # whether to include a reverse option in the action space
-        # self.reverse_speed = 5.0  # speed for reverse option
+        self.discount_factor = 0.9  # discount factor for MCTS
+        self.final_cov_trace = 0.03 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
+        
+        # MCTS Action space parameters
+        long_acc_options = np.array([-1., -0.5, 0, 0.5, 1.]) # options for longitudinal acceleration (scaled from [-1, 1] to vehicle [-max_acc, max_acc])
+        steering_acc_options = np.array([-1., -0.5, 0, 0.5, 1.]) # options for steering acceleration (scaled from [-1, 1] to vehicle [-max_steering_alpha, max_steering_alpha])
+        self.all_actions = np.array(np.meshgrid(long_acc_options, steering_acc_options)).T.reshape(-1, 2) # Generate all combinations using the Cartesian product of the two action spaces
         
         # Simulated car and attached sensor parameters
-        car_init_position = np.array([10.0, 20.0]) # TODO: Placing the car far away causes it to pick the first action and just spin in a circle
-        car_init_yaw = 0.0
+        # TODO: Placing the car far away causes it to pick the first action and just spin in a circle
+        initial_car_state = np.array([10.0, 20.0, 0.0, 0.0, 0.0, 0.0]) 
+        # [X (m), Y (m), v_x (m/s), psi (rad), delta (rad), delta_dot (rad/s)] (x pos, y pos, longitudinal velocity, yaw, steering angle, steering angle rate)
         self.sensor_max_bearing = 60 # degrees
         self.sensor_max_range = 40 # meters
         
@@ -73,7 +76,7 @@ class ToyMeasurementControl:
         
         # Use parameters to initialize noisy corners and calculate initial covariance matrix using measurement model
         ooi_noisy_corners = ooi_ground_truth_corners + np.random.normal(0, initial_corner_std_dev, (4, 2)) # Noisy corners of the OOI
-        ooi_init_covariance = measurement_model(ooi_noisy_corners, np.arange(4), car_init_position, car_init_yaw, # Initial Covariance matrix for the OOI
+        ooi_init_covariance = measurement_model(ooi_noisy_corners, np.arange(4), initial_car_state[:2], initial_car_state[3], # Initial Covariance matrix for the OOI
                                                 range_dev=initial_range_std_dev, bearing_dev=initial_bearing_std_dev)
         self.covariance_trace_init = np.trace(ooi_init_covariance)
         
@@ -87,7 +90,7 @@ class ToyMeasurementControl:
             self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
         
         # Create a car object
-        self.car = Car(self.ui, car_init_position, car_init_yaw, max_bearing=self.sensor_max_bearing, max_range=self.sensor_max_range)
+        self.car = Car(self.ui, initial_car_state, max_bearing=self.sensor_max_bearing, max_range=self.sensor_max_range)
         
         # Create an OOI object
         self.ooi = OOI(self.ui, ooi_ground_truth_corners, car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
@@ -110,16 +113,12 @@ class ToyMeasurementControl:
         if display_evaluation:
             self.display_evaluation(self.get_state(), pause_time=0.1)
             exit()
-            
-        # Compute all possible actions
-        self.all_actions = self.get_all_actions()
-        # print("Action Space: ", self.all_actions)
         
         # Save the last action (mainly used for relative manual control)
         self.last_action = np.array([0.0, 0.0])
         
         # Run flask server which makes web MCTS tree display and communicates clicked nodes
-        if self.one_iteration:
+        if self.one_iteration or not self.enable_flask_server:
             self.flask_server = None
         else:
             self.flask_server = FlaskServer()
@@ -147,7 +146,10 @@ class ToyMeasurementControl:
                 
                 # Get the observation from the OOI, pass it to the KF for update
                 observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state(), draw=self.draw)
-                self.skf.update(observable_corners, indeces, self.car.get_state())
+                
+                # If there are no observable corners, skip the update
+                if len(indeces) > 0:
+                    self.skf.update(observable_corners, indeces, self.car.get_state())
                 
                 # Check if we are done (normalized covariance trace is below threshold)
                 done = self.check_done(self.get_state())
@@ -163,7 +165,7 @@ class ToyMeasurementControl:
                 # Create an MCTS object
                 mcts = MCTS(initial_obs=self.get_state(), env=self, K=self.exploration_factor,
                             _hash_action=hash_action, _hash_state=hash_state,
-                            discount_factor=self.discount_factor, expansion_branch_factor=self.expansion_branch_factor)
+                            discount_factor=self.discount_factor)
                 mcts.learn(self.learn_iterations, progress_bar=False)
                 
                 # If we are doing one iteration for profiling, exit
@@ -227,7 +229,7 @@ class ToyMeasurementControl:
             self.ui.update()
             
             # Check for shutdown flag
-            if self.ui.shutdown:
+            if self.ui.shutdown and self.enable_flask_server:
                 self.flask_server.stop_flask()
                 break
             
@@ -257,7 +259,7 @@ class ToyMeasurementControl:
         horizon += 1
         
         # Apply the action to the car
-        new_car_state = self.car.update(dt, action, simulate=True, starting_state=car_state)
+        new_car_state = self.car.update(dt, action, starting_state=car_state)
         
         # Get the observation from the OOI, pass it to the KF for update
         observable_corners, indeces = self.ooi.get_observation(new_car_state, corners=corner_means.reshape(4,2), draw=False)
@@ -393,63 +395,6 @@ class ToyMeasurementControl:
         
         print(f'Total Cumulative Reward: {cumulative_reward}')
     
-    def action_space_sample(self) -> np.ndarray:
-        """
-        Sample an action from the action space.
-        
-        :return: (np.ndarray) the sampled action
-        """
-        # Uniform sampling in continuous space
-        if self.action_space_sample_heuristic == 'uniform_continuous':
-            velocity = np.random.uniform(0, self.car.max_velocity)
-            steering_angle = np.random.uniform(-self.car.max_steering_angle, self.car.max_steering_angle)
-            
-        # Uniform Discrete sampling with a specified number of options
-        if self.action_space_sample_heuristic == 'uniform_discrete':
-            velocity = np.random.choice(np.linspace(0, self.car.max_velocity, self.velocity_options))
-            
-            # If velocity is 0, steering angle must be 0 as well since the car cannot turn without moving
-            if velocity == 0:
-                steering_angle = 0
-            else:
-                steering_angle = np.random.choice(np.linspace(-self.car.max_steering_angle, self.car.max_steering_angle, self.steering_angle_options))
-            
-        return np.array([velocity, steering_angle])
-    
-    
-    def get_all_actions(self) -> np.ndarray:
-        """
-        Get all possible actions in the action space.
-        
-        :return: (np.ndarray) the possible actions
-        """
-        # Check if velocity options is 1, if so, only one velocity option
-        if self.velocity_options == 1:
-            velocity = np.array([self.car.max_velocity])
-        else:
-            velocity = np.linspace(0, self.car.max_velocity, self.velocity_options)
-            
-        # Create a meshgrid of all possible actions
-        steering_angle = np.linspace(-self.car.max_steering_angle, self.car.max_steering_angle, self.steering_angle_options)
-        actions = np.array(np.meshgrid(velocity, steering_angle)).T.reshape(-1, 2)
-            
-        # Iterate through the actions and remove the 0 velocity actions with non-zero steering angle
-        possible_actions = deepcopy(actions)
-        deletion_rows = []
-        for i in range(len(actions)):
-            if actions[i][0] == 0 and actions[i][1] != 0:
-                deletion_rows.append(i)
-            
-        # Remove the rows with 0 velocity and non-zero steering angle
-        possible_actions = np.delete(possible_actions, deletion_rows, axis=0)
-        
-        # # If reverse option is enabled, add a reverse option
-        # if self.reverse_option:
-        #     reverse_option = np.array([self.reverse_speed, 0.0])
-        #     possible_actions = np.vstack((possible_actions, reverse_option))
-            
-        return possible_actions
-    
     
 if __name__ == '__main__':
     # Create parser
@@ -458,10 +403,14 @@ if __name__ == '__main__':
     # Add arguments
     parser.add_argument('--one_iteration', type=bool)
     parser.add_argument('--display_evaluation', type=bool)
+    parser.add_argument('--no_flask_server', type=bool)
     
     # Parse arguments
     args = parser.parse_args()
+    print(args)
     
     # Create an instance of ToyMeasurementControl using command line arguments
-    tmc = ToyMeasurementControl(one_iteration=args.one_iteration, display_evaluation=args.display_evaluation)
+    tmc = ToyMeasurementControl(one_iteration=args.one_iteration,
+                                display_evaluation=args.display_evaluation,
+                                no_flask_server=args.no_flask_server)
     tmc.run()

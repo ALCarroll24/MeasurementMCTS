@@ -28,7 +28,6 @@ class MCTS:
         _hash_action: Callable[[Any], Tuple],
         _hash_state: Callable[[Any], Tuple],
         discount_factor: float = 0.99,
-        expansion_branch_factor: int = 2,
         deterministic: bool = True,
     ):
         
@@ -37,7 +36,6 @@ class MCTS:
         self.root = DecisionNode(state=initial_obs, is_root=True)
         self._initialize_hash(_hash_action, _hash_state)
         self.discount_factor = discount_factor
-        self.expansion_branch_factor = expansion_branch_factor
         self.deterministic = deterministic
 
     def get_node(self, node_hash: int) -> Optional[DecisionNode]:
@@ -149,29 +147,18 @@ class MCTS:
             # If we have not yet visited (expanded) this decision node, expand it (add children nodes)
             # No need to do this if we are done (at the horizon)
             if decision_node.children == {} and not decision_node.is_final:
-                # If we are expanding with all actions
-                if self.expansion_branch_factor == -1:
+                # Expand with all actions
                     for a in self.env.all_actions:
                         # Action -> random node -> attach to decision node
-                        new_random_node = RandomNode(a, parent=decision_node)
-                        decision_node.add_children(new_random_node, self._hash_action)
-                
-                # Otherwise if we are sampling a number of times from the action space
-                else:
-                    for i in range(self.expansion_branch_factor):
-                        # Random action -> random node -> attach to decision node
                         new_random_node = RandomNode(a, parent=decision_node)
                         decision_node.add_children(new_random_node, self._hash_action)
 
             ## SELECTION PHASE
             # Get action from this decision node using UCB
             a = self.select(decision_node)
-            # print(f"Action selected: {a}")
-            
 
             # Get the existing random node from the action and decision node
             new_random_node = decision_node.next_random_node(a, self._hash_action)
-            # print(f"New Random node: {new_random_node}")
 
             # Create new decision node using environment step function, 
             # if stochastic or if this node has not been visited (not simulated) use environment to get the next state and reward
@@ -185,7 +172,6 @@ class MCTS:
 
             # Ensure that the decision node is connected to its parent random node (not sure why it wouldn't be though...?)
             new_decision_node = self.update_decision_node(new_decision_node, new_random_node, self._hash_state)
-            # print(f"Updated Decision node: {new_decision_node}")
 
             # Set the reward of the new nodes
             new_decision_node.reward = r
@@ -217,7 +203,7 @@ class MCTS:
             decision_node.visits += 1
 
     def expand(self, decision_node: DecisionNode, action: np.ndarray):
-        # Random action -> random node -> environment step -> decision node
+        # Decision node -> action -> random node -> environment step -> decision node
         new_random_node = decision_node.next_random_node(action, self._hash_action)
         (new_decision_node, r) = self.select_outcome(self.env, new_random_node)
         new_decision_node = self.update_decision_node(new_decision_node, new_random_node, self._hash_state)

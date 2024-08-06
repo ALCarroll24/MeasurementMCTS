@@ -2,6 +2,7 @@ import numpy as np
 from shapely import Polygon, Point, LineString
 from utils import wrap_angle, wrapped_angle_diff, angle_in_interval
 from typing import Union
+from scipy.spatial import KDTree
 
 class OOI:
     def __init__(self, ui, corner_locations, std_dev=0.5,
@@ -18,6 +19,9 @@ class OOI:
         self.collision_polygon = self.get_collision_polygon()
         self.soft_collision_polygon = None # This is set by main class
         self.soft_collision_points = None # This is set by main class
+        
+        # Maintain a kd-tree for quick nearest neighbor queries
+        self.tree = KDTree(self.corners)
         
     def get_corners(self):
         return self.corners
@@ -93,6 +97,62 @@ class OOI:
                 self.ui.draw_circle(corner, 0.6, color='g')
         
         return noisy_observable_corners, indeces
+    
+    # Get simulated observation quickly using kd-tree
+    def get_fast_simulated_observation(self, car_state, corners=None, draw=False):
+        # If corners are not provided, use the class kd-tree
+        if corners is None:
+            tree = self.tree
+        else:
+            tree = KDTree(corners)
+            
+        # Get car position
+        car_position = car_state[0:2]
+        
+        # Find the 8 (from two closest rectangles) nearest points to the car within sensor range
+        tree_query = tree.query(car_position, k=8, distance_upper_bound=self.max_range)
+
+        # Construct an array of rows (x,y) for each point (ordered by smallest distance first)
+        non_inf_len = np.shape(tree_query[0][tree_query[0] != np.inf])[0] # Length of non-inf points
+        xy_idx_points = np.hstack((tree.data[tree_query[1][:non_inf_len]], tree_query[1][:non_inf_len].reshape(-1, 1)))
+        
+        # Filter out points that are out of sensor fov
+        # Calculate bearing to each point
+        point_bearings = np.arctan2(xy_idx_points[:, 1] - car_position[1], xy_idx_points[:, 0] - car_position[0])
+        
+        # If the absolute value of the angle difference is less than the max sensor fov, the point is in fov
+        points_in_fov = []
+        got_first_point = False
+        for i, bearing in enumerate(point_bearings):
+            # Only append points if the absolute value of the angle difference is less than the max sensor fov
+            if np.abs(wrapped_angle_diff(bearing, car_state[2])) <= np.radians(self.max_bearing):
+                points_in_fov.append(xy_idx_points[i])
+                got_first_point = True
+        
+        # Convert to numpy array
+        points_in_fov = np.array(points_in_fov)
+        
+        # If there are no points return an empty array
+        if not got_first_point:
+            return np.array([]), np.array([])
+        
+        # If there is 4 or more points in fov, return only the first 3 (The 4th point should be occluded by front of object)
+        if points_in_fov.shape[0] >= 4:
+            points_in_fov = points_in_fov[:3]
+        
+        if draw:
+            # Draw the points in fov
+            for point in points_in_fov:
+                self.ui.draw_circle(point[:2], 0.6, color='g')
+        
+        # Order based on indeces in third column
+        points_in_fov = points_in_fov[points_in_fov[:, 2].argsort()]
+        
+        # Take out indeces and convert to int array
+        obs_indeces = points_in_fov[:, 2].astype(int)
+        
+        # Return the points and indeces
+        return points_in_fov[:, :2], obs_indeces
         
 if __name__ == '__main__':
     ooi = OOI(None)
