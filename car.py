@@ -206,7 +206,7 @@ class Car:
         # Use the update_pure_pursuit method to update the car state based on the lookahead point
         return self.get_action_pure_pursuit(path[lookahead_index], simulate, starting_state)
 
-    def get_car_polygon(self, car_state=None):
+    def get_collision_polygon(self, car_state=None):
         # If we are calculating the polygon for a different state, use that state
         if car_state is not None:
             position = car_state[0:2]

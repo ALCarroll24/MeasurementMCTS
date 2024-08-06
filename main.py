@@ -314,7 +314,7 @@ class ToyMeasurementControl:
             print(f'Trace Reward: {reward}')    
         
         # Remove large reward when car enters hard or soft boundary
-        car_poly = self.car.get_car_polygon(car_state)
+        car_poly = self.car.get_collision_polygon(car_state)
         
         # If car is in collision with OOI, give a large negative reward
         if car_poly.overlaps(self.ooi_poly):
