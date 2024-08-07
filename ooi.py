@@ -12,8 +12,8 @@ class OOI:
         self.ui = ui
         self.std_dev = std_dev
         
-        self.max_range = car_max_range
-        self.max_bearing = car_max_bearing
+        self.max_range = car_max_range # meters
+        self.max_bearing = np.radians(car_max_bearing) # radians from degrees
         
         # Calculate the collision polygon
         self.collision_polygon = self.get_collision_polygon()
@@ -45,6 +45,7 @@ class OOI:
         
         # Get needed parameters from car
         car_position = car_state[0:2]
+        car_yaw = car_state[3]
         car_range = self.max_range
         
         # Do initial distance check to see if we can see any corners
@@ -55,12 +56,11 @@ class OOI:
         
         # Filter out observations of corners that are out of sensor fov
         # Calculate bearing to each corner
-        car_yaw = car_state[2]
         bearings = np.arctan2(corners[:, 1] - car_position[1], corners[:, 0] - car_position[0])
         corner_in_fov = np.full(corners.shape[0], False, dtype=bool) # corners x 1 length boolean array for fov check
         for i, bearing in enumerate(bearings):
             # If the absolute value of the angle difference is less than the max sensor fov, the corner is in fov
-            corner_in_fov[i] = np.abs(wrapped_angle_diff(bearing, car_yaw)) < np.radians(self.max_bearing)
+            corner_in_fov[i] = np.abs(wrapped_angle_diff(bearing, car_yaw)) < self.max_bearing
         
         #### Find what corners are occluded by front of object using shapely
         # Create line of sight from the car center to each corner of the OOI
@@ -108,6 +108,7 @@ class OOI:
             
         # Get car position
         car_position = car_state[0:2]
+        car_yaw = car_state[3]
         
         # Find the 8 (from two closest rectangles) nearest points to the car within sensor range
         tree_query = tree.query(car_position, k=8, distance_upper_bound=self.max_range)
@@ -125,7 +126,7 @@ class OOI:
         got_first_point = False
         for i, bearing in enumerate(point_bearings):
             # Only append points if the absolute value of the angle difference is less than the max sensor fov
-            if np.abs(wrapped_angle_diff(bearing, car_state[2])) <= np.radians(self.max_bearing):
+            if np.abs(wrapped_angle_diff(bearing, car_yaw)) <= self.max_bearing:
                 points_in_fov.append(xy_idx_points[i])
                 got_first_point = True
         

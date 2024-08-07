@@ -69,7 +69,7 @@ class StaticKalmanFilter:
         
         # Pull out car position and yaw
         car_pos = car_state[0:2]
-        car_yaw = car_state[2]
+        car_yaw = car_state[3]
         
         # If we are not simulating use the class variables, otherwise use the passed in variables
         if not simulate:

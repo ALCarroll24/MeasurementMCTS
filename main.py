@@ -43,16 +43,21 @@ class ToyMeasurementControl:
         steering_acc_options = np.array([-1., -0.5, 0, 0.5, 1.]) # options for steering acceleration (scaled from [-1, 1] to vehicle [-max_steering_alpha, max_steering_alpha])
         self.all_actions = np.array(np.meshgrid(long_acc_options, steering_acc_options)).T.reshape(-1, 2) # Generate all combinations using the Cartesian product of the two action spaces
         
+        # Move the zero action to the front of the list (this is the default action)
+        zero_action = np.array([0.0, 0.0])
+        zero_action_index = np.where(np.all(self.all_actions == zero_action, axis=1))[0][0]
+        self.all_actions = np.concatenate((self.all_actions[zero_action_index:], self.all_actions[:zero_action_index]))
+        
         # Simulated car and attached sensor parameters
         # TODO: Placing the car far away causes it to pick the first action and just spin in a circle
-        initial_car_state = np.array([10.0, 20.0, 0.0, 0.0, 0.0, 0.0]) 
+        initial_car_state = np.array([30.0, 30.0, 10., np.radians(90), 0.0, 0.0]) 
         # [X (m), Y (m), v_x (m/s), psi (rad), delta (rad), delta_dot (rad/s)] (x pos, y pos, longitudinal velocity, yaw, steering angle, steering angle rate)
-        self.sensor_max_bearing = 60 # degrees
-        self.sensor_max_range = 40 # meters
+        sensor_max_bearing = 60 # degrees
+        sensor_max_range = 40 # meters
         
         # New evaluation parameters based on base policy
         self.eval_path_buffer = 7.  # buffer around OOI for evaluation path
-        self.eval_steps = 10  # number of steps to evaluate the base policy
+        self.eval_steps = 0  # number of steps to evaluate the base policy
         self.eval_dt = 0.2  # time step size for evaluation
         self.lookahead_distance = 4.  # distance to look ahead for path following
         eval_path_rotation = 90  # degrees to rotate the evaluation path (This helps the car get more observations of corners)
@@ -63,11 +68,11 @@ class ToyMeasurementControl:
         self.soft_collision_punishment = 100  # punishment for soft collision
         
         # Kalman Filter parameters parameters
-        range_dev = 1. # standard deviation of the range scaling
-        bearing_dev = 1. # standard deviation of the bearing scaling
-        initial_corner_std_dev = 1.5 # standard deviation of the noise for the OOI corners
-        initial_range_std_dev = 0.5  # standard deviation of the noise for the range of the OOI corners
-        initial_bearing_std_dev = 0.5 # standard deviation of the noise for the bearing of the OOI corners
+        range_dev = 1. # standard deviation for the range scaling
+        bearing_dev = 1. # standard deviation for the bearing scaling
+        initial_corner_std_dev = 0. # standard deviation for the noise between ground truth and first observation of corners
+        initial_range_std_dev = 0.5  # standard deviation for the noise for the range of the OOI corners
+        initial_bearing_std_dev = 0.5 # standard deviation for the noise for the bearing of the OOI corners
         
         # OOI Real location
         ooi_ground_truth_corners = np.array([[54., 52.], [54., 48.], [46., 48.], [46., 52.]]) # Ground truth corners of the OOI
@@ -90,10 +95,10 @@ class ToyMeasurementControl:
             self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
         
         # Create a car object
-        self.car = Car(self.ui, initial_car_state, max_bearing=self.sensor_max_bearing, max_range=self.sensor_max_range)
+        self.car = Car(self.ui, initial_car_state, max_bearing=sensor_max_bearing, max_range=sensor_max_range)
         
         # Create an OOI object
-        self.ooi = OOI(self.ui, ooi_ground_truth_corners, car_max_range=self.car.max_range, car_max_bearing=self.car.max_bearing)
+        self.ooi = OOI(self.ui, ooi_ground_truth_corners, car_max_range=sensor_max_range, car_max_bearing=sensor_max_bearing)
         
         # Create a Static Vectorized Kalman Filter object
         self.skf = StaticKalmanFilter(ooi_noisy_corners, ooi_init_covariance, range_dev=range_dev, bearing_dev=bearing_dev)
@@ -224,6 +229,7 @@ class ToyMeasurementControl:
                 self.car.draw()
                 self.ooi.draw()
                 self.skf.draw(self.ui)
+                self.draw_simulated_states(mcts, velocity_scale=1)
             
             # Update the ui to display the new state
             self.ui.update()
@@ -263,7 +269,7 @@ class ToyMeasurementControl:
         
         # Get the observation from the OOI, pass it to the KF for update
         observable_corners, indeces = self.ooi.get_observation(new_car_state, corners=corner_means.reshape(4,2), draw=False)
-        new_mean, new_cov = self.skf.update(observable_corners, indeces, new_car_state, 
+        new_mean, new_cov = self.skf.update(observable_corners, indeces, new_car_state,
                                             simulate=True, s_k_=corner_means, P_k_=corner_cov)
         
         # Combine the updated car state, mean, covariance and horizon into a new state
@@ -395,6 +401,30 @@ class ToyMeasurementControl:
         
         print(f'Total Cumulative Reward: {cumulative_reward}')
     
+    def draw_simulated_states(self, mcts_tree, velocity_scale=0.01, width_scale=0.01, color='y'):
+        # Recursively go through tree of simulated states and draw them, width is based on average reward
+        
+        # Get the root node
+        root = mcts_tree.root # root decision node
+        
+        def draw_child_states(decision_node):
+            # Draw an arrow for the state of this node (width based on reward, length and direction based on velocity)
+            start_point = decision_node.state[0][:2] # x, y
+            velocity_vector = np.array([np.cos(decision_node.state[0][3]), np.sin(decision_node.state[0][3])]) * decision_node.state[0][2] # vx, vy (from 0,0)
+            end_point = start_point + velocity_vector * velocity_scale
+            width = width_scale * np.abs(decision_node.reward / decision_node.visits) # width based on average reward
+            
+            # Draw the arrow
+            self.ui.draw_arrow(start_point, end_point, width=width, color=color)
+            
+            # Draw the children
+            for child_random_node in decision_node.children.values():
+                if len(child_random_node.children.values()) > 0:
+                    draw_child_states(next(iter(child_random_node.children.values())))
+                    
+        # Recuriousely draw the children
+        draw_child_states(root)
+        
     
 if __name__ == '__main__':
     # Create parser

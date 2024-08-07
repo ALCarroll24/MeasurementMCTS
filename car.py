@@ -5,6 +5,7 @@ from utils import wrap_angle, sat_value, rotate, angle_difference
 import time
 from typing import Tuple
 from shapely import Polygon
+from copy import deepcopy
 
 class Car:
     def __init__(self, ui, initial_state, max_range=100., max_bearing=45., max_velocity=10., range_arrow_length=10.0):
@@ -40,7 +41,8 @@ class Car:
         ### Longitudinal output class variables
         self.max_acceleration = max_longitudinal_force / gross_vehicle_mass  # Maximum acceleration given F=ma in m/s^2
         self.min_acceleration = -0.8 * 9.81  # Maximum deceleration with brakes in m/s^2
-        
+        print("Max acceleration: ", self.max_acceleration)
+        print("Min acceleration: ", self.min_acceleration)
         ### Lateral Parameters
         max_steering_wheel_turns = 3.2  # Maximum steering wheel turns from lock to lock (far left to far right)
         steering_ratio = np.mean([15.7, 18.9])  # Steering wheel turns to wheel turns (averaging center and at lock)
@@ -51,15 +53,16 @@ class Car:
         # From rearanging: theta = 1/2 * alpha * t^2, we get alpha = 2 * theta / t^2:
         self.max_steering_alpha = np.pi / (quarter_rotation_time**2) / steering_ratio  # Maximum steering angular acceleration in rad/s^2
         self.max_steering_angle = max_steering_wheel_turns * np.pi / steering_ratio  # Maximum steering angle from center in radians
-
+        print("Max steering angle: ", np.degrees(self.max_steering_angle))
+        print("Max steering alpha: ", np.degrees(self.max_steering_alpha))
         
     # Vehicle model Matrices
-    def get_A_matrix(self, V_xt, delta_t, dt):
+    def get_A_matrix(self, yaw, delta, dt):
         # Maps state space to new state (non-linear by function parameters)
-        A = np.array([[1, 0, np.cos(delta_t) * dt, 0, 0, 0],
-                      [0, 1, np.sin(delta_t) * dt, 0, 0, 0],
+        A = np.array([[1, 0, np.cos(yaw) * dt, 0, 0, 0],
+                      [0, 1, np.sin(yaw) * dt, 0, 0, 0],
                       [0, 0, 1, 0, 0, 0],
-                      [0, 0, 0, 1, V_xt * np.tan(delta_t)/self.wheelbase, 0],
+                      [0, 0, np.tan(delta)/self.wheelbase * dt, 1, 0, 0],
                       [0, 0, 0, 0, 1, dt],
                       [0, 0, 0, 0, 0, 1]])
         return A
@@ -79,28 +82,44 @@ class Car:
         # State vector: [X, Y, v_x, psi, delta, delta_dot] (x pos, y pos, longitudinal velocity, yaw, steering angle, steering angle rate)
         # Action vector: [v_x_dot, delta_dot_dot] (linear acceleration, steering angle acceleration)
         
-        # Copy action so we can modify it (can't modify input because it's a tuple)
-        action_vec = np.copy(action_vec)
+        # Copy action so we can modify it (can't modify input because it's a tuple) and clamp [-1, 1]
+        scaled_action_vec = deepcopy(np.clip(action_vec, -1, 1))
         
         # Actions are between [-1, 1] so scale them to the max values
-        if action_vec[0] > 0:
-            action_vec[0] *= self.max_acceleration
+        if scaled_action_vec[0] > 0:
+            scaled_action_vec[0] *= self.max_acceleration
             
         # Negate since minimum acceleration is negative and so is the action
         else:
-            action_vec[0] *= -self.min_acceleration
+            scaled_action_vec[0] *= -self.min_acceleration
             
         # For steering the output max and min are the same so just scale it by max steering acceleration (also between [-1, 1] initially)
-        action_vec[1] *= self.max_steering_alpha
+        scaled_action_vec[1] *= self.max_steering_alpha
         
-        # Compute new state
-        new_state = self.get_A_matrix(state_vec[2], state_vec[4], dt) @ state_vec + self.get_B_matrix(dt) @ action_vec
+        # Compute action update of state (state + B @ action)
+        state_with_action = state_vec + self.get_B_matrix(dt) @ scaled_action_vec
+        
+        # Check if this action with A @ state will cause the steering angle to exceed the max steering angle (delta + delta_dot * dt)
+        if state_with_action[4] + state_with_action[5] * dt > self.max_steering_angle:
+            # Set the steering angle to the max steering angle
+            state_with_action[4] = self.max_steering_angle
+            
+            # Set the steering angle rate to zero
+            state_with_action[5] = 0
+        
+        # Check if this action with A @ state will cause the steering angle to exceed the min steering angle (delta + delta_dot * dt)
+        elif state_with_action[4] + state_with_action[5] * dt < -self.max_steering_angle:
+            # Set the steering angle to the min steering angle
+            state_with_action[4] = -self.max_steering_angle
+            
+            # Set the steering angle rate to zero
+            state_with_action[5] = 0
+        
+        # Now update the state using the A matrix (function of yaw and steering angle)
+        new_state = self.get_A_matrix(state_with_action[3], state_with_action[4], dt) @ state_with_action
         
         # Keep vehicle yaw angle between [-pi, pi] (wrap around)
         new_state[3] = wrap_angle(new_state[3])
-        
-        # Keep steering angle between [-max_steering_angle, max_steering_angle]
-        new_state[4] = np.clip(new_state[4], -self.max_steering_angle, self.max_steering_angle)
         
         return new_state
     
@@ -124,11 +143,11 @@ class Car:
         else:
             return new_state
         
-    def get_action_pure_pursuit(self, target_point: np.ndarray, simulate: bool = False, starting_state: np.ndarray = None):
+    def get_action_pure_pursuit(self, target_point: np.ndarray, starting_state: np.ndarray = None):
         # Use the update function to update the car state based on pure pursuit and target point
 
         # Retrieve the current or starting state
-        if simulate and starting_state is not None:
+        if starting_state is not None:
             position = np.copy(starting_state[0:2])
             yaw = np.copy(starting_state[3])
         else:
@@ -163,11 +182,11 @@ class Car:
 
         return velocity, np.degrees(required_steering_angle)
     
-    def get_action_follow_path(self, path: np.ndarray, look_ahead_dist: float, return_target_point: bool = False, simulate: bool = False, starting_state: np.ndarray = None):
+    def get_action_follow_path(self, path: np.ndarray, look_ahead_dist: float, return_target_point: bool = False, starting_state: np.ndarray = None):
         # Use the update function to update the car state based on following a path
 
         # Retrieve the current or starting state
-        if simulate and starting_state is not None:
+        if starting_state is not None:
             position = np.copy(starting_state[0:2])
             yaw = np.copy(starting_state[3])
         else:
@@ -201,16 +220,16 @@ class Car:
         
         # If returning target point
         if return_target_point:
-            return self.get_action_pure_pursuit(path[lookahead_index], simulate, starting_state), path[lookahead_index]
+            return self.get_action_pure_pursuit(path[lookahead_index], starting_state), path[lookahead_index]
 
         # Use the update_pure_pursuit method to update the car state based on the lookahead point
-        return self.get_action_pure_pursuit(path[lookahead_index], simulate, starting_state)
+        return self.get_action_pure_pursuit(path[lookahead_index], starting_state)
 
     def get_collision_polygon(self, car_state=None):
         # If we are calculating the polygon for a different state, use that state
         if car_state is not None:
             position = car_state[0:2]
-            yaw = car_state[2]
+            yaw = car_state[3]
             
         # Otherwise, use the current state
         else:
@@ -228,6 +247,10 @@ class Car:
         return Polygon(points)
 
     def draw(self):
+        # Return if we didn't get a UI
+        if self.ui is None:
+            return
+        
         # Draw the car as a rectangle in the UI
         self.ui.draw_rectangle(self.state[:2], self.length, self.width, self.state[3])
         
@@ -244,14 +267,18 @@ class Car:
 
         
     def draw_state(self, state):
+        # Return if we didn't get a UI
+        if self.ui is None:
+            return
+        
         # Draw the car as a rectangle in the UI
-        self.ui.draw_rectangle(state[0:2], self.length, self.width, state[2])
+        self.ui.draw_rectangle(state[0:2], self.length, self.width, state[3])
                                
         # Draw range and bearing indicators
-        self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[2] + self.max_bearing)*self.range_arrow_length,
-                                                                np.sin(state[2] + self.max_bearing)*self.range_arrow_length]))
-        self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[2] - self.max_bearing)*self.range_arrow_length,
-                                                                np.sin(state[2] - self.max_bearing)*self.range_arrow_length]))
+        self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[3] + self.max_bearing)*self.range_arrow_length,
+                                                                np.sin(state[3] + self.max_bearing)*self.range_arrow_length]))
+        self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[3] - self.max_bearing)*self.range_arrow_length,
+                                                                np.sin(state[3] - self.max_bearing)*self.range_arrow_length]))
         
     def test_actions(self):
         # Test drive the car around using a for loop
@@ -301,27 +328,16 @@ class Car:
 
 if __name__ == '__main__':
     
-    # Determine update rate
-    hz = 10.0
-    period = 1.0 / hz
+    # Test car model with some actions
+    car = Car(None, np.array([0, 0, 20 * 0.44704, np.radians(0), np.radians(10), 0]))
     
-    # Create a plotter object
-    ui = MatPlotLibUI(update_rate=hz)
+    action = (-.2, 0.)
+    print("Action: ", action)
     
-    # Create a car object
-    car = Car(ui, np.array([10.0, 10.0]), 0, hz)
-    
-    # Test drive the car around using a for loop
-    # car.velocity = 3.0
-    # car.steering_angle = np.radians(2.0)
-    # for i in range(100):
-    #     car.update(period)
-    #     ui.update()
-    
-    # Start the car action thread
-    # car_action_thread = threading.Thread(target=car.test_actions)
-    # car_action_thread.start()
-    
-    # Start the ui plotting loop
-    # ui.start_async_loop()
-    
+    print("Initial state: ", [round(x, 2) for x in car.state])
+    state = car.update(1., action, car.state)
+    print("1st state: ", [round(x, 2) for x in state])
+    state = car.update(1., action, state)
+    print("2nd state: ", [round(x, 2) for x in state])
+    state = car.update(1., action, state)
+    print("3rd state: ", [round(x, 2) for x in state])
