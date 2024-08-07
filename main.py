@@ -3,6 +3,7 @@ from typing import Tuple
 from ui import MatPlotLibUI
 from car import Car
 from ooi import OOI
+from evaluation import KDTreeEvaluation
 from static_kf import StaticKalmanFilter, measurement_model
 from utils import wrap_angle, min_max_normalize, get_interpolated_polygon_points, rotate_about_point
 from shapely.affinity import rotate
@@ -56,13 +57,13 @@ class ToyMeasurementControl:
         sensor_max_bearing = 60 # degrees
         sensor_max_range = 40 # meters
         
-        # New evaluation parameters based on base policy
+        # Evaluation parameters based on KDtree to quickly compute distance to corners and obstacles
         self.eval_path_buffer = 7.  # buffer around OOI for evaluation path
         self.eval_steps = 4  # number of steps to evaluate the base policy
         self.eval_dt = 0.8  # time step size for evaluation
         self.lookahead_distance = 4.  # distance to look ahead for path following
         self.obstacle_std_dev = 4. # Number of standard deviations to inflate obstacle circle around OOI corners
-        eval_path_rotation = 90  # degrees to rotate the evaluation path (This helps the car get more observations of corners)
+        # eval_path_rotation = 90 UNUSED # degrees to rotate the evaluation path (This helps the car get more observations of corners)
         
         # Collision parameters
         self.soft_collision_buffer = 2. # buffer for soft collision (length from outline of OOI to new outline for all points)
@@ -105,16 +106,19 @@ class ToyMeasurementControl:
         # Create a Static Vectorized Kalman Filter object
         self.skf = StaticKalmanFilter(ooi_noisy_corners, ooi_init_covariance, range_dev=range_dev, bearing_dev=bearing_dev)
         
+        # Create a KDTree for evaluation
+        self.eval_kd_tree = KDTreeEvaluation([ooi_noisy_corners], num_steps=self.eval_steps, dt=self.eval_dt, std_devs=self.obstacle_std_dev)
+        
         # Get and set OOI collision polygons
         self.ooi_poly = self.ooi.get_collision_polygon()
         self.ooi.soft_collision_polygon = self.ooi_poly.buffer(self.soft_collision_buffer)
         self.ooi.soft_collision_points = get_interpolated_polygon_points(self.ooi.soft_collision_polygon, num_points=50)
         self.soft_ooi_poly = self.ooi.soft_collision_polygon
         
-        # Get evaluation path for circling around OOI and collecting observations
-        eval_poly = self.ooi_poly.buffer(self.eval_path_buffer)
-        eval_poly = rotate(eval_poly, eval_path_rotation, origin='centroid')
-        self.eval_path = get_interpolated_polygon_points(eval_poly, num_points=200)
+        # UNUSED Get evaluation path for circling around OOI and collecting observations
+        # eval_poly = self.ooi_poly.buffer(self.eval_path_buffer)
+        # eval_poly = rotate(eval_poly, eval_path_rotation, origin='centroid')
+        # self.eval_path = get_interpolated_polygon_points(eval_poly, num_points=200)
         
         # If we are just plotting the evaluation, do that and exit
         if display_evaluation:
@@ -353,24 +357,31 @@ class ToyMeasurementControl:
         
         return reward, done
 
-    # New base policy based evaluation function
+    # NEW quick state evaluation based on kdtree for quick distance lookup to corners and obstacles
     def evaluate(self, state, draw=False) -> float:
-        cumulative_reward = 0.
-        for i in range(self.eval_steps):
-            # Get the action from the base policy
-            action = self.car.get_action_follow_path(self.eval_path, self.lookahead_distance, starting_state=state[0])
+        # Pass the car state to the KDTree evaluation to get the reward
+        mean_reward = self.eval_kd_tree.get_evaluation_reward(state[0], corner_scale=1, obstacle_scale=1)
+        
+        return mean_reward
+
+    # OLD Base policy based evaluation function
+    # def evaluate(self, state, draw=False) -> float:
+    #     cumulative_reward = 0.
+    #     for i in range(self.eval_steps):
+    #         # Get the action from the base policy
+    #         action = self.car.get_action_follow_path(self.eval_path, self.lookahead_distance, starting_state=state[0])
             
-            # Step the environment
-            state, reward, done = self.step(state, action, dt=self.eval_dt, done_by_horizon=False)
+    #         # Step the environment
+    #         state, reward, done = self.step(state, action, dt=self.eval_dt, done_by_horizon=False)
             
-            # Calculate and add discounted reward based on depth (steps in horizon) of evaluation
-            cumulative_reward += self.discount_factor**state[3] * reward
+    #         # Calculate and add discounted reward based on depth (steps in horizon) of evaluation
+    #         cumulative_reward += self.discount_factor**state[3] * reward
             
-            # If we are done, break
-            if done:
-                return cumulative_reward
+    #         # If we are done, break
+    #         if done:
+    #             return cumulative_reward
             
-        return cumulative_reward
+    #     return cumulative_reward
     
     # Run evaluation with display from starting state for debugging
     def display_evaluation(self, state, pause_time=0.1) -> None:
