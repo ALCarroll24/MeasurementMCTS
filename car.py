@@ -41,8 +41,7 @@ class Car:
         ### Longitudinal output class variables
         self.max_acceleration = max_longitudinal_force / gross_vehicle_mass  # Maximum acceleration given F=ma in m/s^2
         self.min_acceleration = -0.8 * 9.81  # Maximum deceleration with brakes in m/s^2
-        print("Max acceleration: ", self.max_acceleration)
-        print("Min acceleration: ", self.min_acceleration)
+
         ### Lateral Parameters
         max_steering_wheel_turns = 3.2  # Maximum steering wheel turns from lock to lock (far left to far right)
         steering_ratio = np.mean([15.7, 18.9])  # Steering wheel turns to wheel turns (averaging center and at lock)
@@ -53,8 +52,6 @@ class Car:
         # From rearanging: theta = 1/2 * alpha * t^2, we get alpha = 2 * theta / t^2:
         self.max_steering_alpha = np.pi / (quarter_rotation_time**2) / steering_ratio  # Maximum steering angular acceleration in rad/s^2
         self.max_steering_angle = max_steering_wheel_turns * np.pi / steering_ratio  # Maximum steering angle from center in radians
-        print("Max steering angle: ", np.degrees(self.max_steering_angle))
-        print("Max steering alpha: ", np.degrees(self.max_steering_alpha))
         
     # Vehicle model Matrices
     def get_A_matrix(self, yaw, delta, dt):

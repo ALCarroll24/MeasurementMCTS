@@ -14,6 +14,7 @@ import argparse
 from copy import deepcopy
 from time import sleep
 import time
+import timeit
 
 class ToyMeasurementControl:
     def __init__(self, one_iteration=False, display_evaluation=False, no_flask_server=False):
@@ -57,9 +58,10 @@ class ToyMeasurementControl:
         
         # New evaluation parameters based on base policy
         self.eval_path_buffer = 7.  # buffer around OOI for evaluation path
-        self.eval_steps = 0  # number of steps to evaluate the base policy
-        self.eval_dt = 0.2  # time step size for evaluation
+        self.eval_steps = 4  # number of steps to evaluate the base policy
+        self.eval_dt = 0.8  # time step size for evaluation
         self.lookahead_distance = 4.  # distance to look ahead for path following
+        self.obstacle_std_dev = 4. # Number of standard deviations to inflate obstacle circle around OOI corners
         eval_path_rotation = 90  # degrees to rotate the evaluation path (This helps the car get more observations of corners)
         
         # Collision parameters
@@ -116,7 +118,10 @@ class ToyMeasurementControl:
         
         # If we are just plotting the evaluation, do that and exit
         if display_evaluation:
+            start_time = timeit.default_timer()
             self.display_evaluation(self.get_state(), pause_time=0.1)
+            time_taken = timeit.default_timer() - start_time
+            print(f'Time taken for evaluation: {time_taken} seconds')
             exit()
         
         # Save the last action (mainly used for relative manual control)
@@ -353,7 +358,7 @@ class ToyMeasurementControl:
         cumulative_reward = 0.
         for i in range(self.eval_steps):
             # Get the action from the base policy
-            action = self.car.get_action_follow_path(self.eval_path, self.lookahead_distance, simulate=True, starting_state=state[0])
+            action = self.car.get_action_follow_path(self.eval_path, self.lookahead_distance, starting_state=state[0])
             
             # Step the environment
             state, reward, done = self.step(state, action, dt=self.eval_dt, done_by_horizon=False)
@@ -373,31 +378,28 @@ class ToyMeasurementControl:
         cumulative_reward = 0.
         for i in range(self.eval_steps):
             # Get the action from the base policy
-            action, target_point= self.car.get_action_follow_path(self.eval_path, self.lookahead_distance, simulate=True, starting_state=state[0], return_target_point=True)
-            print(f'car state: {state[0]}')
-            print(f'action: {action}')
+            action, target_point= self.car.get_action_follow_path(self.eval_path, self.lookahead_distance, starting_state=state[0], return_target_point=True)
             
             # Step the environment
             state, reward, done = self.step(state, action, dt=self.eval_dt)
-            print(f'Reward: {reward}')
             cumulative_reward += reward
             
-            # Draw the state
-            self.car.draw_state(state[0])
-            self.skf.draw_state(state[1], state[2], self.ui)
-            self.ooi.draw()
+            # # Draw the state
+            # self.car.draw_state(state[0])
+            # self.skf.draw_state(state[1], state[2], self.ui)
+            # self.ooi.draw()
             
-            # Draw the target point
-            self.ui.draw_point(target_point, color='r')
+            # # Draw the target point
+            # self.ui.draw_point(target_point, color='r')
             
-            # Draw the evaluation path
-            self.ui.draw_polygon(self.eval_path, color='g')
+            # # Draw the evaluation path
+            # self.ui.draw_polygon(self.eval_path, color='g')
             
-            # Update the UI
-            self.ui.update()
+            # # Update the UI
+            # self.ui.update()
             
-            # Pause for a specified amount of time
-            sleep(pause_time)
+            # # Pause for a specified amount of time
+            # sleep(pause_time)
         
         print(f'Total Cumulative Reward: {cumulative_reward}')
     
@@ -437,7 +439,6 @@ if __name__ == '__main__':
     
     # Parse arguments
     args = parser.parse_args()
-    print(args)
     
     # Create an instance of ToyMeasurementControl using command line arguments
     tmc = ToyMeasurementControl(one_iteration=args.one_iteration,
