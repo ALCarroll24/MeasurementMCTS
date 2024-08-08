@@ -37,7 +37,7 @@ class ToyMeasurementControl:
         self.horizon = 5 # length of the planning horizon
         self.learn_iterations = 2  # number of learning iterations for MCTS
         self.exploration_factor = np.sqrt(2)  # exploration factor for MCTS (Using sqrt(2) as recommended for rewards in [0,1])
-        self.discount_factor = 0.0  # discount factor for MCTS
+        self.discount_factor = 0.0  # discount r for MCTS
         self.final_cov_trace = 0.03 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
         
         # MCTS Action space parameters
@@ -51,7 +51,7 @@ class ToyMeasurementControl:
         self.all_actions = np.concatenate((self.all_actions[zero_action_index:], self.all_actions[:zero_action_index]))
         
         # Simulated car and attached sensor parameters
-        initial_car_state = np.array([30.0, 30.0, 5., np.radians(90), 0.0, 0.0]) 
+        initial_car_state = np.array([25.0, 30.0, 20., np.radians(45), 0.0, 0.0]) 
         # [X (m), Y (m), v_x (m/s), psi (rad), delta (rad), delta_dot (rad/s)] (x pos, y pos, longitudinal velocity, yaw, steering angle, steering angle rate)
         sensor_max_bearing = 60 # degrees
         sensor_max_range = 40 # meters
@@ -59,7 +59,7 @@ class ToyMeasurementControl:
         # Evaluation parameters based on KDtree to quickly compute distance to corners and obstacles
         self.eval_steps = 4  # number of steps to evaluate the base policy
         self.eval_dt = 0.6  # time step size for evaluation
-        obstacle_std_dev = 4. # Number of standard deviations to inflate obstacle circle around OOI corners
+        obstacle_std_dev = 2.5 # Number of standard deviations to inflate obstacle circle around OOI corners
         corner_rew_max = 3000. # maximum reward for corner reward (clip and normalize based on this)
         obs_rew_min = 100. # minimum reward for obstacle reward (clip and normalize based on this)
         corner_reward_scale = 1. # scale for corner reward
@@ -109,7 +109,7 @@ class ToyMeasurementControl:
         # Create a KDTree for evaluation
         self.eval_kd_tree = KDTreeEvaluation([ooi_noisy_corners], num_steps=self.eval_steps, dt=self.eval_dt, std_devs=obstacle_std_dev,
                                              corner_rew_max=corner_rew_max, obs_rew_min=obs_rew_min, corner_reward_scale=corner_reward_scale,
-                                             obs_pun_scale=obs_pun_scale, ui=self.ui)
+                                             obs_pun_scale=obs_pun_scale, ui=self.ui, max_range=sensor_max_range, max_bearing=sensor_max_bearing)
         
         # Get and set OOI collision polygons
         self.ooi_poly = self.ooi.get_collision_polygon()
@@ -241,11 +241,13 @@ class ToyMeasurementControl:
                 self.car.draw_state(self.last_node_clicked.state[0])
                 self.skf.draw_state(self.last_node_clicked.state[1], self.last_node_clicked.state[2], self.ui)
                 self.ooi.draw() # Just draw rectangles same ground truth
+                self.eval_kd_tree.draw_obstacles()
             else:
                 # Update current state displays
                 self.car.draw()
                 self.ooi.draw()
                 self.skf.draw(self.ui)
+                self.eval_kd_tree.draw_obstacles()
                 self.draw_simulated_states(mcts, velocity_scale=1)
             
             # Update the ui to display the new state
@@ -286,6 +288,7 @@ class ToyMeasurementControl:
         
         # Get the observation from the OOI, pass it to the KF for update
         observable_corners, indeces = self.ooi.get_observation(new_car_state, corners=corner_means.reshape(4,2), draw=False)
+        print("Number of observable corners: ", len(indeces))
         new_mean, new_cov = self.skf.update(observable_corners, indeces, new_car_state,
                                             simulate=True, s_k_=corner_means, P_k_=corner_cov)
         
@@ -293,7 +296,7 @@ class ToyMeasurementControl:
         new_state = (new_car_state, new_mean, new_cov, horizon)
         
         # Find the reward based prior vs new covariance matrix and car collision with OOI
-        reward, done = self.get_reward(state[2], new_state[2], car_state)
+        reward, done = self.get_reward(state[2], new_state[2], new_car_state)
         
         # Check if we are at the end of the horizon
         if done_by_horizon and not done and horizon == self.horizon:
@@ -336,29 +339,36 @@ class ToyMeasurementControl:
         if print_rewards:
             print(f'Trace Reward: {reward}')    
         
-        # Remove large reward when car enters hard or soft boundary
-        car_poly = self.car.get_collision_polygon(car_state)
+        # Get obstacle reward from KDTree evaluation
+        obs_reward = self.eval_kd_tree.get_obstacle_cost(car_state)
+        print(f'Trace Reward: {reward}')
+        print(f'Obstacle Reward: {obs_reward}')
+        # Add the obstacle reward to the trace reward
+        reward += obs_reward
         
-        # If car is in collision with OOI, give a large negative reward
-        if car_poly.overlaps(self.ooi_poly):
-            reward -= self.hard_collision_punishment
+        # # Remove large reward when car enters hard or soft boundary
+        # car_poly = self.car.get_collision_polygon(car_state)
+        
+        # # If car is in collision with OOI, give a large negative reward
+        # if car_poly.overlaps(self.ooi_poly):
+        #     reward -= self.hard_collision_punishment
             
-            if print_rewards:
-                print("Hard Collision")
+        #     if print_rewards:
+        #         print("Hard Collision")
             
-        # If car comes very close to OOI (soft collision), give a less large negative reward based on distance inside soft boundary
-        if car_poly.overlaps(self.soft_ooi_poly):
-            # Find the car polygon's distance to the hard boundary
-            dist_to_ooi = car_poly.distance(self.ooi_poly)
+        # # If car comes very close to OOI (soft collision), give a less large negative reward based on distance inside soft boundary
+        # if car_poly.overlaps(self.soft_ooi_poly):
+        #     # Find the car polygon's distance to the hard boundary
+        #     dist_to_ooi = car_poly.distance(self.ooi_poly)
             
-            # Find the distance inside the soft boundary
-            dist_in_soft = self.soft_collision_buffer - dist_to_ooi
+        #     # Find the distance inside the soft boundary
+        #     dist_in_soft = self.soft_collision_buffer - dist_to_ooi
             
-            # Reward is the percentage of the buffer distance inside the soft boundary squared
-            reward -= self.soft_collision_punishment * (dist_in_soft / self.soft_collision_buffer)**2
+        #     # Reward is the percentage of the buffer distance inside the soft boundary squared
+        #     reward -= self.soft_collision_punishment * (dist_in_soft / self.soft_collision_buffer)**2
             
-            if print_rewards:
-                print("Soft Collision")
+        #     if print_rewards:
+        #         print("Soft Collision")
         
         # Find whether the episode is done TODO: done needs to also account for horizon length
         done = new_cov_trace < self.final_cov_trace
@@ -367,8 +377,15 @@ class ToyMeasurementControl:
 
     # Quick state evaluation based on kdtree for quick distance lookup to corners and obstacles
     def evaluate(self, action, state, draw=False) -> float:
+        # Get the diagonals of the covariance matrix for the corners
+        corner_cov_diags = np.sqrt(np.diag(state[2]))
+        
+        # Average the every pair of diagonals into (4, 1) point covariance
+        reshaped_cov = corner_cov_diags.reshape(4, 2)
+        corner_avg_cov = np.mean(reshaped_cov, axis=1)
+        
         # Pass the car state to the KDTree evaluation to get the reward
-        mean_reward = self.eval_kd_tree.evaluate(action, state[0], draw=draw)
+        mean_reward = self.eval_kd_tree.evaluate(action, state[0], corner_avg_cov, draw=draw)
         
         return mean_reward
     
@@ -385,6 +402,7 @@ class ToyMeasurementControl:
                 self.ui.draw_circle(state[0][:2], reward, color='r')
             
                 print(f'i={i} Fl Reward={reward}')
+            print()
         
         return cumulative_reward
     
@@ -392,15 +410,17 @@ class ToyMeasurementControl:
     def display_evaluation(self, state, pause_time=0.1, draw=False) -> None:
         # Run both evaluations for comparison on each action
         # test_actions = np.array([[1.0, -1.0], [1.0, -0.5], [1.0, 0.0], [1.0, 0.5], [1.0, 1.0]])
-        # test_actions = np.array([[1.0, -1.0], [1.0, 0.0], [1.0, 1.0]])
+        test_actions = np.array([[0., 0.]])
         # test_actions = np.array([[-1.0, 0.0], [-1.0, -1.0], [-1.0, 1.0]])
-        for a in self.all_actions:
+        for a in test_actions:
             print()
             print(f'Action: {a}')
             # Run the KDTree evaluation
+            print('KD TREE EVALUATION')
             kd_cumulative_reward = self.evaluate(a, state, draw=draw)
             
             # Run the full environment evaluation
+            print('FULL EVALUATION')
             full_cumulative_reward = self.full_evaluate(a, state, draw=draw)
             
         if draw:  
@@ -408,6 +428,7 @@ class ToyMeasurementControl:
             self.car.draw_state(state[0])
             self.skf.draw_state(state[1], state[2], self.ui)
             self.ooi.draw()
+            self.eval_kd_tree.draw_obstacles()
             
             # Create plot for the UI
             self.ui.single_plot()

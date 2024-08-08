@@ -9,18 +9,35 @@ def sat_value(value, max_value):
     # Saturate a value to the range [-max_value, max_value]
     return np.clip(value, -max_value, max_value)
 
+# Old non-vectorized version
+# def wrapped_angle_diff(angle1, angle2):
+#     # Wrap both angles just to be safe
+#     angle1 = wrap_angle(angle1)
+#     angle2 = wrap_angle(angle2)
+    
+#     # Now find the closest angle between the two
+#     diff = angle1 - angle2
+#     if diff > np.pi:
+#         diff -= 2*np.pi
+#     elif diff < -np.pi:
+#         diff += 2*np.pi
+        
+#     return diff
+
 def wrapped_angle_diff(angle1, angle2):
-    # Wrap both angles just to be safe
+    # Convert inputs to numpy arrays
+    angle1 = np.asarray(angle1)
+    angle2 = np.asarray(angle2)
+    
+    # Wrap both angles
     angle1 = wrap_angle(angle1)
     angle2 = wrap_angle(angle2)
     
-    # Now find the closest angle between the two
+    # Find the closest angle between the two
     diff = angle1 - angle2
-    if diff > np.pi:
-        diff -= 2*np.pi
-    elif diff < -np.pi:
-        diff += 2*np.pi
-        
+    diff = np.where(diff > np.pi, diff - 2 * np.pi, diff)
+    diff = np.where(diff < -np.pi, diff + 2 * np.pi, diff)
+    
     return diff
 
 def angle_in_interval(angle, low_angle, high_angle):

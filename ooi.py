@@ -57,10 +57,15 @@ class OOI:
         # Filter out observations of corners that are out of sensor fov
         # Calculate bearing to each corner
         bearings = np.arctan2(corners[:, 1] - car_position[1], corners[:, 0] - car_position[0])
-        corner_in_fov = np.full(corners.shape[0], False, dtype=bool) # corners x 1 length boolean array for fov check
-        for i, bearing in enumerate(bearings):
-            # If the absolute value of the angle difference is less than the max sensor fov, the corner is in fov
-            corner_in_fov[i] = np.abs(wrapped_angle_diff(bearing, car_yaw)) < self.max_bearing
+        
+        # Old non-vectorized code
+        # corner_in_fov = np.full(corners.shape[0], False, dtype=bool) # corners x 1 length boolean array for fov check
+        # for i, bearing in enumerate(bearings):
+        #     # If the absolute value of the angle difference is less than the max sensor fov, the corner is in fov
+        #     corner_in_fov[i] = np.abs(wrapped_angle_diff(bearing, car_yaw)) < self.max_bearing
+        
+        # Vectorized check for corners in fov
+        corner_in_fov = np.abs(wrapped_angle_diff(bearings, car_yaw)) < self.max_bearing
         
         #### Find what corners are occluded by front of object using shapely
         # Create line of sight from the car center to each corner of the OOI
