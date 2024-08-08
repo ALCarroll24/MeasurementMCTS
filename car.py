@@ -40,10 +40,10 @@ class Car:
         
         ### Longitudinal output class variables
         self.max_acceleration = max_longitudinal_force / gross_vehicle_mass  # Maximum acceleration given F=ma in m/s^2
-        self.min_acceleration = -0.8 * 9.81  # Maximum deceleration with brakes in m/s^2
+        self.brake_acceleration = 0.8 * 9.81  # Maximum deceleration with brakes in m/s^2
 
         ### Lateral Parameters
-        max_steering_wheel_turns = 3.2  # Maximum steering wheel turns from lock to lock (far left to far right)
+        max_steering_wheel_turns = 2.8  # Maximum steering wheel turns from lock to lock (far left to far right)
         steering_ratio = np.mean([15.7, 18.9])  # Steering wheel turns to wheel turns (averaging center and at lock)
         self.max_steering_angle = np.radians(0.5 * max_steering_wheel_turns * 360 / steering_ratio)  # Maximum steering angle in radians
         quarter_rotation_time = 0.5  # Time to rotate steering wheel 90 degrees (used to calculate acceleration limit)
@@ -52,15 +52,16 @@ class Car:
         # From rearanging: theta = 1/2 * alpha * t^2, we get alpha = 2 * theta / t^2:
         self.max_steering_alpha = np.pi / (quarter_rotation_time**2) / steering_ratio  # Maximum steering angular acceleration in rad/s^2
         self.max_steering_angle = max_steering_wheel_turns * np.pi / steering_ratio  # Maximum steering angle from center in radians
-        
+        print("Max steering alpha: ", self.max_steering_alpha)
+        print("Max steering angle: ", self.max_steering_angle)
     # Vehicle model Matrices
-    def get_A_matrix(self, yaw, delta, dt):
+    def get_A_matrix(self, yaw, dt):
         # Maps state space to new state (non-linear by function parameters)
         A = np.array([[1, 0, np.cos(yaw) * dt, 0, 0, 0],
                       [0, 1, np.sin(yaw) * dt, 0, 0, 0],
                       [0, 0, 1, 0, 0, 0],
-                      [0, 0, np.tan(delta)/self.wheelbase * dt, 1, 0, 0],
-                      [0, 0, 0, 0, 1, dt],
+                      [0, 0, 0, 1, 0, 0],
+                      [0, 0, 0, 0, 1, 0],
                       [0, 0, 0, 0, 0, 1]])
         return A
     
@@ -83,12 +84,25 @@ class Car:
         scaled_action_vec = deepcopy(np.clip(action_vec, -1, 1))
         
         # Actions are between [-1, 1] so scale them to the max values
+        # Wanting to accelerate forward
         if scaled_action_vec[0] > 0:
-            scaled_action_vec[0] *= self.max_acceleration
+            # If we are going backwards, this is braking so scale it by the max braking acceleration
+            if state_vec[2] < 0:
+                scaled_action_vec[0] *= self.brake_acceleration
+                
+            # If we are going backwards or stopped, scale it by the max acceleration (throttle)
+            else:  
+                scaled_action_vec[0] *= self.max_acceleration
             
-        # Negate since minimum acceleration is negative and so is the action
+        # Wanting to accelerate backwards or no acceleration
         else:
-            scaled_action_vec[0] *= -self.min_acceleration
+            # If we are going forwards, this is braking so scale it by the max braking acceleration
+            if state_vec[2] > 0:
+                scaled_action_vec[0] *= self.brake_acceleration
+            
+            # If we are going backwards or stopped, scale it by the max acceleration (throttle in reverse)
+            else:
+                scaled_action_vec[0] *= self.max_acceleration
             
         # For steering the output max and min are the same so just scale it by max steering acceleration (also between [-1, 1] initially)
         scaled_action_vec[1] *= self.max_steering_alpha
@@ -96,8 +110,13 @@ class Car:
         # Compute action update of state (state + B @ action)
         state_with_action = state_vec + self.get_B_matrix(dt) @ scaled_action_vec
         
+        # Update delta steering angle with euler integration (this saves a time step as previously matrices were calculated with non-updated delta)
+        # Euler integration is now performed here for steering angle rather than in the A matrix
+        state_with_action[4] = state_with_action[4] + state_with_action[5] * dt
+        state_with_action[3] = state_with_action[2] * np.tan(state_with_action[4]) / self.wheelbase * dt + state_with_action[3]
+        
         # Check if this action with A @ state will cause the steering angle to exceed the max steering angle (delta + delta_dot * dt)
-        if state_with_action[4] + state_with_action[5] * dt > self.max_steering_angle:
+        if state_with_action[4] > self.max_steering_angle:
             # Set the steering angle to the max steering angle
             state_with_action[4] = self.max_steering_angle
             
@@ -105,15 +124,15 @@ class Car:
             state_with_action[5] = 0
         
         # Check if this action with A @ state will cause the steering angle to exceed the min steering angle (delta + delta_dot * dt)
-        elif state_with_action[4] + state_with_action[5] * dt < -self.max_steering_angle:
+        elif state_with_action[4] < -self.max_steering_angle:
             # Set the steering angle to the min steering angle
             state_with_action[4] = -self.max_steering_angle
-            
+
             # Set the steering angle rate to zero
             state_with_action[5] = 0
         
         # Now update the state using the A matrix (function of yaw and steering angle)
-        new_state = self.get_A_matrix(state_with_action[3], state_with_action[4], dt) @ state_with_action
+        new_state = self.get_A_matrix(state_with_action[3], dt) @ state_with_action
         
         # Keep vehicle yaw angle between [-pi, pi] (wrap around)
         new_state[3] = wrap_angle(new_state[3])

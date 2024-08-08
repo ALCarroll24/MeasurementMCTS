@@ -2,13 +2,25 @@ import numpy as np
 from scipy.spatial import KDTree
 from copy import deepcopy
 from car import Car
+from utils import min_max_normalize
+from ui import MatPlotLibUI
 
 class KDTreeEvaluation:
-    def __init__(self, oois: list, num_steps: int, dt: float, max_range: float = 40, std_devs: int = 3):
+    def __init__(self, oois: list, num_steps: int, dt: float, max_range: float = 40, std_devs: int = 3,
+                 corner_rew_max: float = 3000, obs_rew_min: float = 100, corner_reward_scale: float = 1.,
+                 obs_pun_scale: float = 1, ui: MatPlotLibUI = None):
         # Save parameters
         self.num_steps = num_steps
         self.dt = dt
         self.max_range = max_range
+        self.corner_rew_max = corner_rew_max
+        self.obs_rew_min = obs_rew_min
+        self.corner_reward_scale = corner_reward_scale
+        self.obs_pun_scale = obs_pun_scale
+        self.ui = ui
+        
+        # Create a car to use simulation update (state initialization does nothing here)
+        self.car = Car(None, np.zeros(6))
         
         # Create needed vectors
         kd_tree_pts = np.zeros((len(oois) * 5, 2)) # 4 corner points + mean obstacle point rows and (x, y) columns
@@ -49,7 +61,7 @@ class KDTreeEvaluation:
         return distances, indeces
 
     # Query kd tree to find closest points, then calculate reward based on distances to corners and obstacles
-    def get_evaluation_reward(self, state, corner_scale=1, obstacle_scale=1):
+    def get_evaluation_reward(self, state):
         # Query the KDTree to find points within the car max range
         dists, indeces = self.get_nearest_points(self.kd_tree, state[:2], self.max_range)
         
@@ -67,40 +79,59 @@ class KDTreeEvaluation:
         corner_dists = ordered_dists[obs_pts_count:]
         
         # Now we can calculate the reward based on the distances to the corners
-        corner_reward = corner_scale * np.sum(corner_dists**2) # * corner_traces
+        corner_reward = self.corner_reward_scale * np.sum(corner_dists**2) # * corner_traces
         
         # Only take the points that are within the obstacle radii
         close_obs_indices = obs_indices[obs_dists < self.obstacle_radii[obs_indices]]
         close_obs_dists = obs_dists[obs_dists < self.obstacle_radii[obs_indices]]
         
         # And the punishment for being within the obstacle radii
-        obs_reward = -obstacle_scale * np.sum((self.obstacle_radii[close_obs_indices] - close_obs_dists)**2)
+        obs_reward = -self.obs_pun_scale * np.sum((self.obstacle_radii[close_obs_indices] - close_obs_dists)**2)
         
-        print(f'Num corners in range: {len(corner_indices)}')
-        print(f'Num obstacles in range: {len(close_obs_indices)}')
-        print(f'Corner reward: {corner_reward}')
-        print(f'Obstacle reward: {obs_reward}')
-        print()
+        # Normalize the rewards to [-1, 0] and [0, 1] based on expected maxes and mins
+        max_clipped_corner_reward = min(corner_reward, self.corner_rew_max) # Clip the corner reward to max
+        norm_corner_reward = min_max_normalize(max_clipped_corner_reward, 0, self.max_range**2) # Normalize to [0, 1]
+        flipped_corner_reward = 1 - norm_corner_reward # Make into a reward (higher number was worse before)
+        
+        min_clipped_obs_reward = max(obs_reward, -self.obs_rew_min) # Clip the obs reward to min
+        norm_obs_reward = min_max_normalize(min_clipped_obs_reward, -self.obs_rew_min, 0) # Normalize to [-1, 0]
+        
+        # print(f'Num corners in range: {len(corner_indices)}')
+        # print(f'Num obstacles in range: {len(close_obs_indices)}')
+        # print(f'Corner reward: {corner_reward}')
+        # print(f'Obstacle reward: {obs_reward}')
+        # print(f'Normalized corner reward: {norm_corner_reward}')
+        # print(f'Normalized obstacle reward: {norm_obs_reward}')
+        # print(f'Total reward: {flipped_corner_reward + norm_obs_reward}')
+        # print()
         
         # Return the reward
-        return corner_reward + obs_reward
+        return flipped_corner_reward + norm_obs_reward
     
     # Given a car state and action, apply that action repetitively and evaluate the reward
-    def evaluate(self, action, car_state):
+    def evaluate(self, action, car_state, draw=False):
         # Make a deep copy of the car
         state = deepcopy(car_state)
         
         # Maintain cumulative reward
         cumulative_reward = 0.0
-        
+
         # Loop and apply actions
         for i in range(self.num_steps):
-            # Update the car state
-            state = Car.update(self.dt, action, starting_state=state)
+            # Get new car state with starting state and action (does not update car object)
+            state = self.car.update(self.dt, action, starting_state=state)
 
             # Calculate the reward
-            cumulative_reward += self.get_evaluation_reward(state)
+            reward = self.get_evaluation_reward(state)
+            cumulative_reward += reward
             
+            # Draw the state if draw is True with size based on reward
+            if draw:
+                self.ui.draw_circle(state[:2], reward, color='b')
+                # self.ui.draw_text(f'{action}', state[:2] + np.array([-0.6, 0.3]), color='black', fontsize=12)
+            
+                print(f'i={i} KD Reward={reward}')
+        print()
         # Average and return the cumulative reward
         return cumulative_reward / self.num_steps
             

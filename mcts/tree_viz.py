@@ -54,6 +54,7 @@ def add_nodes_and_edges_pyvis(node, net, parent_hash=None):
         label = "Action: " + " " + str(np.around(node.action, 2)) + "\n" + \
             "Mean Reward: " + " " + str(np.round(mean_reward, 2)) + "\n" + \
             "Cum Reward: " + " " + str(np.round(node.cumulative_reward, 2)) + "\n" + \
+            "Eval Reward: " + " " + str(np.round(node.eval_reward, 2)) + "\n" + \
             "Visits: " + " " + str(np.round(node.visits, 2))
             
         # Find the node level (2 times the horizon step + 1 for the random node)
@@ -79,7 +80,7 @@ def add_nodes_and_edges_pyvis(node, net, parent_hash=None):
             "C4 Variance: " + " " + str(np.around(corner_covariance[6:8], 2)) + "\n" + \
             "Reward: " + " " + str(np.round(node.reward, 2)) + "\n" + \
             "Visits: " + " " + str(np.round(node.visits, 2)) + "\n" + \
-            "Evaluation Reward: " + " " + str(np.round(node.evaluation_reward, 2)) + "\n" + \
+            "Avg Eval Reward: " + " " + str(np.round(node.avg_eval_reward, 2)) + "\n" + \
             "Horizon Step: " + " " + str(node.state[3])
             
         # Find the level (2 times the horizon step)

@@ -139,21 +139,9 @@ class MCTS:
         decision_node = self.root
         internal_env = self.env
 
+        ## SELECTION PHASE (traverse tree and pick nodes based on UCB until reaching leaf node)
         # While goal has not been reached and we are not at a leaf node (has been visited)``
-        while (not decision_node.is_final) and decision_node.visits > 0:
-            # print("Starting Decision node: ", decision_node)
-            
-            ### EXPANSION PHASE
-            # If we have not yet visited (expanded) this decision node, expand it (add children nodes)
-            # No need to do this if we are done (at the horizon)
-            if decision_node.children == {} and not decision_node.is_final:
-                # Expand with all actions
-                    for a in self.env.all_actions:
-                        # Action -> random node -> attach to decision node
-                        new_random_node = RandomNode(a, parent=decision_node)
-                        decision_node.add_children(new_random_node, self._hash_action)
-
-            ## SELECTION PHASE
+        while (not decision_node.is_final) and decision_node.visits > 0:            
             # Get action from this decision node using UCB
             a = self.select(decision_node)
 
@@ -180,23 +168,39 @@ class MCTS:
             # Continue the tree traversal
             decision_node = new_decision_node
 
+        ### EXPANSION PHASE (Creating new action nodes for next learning iteration from ending leaf node)
+        eval_reward_total = 0.0 # Track total evaluation reward
+        
+        # No need to do this if we are done (at the horizon)
+        if not decision_node.is_final:
+            # Expand with all actions
+            for a in self.env.all_actions:
+                ### EVALUATION PHASE (rollout with action repeated from current state)
+                # KD tree simplified fast evaluation function in the environment class
+                eval_reward = self.env.evaluate(a, decision_node.state)
+                eval_reward_total += eval_reward
+                
+                # NOTE: The idea here is to quickly evaluate actions so that a full simulation does not need
+                # to be done for each action. This lets the search tree grow faster and gravitates towards rewards better.
+                
+                # Action -> random node -> attach to decision node
+                new_random_node = RandomNode(a, parent=decision_node, cumulative_reward=eval_reward, eval_reward=eval_reward)
+                decision_node.add_children(new_random_node, self._hash_action)
+
         # Add a visit since we ended traversal on this decision node
         decision_node.visits += 1
         
-        
-        ### SIMULATION PHASE
-        # Custom evaluation function in the environment class
-        eval_reward = self.env.evaluate(decision_node.state)
-        decision_node.evaluation_reward = eval_reward
+        # Average evaluation rewards, apply discount factor and place into the decision node
+        avg_eval_reward = eval_reward_total / len(self.env.all_actions)
+        decision_node.avg_eval_reward = self.discount_factor**(decision_node.get_depth() + 1) * avg_eval_reward
         
         # Calculate return for this node (already discounted evaluation reward + discounted reward)
-        cumulative_reward = eval_reward + self.discount_factor**decision_node.get_depth() * decision_node.reward
+        cumulative_reward = decision_node.avg_eval_reward + self.discount_factor**decision_node.get_depth() * decision_node.reward
         
         ### BACKPROPAGATION PHASE
         # Back propagate the reward back to the root
         while not decision_node.is_root:
             random_node = decision_node.parent
-            # cumulative_reward += random_node.reward
             random_node.cumulative_reward += cumulative_reward
             random_node.visits += 1
             decision_node = random_node.parent
@@ -236,11 +240,15 @@ class MCTS:
         :return: action to play
         """
         def scoring(k):
+            # If we are doing traversal and not at the leaf yet, visits will be more than 0
             if x.children[k].visits > 0:
+                # UCB1 formula
                 return x.children[k].cumulative_reward/x.children[k].visits + \
                     self.K*np.sqrt(np.log(x.visits)/x.children[k].visits)
+            
+            # If we are at an unsimulated leaf node, we can use the evaluation reward to guide the search, (visits will be 0)
             else:
-                return np.inf
+                return x.children[k].eval_reward
 
         a = max(x.children, key=scoring)
 

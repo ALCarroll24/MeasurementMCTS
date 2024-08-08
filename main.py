@@ -18,7 +18,7 @@ import time
 import timeit
 
 class ToyMeasurementControl:
-    def __init__(self, one_iteration=False, display_evaluation=False, no_flask_server=False):
+    def __init__(self, one_iteration=False, display_evaluation=False, time_evaluation=False, no_flask_server=False):
         # Flag for whether to run one iteration for profiling
         self.one_iteration = one_iteration
         if self.one_iteration:
@@ -30,19 +30,19 @@ class ToyMeasurementControl:
         self.enable_flask_server = not no_flask_server
             
         # Determine update rate
-        self.ui_update_rate = 20.0 # Hz
+        self.ui_update_rate = 40.0 # Hz (determines pause time for UI update)
         self.simulation_dt = 0.1 # time step size for forward simulation search
         
         # MCTS search parameters
         self.horizon = 5 # length of the planning horizon
-        self.learn_iterations = 50  # number of learning iterations for MCTS
+        self.learn_iterations = 2  # number of learning iterations for MCTS
         self.exploration_factor = np.sqrt(2)  # exploration factor for MCTS (Using sqrt(2) as recommended for rewards in [0,1])
-        self.discount_factor = 0.9  # discount factor for MCTS
+        self.discount_factor = 0.0  # discount factor for MCTS
         self.final_cov_trace = 0.03 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
         
         # MCTS Action space parameters
-        long_acc_options = np.array([-1., -0.5, 0, 0.5, 1.]) # options for longitudinal acceleration (scaled from [-1, 1] to vehicle [-max_acc, max_acc])
-        steering_acc_options = np.array([-1., -0.5, 0, 0.5, 1.]) # options for steering acceleration (scaled from [-1, 1] to vehicle [-max_steering_alpha, max_steering_alpha])
+        long_acc_options = np.array([-1., -0.5, 0., 0.5, 1.]) # options for longitudinal acceleration (scaled from [-1, 1] to vehicle [-max_acc, max_acc])
+        steering_acc_options = np.array([-1., -0.25, 0., 0.25, 1.]) # options for steering acceleration (scaled from [-1, 1] to vehicle [-max_steering_alpha, max_steering_alpha])
         self.all_actions = np.array(np.meshgrid(long_acc_options, steering_acc_options)).T.reshape(-1, 2) # Generate all combinations using the Cartesian product of the two action spaces
         
         # Move the zero action to the front of the list (this is the default action)
@@ -51,19 +51,19 @@ class ToyMeasurementControl:
         self.all_actions = np.concatenate((self.all_actions[zero_action_index:], self.all_actions[:zero_action_index]))
         
         # Simulated car and attached sensor parameters
-        # TODO: Placing the car far away causes it to pick the first action and just spin in a circle
-        initial_car_state = np.array([30.0, 30.0, 10., np.radians(90), 0.0, 0.0]) 
+        initial_car_state = np.array([30.0, 30.0, 5., np.radians(90), 0.0, 0.0]) 
         # [X (m), Y (m), v_x (m/s), psi (rad), delta (rad), delta_dot (rad/s)] (x pos, y pos, longitudinal velocity, yaw, steering angle, steering angle rate)
         sensor_max_bearing = 60 # degrees
         sensor_max_range = 40 # meters
         
         # Evaluation parameters based on KDtree to quickly compute distance to corners and obstacles
-        self.eval_path_buffer = 7.  # buffer around OOI for evaluation path
         self.eval_steps = 4  # number of steps to evaluate the base policy
-        self.eval_dt = 0.8  # time step size for evaluation
-        self.lookahead_distance = 4.  # distance to look ahead for path following
-        self.obstacle_std_dev = 4. # Number of standard deviations to inflate obstacle circle around OOI corners
-        # eval_path_rotation = 90 UNUSED # degrees to rotate the evaluation path (This helps the car get more observations of corners)
+        self.eval_dt = 0.6  # time step size for evaluation
+        obstacle_std_dev = 4. # Number of standard deviations to inflate obstacle circle around OOI corners
+        corner_rew_max = 3000. # maximum reward for corner reward (clip and normalize based on this)
+        obs_rew_min = 100. # minimum reward for obstacle reward (clip and normalize based on this)
+        corner_reward_scale = 1. # scale for corner reward
+        obs_pun_scale = 1. # scale for obstacle punishment
         
         # Collision parameters
         self.soft_collision_buffer = 2. # buffer for soft collision (length from outline of OOI to new outline for all points)
@@ -93,8 +93,8 @@ class ToyMeasurementControl:
             self.ui = None
         else:
             title = f'sim step size={self.simulation_dt}, Explore factor={self.exploration_factor}, Horizon={self.horizon}, Learn Iterations={self.learn_iterations}\n' + \
-                    f'Evaluation Steps={self.eval_steps}, Evaluation dt={self.eval_dt}'
-            self.ui = MatPlotLibUI(update_rate=self.ui_update_rate, title=title)
+                    f'Evaluation Steps={self.eval_steps}, Evaluation dt={self.eval_dt}, Corner Reward Scale={corner_reward_scale}, Obs Punishment Scale={obs_pun_scale}'
+            self.ui = MatPlotLibUI(update_rate=self.ui_update_rate, title=title, single_plot=display_evaluation)
             self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
         
         # Create a car object
@@ -107,7 +107,9 @@ class ToyMeasurementControl:
         self.skf = StaticKalmanFilter(ooi_noisy_corners, ooi_init_covariance, range_dev=range_dev, bearing_dev=bearing_dev)
         
         # Create a KDTree for evaluation
-        self.eval_kd_tree = KDTreeEvaluation([ooi_noisy_corners], num_steps=self.eval_steps, dt=self.eval_dt, std_devs=self.obstacle_std_dev)
+        self.eval_kd_tree = KDTreeEvaluation([ooi_noisy_corners], num_steps=self.eval_steps, dt=self.eval_dt, std_devs=obstacle_std_dev,
+                                             corner_rew_max=corner_rew_max, obs_rew_min=obs_rew_min, corner_reward_scale=corner_reward_scale,
+                                             obs_pun_scale=obs_pun_scale, ui=self.ui)
         
         # Get and set OOI collision polygons
         self.ooi_poly = self.ooi.get_collision_polygon()
@@ -115,17 +117,23 @@ class ToyMeasurementControl:
         self.ooi.soft_collision_points = get_interpolated_polygon_points(self.ooi.soft_collision_polygon, num_points=50)
         self.soft_ooi_poly = self.ooi.soft_collision_polygon
         
-        # UNUSED Get evaluation path for circling around OOI and collecting observations
-        # eval_poly = self.ooi_poly.buffer(self.eval_path_buffer)
-        # eval_poly = rotate(eval_poly, eval_path_rotation, origin='centroid')
-        # self.eval_path = get_interpolated_polygon_points(eval_poly, num_points=200)
+        # if true time difference between evaluations (KDTree vs Full environment step evaluation)
+        if time_evaluation:
+            start_time = timeit.default_timer()
+            _ = self.evaluate(self.all_actions[0,:], self.get_state(), draw=False)
+            kd_tree_time_taken = timeit.default_timer() - start_time
+            print(f'KDTree Evaluation Time: {kd_tree_time_taken} seconds')
+            start_time = timeit.default_timer()
+            _ = self.full_evaluate(self.all_actions[0,:], self.get_state(), draw=False)
+            full_time_taken = timeit.default_timer() - start_time
+            print(f'Full Evaluation Time: {full_time_taken} seconds')
+            times_faster = full_time_taken / kd_tree_time_taken
+            print(f'KDTree Evaluation is {times_faster} times faster than full evaluation')
+            exit()
         
         # If we are just plotting the evaluation, do that and exit
         if display_evaluation:
-            start_time = timeit.default_timer()
-            self.display_evaluation(self.get_state(), pause_time=0.1)
-            time_taken = timeit.default_timer() - start_time
-            print(f'Time taken for evaluation: {time_taken} seconds')
+            self.display_evaluation(self.get_state(), draw=True)
             exit()
         
         # Save the last action (mainly used for relative manual control)
@@ -357,62 +365,52 @@ class ToyMeasurementControl:
         
         return reward, done
 
-    # NEW quick state evaluation based on kdtree for quick distance lookup to corners and obstacles
-    def evaluate(self, state, draw=False) -> float:
+    # Quick state evaluation based on kdtree for quick distance lookup to corners and obstacles
+    def evaluate(self, action, state, draw=False) -> float:
         # Pass the car state to the KDTree evaluation to get the reward
-        mean_reward = self.eval_kd_tree.get_evaluation_reward(state[0], corner_scale=1, obstacle_scale=1)
+        mean_reward = self.eval_kd_tree.evaluate(action, state[0], draw=draw)
         
         return mean_reward
-
-    # OLD Base policy based evaluation function
-    # def evaluate(self, state, draw=False) -> float:
-    #     cumulative_reward = 0.
-    #     for i in range(self.eval_steps):
-    #         # Get the action from the base policy
-    #         action = self.car.get_action_follow_path(self.eval_path, self.lookahead_distance, starting_state=state[0])
-            
-    #         # Step the environment
-    #         state, reward, done = self.step(state, action, dt=self.eval_dt, done_by_horizon=False)
-            
-    #         # Calculate and add discounted reward based on depth (steps in horizon) of evaluation
-    #         cumulative_reward += self.discount_factor**state[3] * reward
-            
-    #         # If we are done, break
-    #         if done:
-    #             return cumulative_reward
-            
-    #     return cumulative_reward
     
-    # Run evaluation with display from starting state for debugging
-    def display_evaluation(self, state, pause_time=0.1) -> None:
-        # Loop through the evaluation steps
+    # Same repeating action evaluation as in evaluation.py but using full environment step
+    def full_evaluate(self, action, state, draw=False) -> float:
+        # Use the full environment step to evaluate the reward eval_steps times
         cumulative_reward = 0.
         for i in range(self.eval_steps):
-            # Get the action from the base policy
-            action, target_point= self.car.get_action_follow_path(self.eval_path, self.lookahead_distance, starting_state=state[0], return_target_point=True)
-            
-            # Step the environment
             state, reward, done = self.step(state, action, dt=self.eval_dt)
             cumulative_reward += reward
             
-            # # Draw the state
-            # self.car.draw_state(state[0])
-            # self.skf.draw_state(state[1], state[2], self.ui)
-            # self.ooi.draw()
+            # Draw the state if draw is True with size based on reward
+            if draw:
+                self.ui.draw_circle(state[0][:2], reward, color='r')
             
-            # # Draw the target point
-            # self.ui.draw_point(target_point, color='r')
-            
-            # # Draw the evaluation path
-            # self.ui.draw_polygon(self.eval_path, color='g')
-            
-            # # Update the UI
-            # self.ui.update()
-            
-            # # Pause for a specified amount of time
-            # sleep(pause_time)
+                print(f'i={i} Fl Reward={reward}')
         
-        print(f'Total Cumulative Reward: {cumulative_reward}')
+        return cumulative_reward
+    
+    # Run evaluation with display from starting state for debugging
+    def display_evaluation(self, state, pause_time=0.1, draw=False) -> None:
+        # Run both evaluations for comparison on each action
+        # test_actions = np.array([[1.0, -1.0], [1.0, -0.5], [1.0, 0.0], [1.0, 0.5], [1.0, 1.0]])
+        # test_actions = np.array([[1.0, -1.0], [1.0, 0.0], [1.0, 1.0]])
+        # test_actions = np.array([[-1.0, 0.0], [-1.0, -1.0], [-1.0, 1.0]])
+        for a in self.all_actions:
+            print()
+            print(f'Action: {a}')
+            # Run the KDTree evaluation
+            kd_cumulative_reward = self.evaluate(a, state, draw=draw)
+            
+            # Run the full environment evaluation
+            full_cumulative_reward = self.full_evaluate(a, state, draw=draw)
+            
+        if draw:  
+            # Draw the initial state
+            self.car.draw_state(state[0])
+            self.skf.draw_state(state[1], state[2], self.ui)
+            self.ooi.draw()
+            
+            # Create plot for the UI
+            self.ui.single_plot()
     
     def draw_simulated_states(self, mcts_tree, velocity_scale=0.01, width_scale=0.01, color='y'):
         # Recursively go through tree of simulated states and draw them, width is based on average reward
@@ -446,6 +444,7 @@ if __name__ == '__main__':
     # Add arguments
     parser.add_argument('--one_iteration', type=bool)
     parser.add_argument('--display_evaluation', type=bool)
+    parser.add_argument('--time_evaluation', type=bool)
     parser.add_argument('--no_flask_server', type=bool)
     
     # Parse arguments
@@ -454,5 +453,6 @@ if __name__ == '__main__':
     # Create an instance of ToyMeasurementControl using command line arguments
     tmc = ToyMeasurementControl(one_iteration=args.one_iteration,
                                 display_evaluation=args.display_evaluation,
+                                time_evaluation=args.time_evaluation,
                                 no_flask_server=args.no_flask_server)
     tmc.run()

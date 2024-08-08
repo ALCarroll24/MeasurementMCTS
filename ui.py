@@ -6,27 +6,12 @@ import threading
 import webbrowser
 
 class MatPlotLibUI:
-    def __init__(self, update_rate=10, figsize=(8, 8), async_loop=False, title=None):
+    def __init__(self, update_rate=10, figsize=(8, 8), single_plot=False, async_loop=False, title=None):
         # Initialize the Matplotlib figure and axes
         self.fig, self.ax = plt.subplots(figsize=figsize)
         # self.fig.canvas.mpl_connect('button_press_event', self.on_click)
         self.fig.canvas.mpl_connect('close_event', self.handle_close)
         self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
-        
-        # If title is not none, set the title of the plot
-        if title is not None:
-            self.title = title
-            self.ax.set_title(title)
-        
-        # Create Buttons
-        play_button_ax = self.fig.add_axes([0.3, 0.94, 0.2, 0.03])  # Adjust as necessary
-        self.play_button = Button(play_button_ax, 'Play/Pause', color='lightgoldenrodyellow', hovercolor='0.975')
-        self.play_button.on_clicked(self.on_play_button_click)
-        self.paused = False
-        
-        viz_button_ax = self.fig.add_axes([0.52, 0.94, 0.2, 0.03])  # Adjust as necessary
-        self.viz_button = Button(viz_button_ax, 'Visualize', color='lightgoldenrodyellow', hovercolor='0.975')
-        self.viz_button.on_clicked(self.on_viz_button_click)
         
         # Store the keys being pressed for later retrieval
         self.keys = []
@@ -34,25 +19,54 @@ class MatPlotLibUI:
         # Store the rectangles (car and tires) for later update
         self.patches = []
         
-        # Do initial update and show the plot
-        self.update_display()
-        plt.ion() # Turn on interactive mode for asynchronous drawing
-        
-        # Set the update rate and period
-        self.rate = update_rate
-        self.period = 1.0 / update_rate
-        
-        # THIS DOESN'T WORK (matplotlib doesn't like multithreading)
-        # Spawn a thread to update the plot asynchronously
-        # self.thread = threading.Thread(target=self.async_loop)
-        # self.thread.start()
+        # Text is an artist which we can also save for later update
+        self.artists = []
         
         # Flag for stopping the plotting loop
         self.shutdown = False
         
-        # If async_loop is True, start the asynchronous plotting loop
-        if async_loop:
-            self.start_async_loop()
+        # If title is not none, set the title of the plot
+        if title is not None:
+            self.title = title
+            self.ax.set_title(title)
+        
+        # If single_plot is True, don't create buttons or setup for looping
+        if not single_plot:
+            # Create Buttons
+            play_button_ax = self.fig.add_axes([0.3, 0.94, 0.2, 0.03])  # Adjust as necessary
+            self.play_button = Button(play_button_ax, 'Play/Pause', color='lightgoldenrodyellow', hovercolor='0.975')
+            self.play_button.on_clicked(self.on_play_button_click)
+            self.paused = False
+            
+            viz_button_ax = self.fig.add_axes([0.52, 0.94, 0.2, 0.03])  # Adjust as necessary
+            self.viz_button = Button(viz_button_ax, 'Visualize', color='lightgoldenrodyellow', hovercolor='0.975')
+            self.viz_button.on_clicked(self.on_viz_button_click)
+        
+        
+            # Do initial update and show the plot
+            self.update_display()
+            plt.ion() # Turn on interactive mode for asynchronous drawing
+            
+            # Set the update rate and period
+            self.rate = update_rate
+            self.period = 1.0 / update_rate
+            
+            # THIS DOESN'T WORK (matplotlib doesn't like multithreading)
+            # Spawn a thread to update the plot asynchronously
+            # self.thread = threading.Thread(target=self.async_loop)
+            # self.thread.start()
+            
+            
+            # If async_loop is True, start the asynchronous plotting loop
+            if async_loop:
+                self.start_async_loop()
+        
+    def single_plot(self):
+        # Update the plot
+        self.update_display()
+        
+        # Create a single plot
+        plt.show(block=True)
 
     # Runs a loop to update the plot asynchronously
     def start_async_loop(self):
@@ -62,7 +76,7 @@ class MatPlotLibUI:
             self.draw_ellipse((50, 50), 20, 10, np.radians(45))
             self.update_display()
             plt.draw()
-            plt.pause(self.period)
+            # plt.pause(self.period)
             
     def update(self):
         # Update the plot
@@ -152,6 +166,16 @@ class MatPlotLibUI:
         poly_patch = patches.Polygon(np.column_stack((x, y)), closed=closed, edgecolor=color, facecolor='none', 
                                      linestyle=linestyle, linewidth=linewidth, alpha=alpha)
         self.patches.append(poly_patch)
+        
+    def draw_text(self, text, position, color='b', fontsize=12):
+        """
+        Draw text on the plot.
+        :param text: The text to display.
+        :param position: Tuple (x, y) for the position of the text.
+        """
+        # Create text and add it to the plot
+        text = plt.text(position[0], position[1], text, color=color, fontsize=fontsize)
+        self.artists.append(text)
 
     def update_display(self):
         """
@@ -175,6 +199,10 @@ class MatPlotLibUI:
         # Redraw the rectangles
         for rect in self.patches:
             self.ax.add_patch(rect)
+            
+        # Redraw the text (or other artist objects)
+        for artist in self.artists:
+            self.ax.add_artist(artist)
                     
         # Remove rectangles from the list
         self.patches = []

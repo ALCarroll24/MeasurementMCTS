@@ -17,7 +17,7 @@ class DecisionNode:
         parent = None, 
         is_root: bool = False, 
         is_final: bool = False,
-        evaluation_reward: float = 0.0
+        avg_eval_reward: float = 0.0
         
     ):
         self.state = state
@@ -25,7 +25,7 @@ class DecisionNode:
         self.children: Dict[Any, RandomNode] = {}
         self.is_root = is_root
         self.is_final = is_final
-        self.evaluation_reward = evaluation_reward
+        self.avg_eval_reward = avg_eval_reward
         self.visits: int = 0
         self.reward: float = 0.0
         self.lock = Lock()
@@ -104,14 +104,16 @@ class RandomNode:
         action: Any, 
         parent: DecisionNode =None,
         cumulative_reward: float = 0.0,
+        eval_reward: float = 0.0,
         visits: int = 0
     ):
         self.action = action
         self.children: Dict[Any, DecisionNode] = {}
         self.cumulative_reward: float = cumulative_reward
-        self.visits: int = visits
         self.parent: DecisionNode = parent
         self.lock = Lock()
+        self.eval_reward = eval_reward
+        self.visits: int = visits
 
     def add_children(
         self, 
