@@ -202,6 +202,7 @@ class MatPlotLibUI:
             
         # Redraw the text (or other artist objects)
         for artist in self.artists:
+            print(artist)
             self.ax.add_artist(artist)
                     
         # Remove rectangles from the list

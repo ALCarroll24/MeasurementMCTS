@@ -31,13 +31,13 @@ class ToyMeasurementControl:
             
         # Determine update rate
         self.ui_update_rate = 40.0 # Hz (determines pause time for UI update)
-        self.simulation_dt = 0.1 # time step size for forward simulation search
+        self.simulation_dt = 0.3 # time step size for forward simulation search
         
         # MCTS search parameters
         self.horizon = 5 # length of the planning horizon
-        self.learn_iterations = 2  # number of learning iterations for MCTS
-        self.exploration_factor = np.sqrt(2)  # exploration factor for MCTS (Using sqrt(2) as recommended for rewards in [0,1])
-        self.discount_factor = 0.0  # discount r for MCTS
+        self.learn_iterations = 100  # number of learning iterations for MCTS
+        self.exploration_factor = 0.2  # exploration factor for MCTS (Using sqrt(2) as recommended for rewards in [0,1])
+        self.discount_factor = 1.0  # discount factor for MCTS (1 means no discounting and 0 only considers immediate rewards)
         self.final_cov_trace = 0.03 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
         
         # MCTS Action space parameters
@@ -51,19 +51,19 @@ class ToyMeasurementControl:
         self.all_actions = np.concatenate((self.all_actions[zero_action_index:], self.all_actions[:zero_action_index]))
         
         # Simulated car and attached sensor parameters
-        initial_car_state = np.array([25.0, 30.0, 20., np.radians(45), 0.0, 0.0]) 
+        initial_car_state = np.array([20.0, 15.0, 10., np.radians(135), 0.0, 0.0]) 
         # [X (m), Y (m), v_x (m/s), psi (rad), delta (rad), delta_dot (rad/s)] (x pos, y pos, longitudinal velocity, yaw, steering angle, steering angle rate)
-        sensor_max_bearing = 60 # degrees
-        sensor_max_range = 40 # meters
+        self.min_range = 5. # minimum range for sensor model
+        sensor_max_range = 40. # meters
+        self.min_bearing = 5. # minimum bearing for sensor model
+        sensor_max_bearing = 60. # degrees
         
         # Evaluation parameters based on KDtree to quickly compute distance to corners and obstacles
-        self.eval_steps = 4  # number of steps to evaluate the base policy
-        self.eval_dt = 0.6  # time step size for evaluation
-        obstacle_std_dev = 2.5 # Number of standard deviations to inflate obstacle circle around OOI corners
-        corner_rew_max = 3000. # maximum reward for corner reward (clip and normalize based on this)
-        obs_rew_min = 100. # minimum reward for obstacle reward (clip and normalize based on this)
-        corner_reward_scale = 1. # scale for corner reward
-        obs_pun_scale = 1. # scale for obstacle punishment
+        self.eval_steps = 3  # number of steps to evaluate the base policy
+        self.eval_dt = 0.5  # time step size for evaluation
+        obstacle_std_dev = 3. # Number of standard deviations to inflate obstacle circle around OOI corners
+        corner_rew_norm_max = 0.5 # High normalization value to match full environment step rewards
+        obs_rew_norm_min = 12. # Amount to scale the obstacle punishment by (relative to rewards on [0, 1])
         
         # Collision parameters
         self.soft_collision_buffer = 2. # buffer for soft collision (length from outline of OOI to new outline for all points)
@@ -71,9 +71,9 @@ class ToyMeasurementControl:
         self.soft_collision_punishment = 100  # punishment for soft collision
         
         # Kalman Filter parameters parameters
-        range_dev = 1. # standard deviation for the range scaling
-        bearing_dev = 1. # standard deviation for the bearing scaling
         initial_corner_std_dev = 0. # standard deviation for the noise between ground truth and first observation of corners
+        range_dev = 1. # standard deviation for the range scaling
+        bearing_dev = 0.5 # standard deviation for the bearing scaling
         initial_range_std_dev = 0.5  # standard deviation for the noise for the range of the OOI corners
         initial_bearing_std_dev = 0.5 # standard deviation for the noise for the bearing of the OOI corners
         
@@ -85,17 +85,14 @@ class ToyMeasurementControl:
         # Use parameters to initialize noisy corners and calculate initial covariance matrix using measurement model
         ooi_noisy_corners = ooi_ground_truth_corners + np.random.normal(0, initial_corner_std_dev, (4, 2)) # Noisy corners of the OOI
         ooi_init_covariance = measurement_model(ooi_noisy_corners, np.arange(4), initial_car_state[:2], initial_car_state[3], # Initial Covariance matrix for the OOI
-                                                range_dev=initial_range_std_dev, bearing_dev=initial_bearing_std_dev)
+                                                min_range=self.min_range, min_bearing=self.min_bearing, range_dev=initial_range_std_dev, bearing_dev=initial_bearing_std_dev)
         self.covariance_trace_init = np.trace(ooi_init_covariance)
         
         # Create a plotter object unless we are profiling
-        if self.one_iteration:
-            self.ui = None
-        else:
-            title = f'sim step size={self.simulation_dt}, Explore factor={self.exploration_factor}, Horizon={self.horizon}, Learn Iterations={self.learn_iterations}\n' + \
-                    f'Evaluation Steps={self.eval_steps}, Evaluation dt={self.eval_dt}, Corner Reward Scale={corner_reward_scale}, Obs Punishment Scale={obs_pun_scale}'
-            self.ui = MatPlotLibUI(update_rate=self.ui_update_rate, title=title, single_plot=display_evaluation)
-            self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
+        title = f'sim step size={self.simulation_dt}, Explore factor={self.exploration_factor}, Horizon={self.horizon}, Learn Iterations={self.learn_iterations}\n' + \
+                f'Evaluation Steps={self.eval_steps}, Evaluation dt={self.eval_dt}, Obstacle rew min={-obs_rew_norm_min}'
+        self.ui = MatPlotLibUI(update_rate=self.ui_update_rate, title=title, single_plot=display_evaluation)
+        self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
         
         # Create a car object
         self.car = Car(self.ui, initial_car_state, max_bearing=sensor_max_bearing, max_range=sensor_max_range)
@@ -104,18 +101,19 @@ class ToyMeasurementControl:
         self.ooi = OOI(self.ui, ooi_ground_truth_corners, car_max_range=sensor_max_range, car_max_bearing=sensor_max_bearing)
         
         # Create a Static Vectorized Kalman Filter object
-        self.skf = StaticKalmanFilter(ooi_noisy_corners, ooi_init_covariance, range_dev=range_dev, bearing_dev=bearing_dev)
+        self.skf = StaticKalmanFilter(ooi_noisy_corners, ooi_init_covariance, range_dev=range_dev, min_range=self.min_range, bearing_dev=bearing_dev, min_bearing=self.min_bearing)
         
-        # Create a KDTree for evaluation
-        self.eval_kd_tree = KDTreeEvaluation([ooi_noisy_corners], num_steps=self.eval_steps, dt=self.eval_dt, std_devs=obstacle_std_dev,
-                                             corner_rew_max=corner_rew_max, obs_rew_min=obs_rew_min, corner_reward_scale=corner_reward_scale,
-                                             obs_pun_scale=obs_pun_scale, ui=self.ui, max_range=sensor_max_range, max_bearing=sensor_max_bearing)
-        
+        # Create a KDTree for evaluation TODO: This should be created in each main loop (one real time step)
+        self.eval_kd_tree = KDTreeEvaluation([ooi_noisy_corners], num_steps=self.eval_steps, dt=self.eval_dt, max_range=sensor_max_range, 
+                                             max_bearing=sensor_max_bearing, obstacle_std_dev=obstacle_std_dev, corner_rew_norm_max=corner_rew_norm_max,
+                                             obs_rew_norm_min=obs_rew_norm_min, range_dev=range_dev, bearing_dev=bearing_dev,
+                                             min_range=self.min_range, min_bearing=self.min_bearing, ui=self.ui)
+
         # Get and set OOI collision polygons
-        self.ooi_poly = self.ooi.get_collision_polygon()
-        self.ooi.soft_collision_polygon = self.ooi_poly.buffer(self.soft_collision_buffer)
-        self.ooi.soft_collision_points = get_interpolated_polygon_points(self.ooi.soft_collision_polygon, num_points=50)
-        self.soft_ooi_poly = self.ooi.soft_collision_polygon
+        # self.ooi_poly = self.ooi.get_collision_polygon()
+        # self.ooi.soft_collision_polygon = self.ooi_poly.buffer(self.soft_collision_buffer)
+        # self.ooi.soft_collision_points = get_interpolated_polygon_points(self.ooi.soft_collision_polygon, num_points=50)
+        # self.soft_ooi_poly = self.ooi.soft_collision_polygon
         
         # if true time difference between evaluations (KDTree vs Full environment step evaluation)
         if time_evaluation:
@@ -189,11 +187,6 @@ class ToyMeasurementControl:
                             _hash_action=hash_action, _hash_state=hash_state,
                             discount_factor=self.discount_factor)
                 mcts.learn(self.learn_iterations, progress_bar=False)
-                
-                # If we are doing one iteration for profiling, exit
-                if self.one_iteration:
-                    render_pyvis(mcts.root)
-                    exit()
                     
                 # Get the best action from the MCTS tree
                 action_vector = mcts.best_action()
@@ -249,6 +242,17 @@ class ToyMeasurementControl:
                 self.skf.draw(self.ui)
                 self.eval_kd_tree.draw_obstacles()
                 self.draw_simulated_states(mcts, velocity_scale=1)
+                    
+                # If we are only doing one iteration
+                if self.one_iteration:
+                    # Render the MCTS tree (viewable in browser by opening tree_visualization.html)
+                    render_pyvis(mcts.root)
+                    
+                    # Create a single plot for the UI
+                    self.ui.single_plot()
+                    
+                    # And exit
+                    exit()
             
             # Update the ui to display the new state
             self.ui.update()
@@ -288,7 +292,6 @@ class ToyMeasurementControl:
         
         # Get the observation from the OOI, pass it to the KF for update
         observable_corners, indeces = self.ooi.get_observation(new_car_state, corners=corner_means.reshape(4,2), draw=False)
-        print("Number of observable corners: ", len(indeces))
         new_mean, new_cov = self.skf.update(observable_corners, indeces, new_car_state,
                                             simulate=True, s_k_=corner_means, P_k_=corner_cov)
         
@@ -341,8 +344,6 @@ class ToyMeasurementControl:
         
         # Get obstacle reward from KDTree evaluation
         obs_reward = self.eval_kd_tree.get_obstacle_cost(car_state)
-        print(f'Trace Reward: {reward}')
-        print(f'Obstacle Reward: {obs_reward}')
         # Add the obstacle reward to the trace reward
         reward += obs_reward
         
@@ -376,52 +377,57 @@ class ToyMeasurementControl:
         return reward, done
 
     # Quick state evaluation based on kdtree for quick distance lookup to corners and obstacles
-    def evaluate(self, action, state, draw=False) -> float:
-        # Get the diagonals of the covariance matrix for the corners
-        corner_cov_diags = np.sqrt(np.diag(state[2]))
+    def evaluate(self, action, state, depth, draw=False) -> float:
+        # Get the diagonals of the covariance matrix for the corners to get trace
+        corner_cov_diags = np.diag(state[2])
+        # Get the trace of every 2 diagonals (to get a per point trace)
+        reshaped_cov_diags = corner_cov_diags.reshape(4, 2) # this puts x in first column and y in second
+        point_traces = np.mean(reshaped_cov_diags, axis=1) # Sum the x and y covariances for each point to get trace
         
-        # Average the every pair of diagonals into (4, 1) point covariance
-        reshaped_cov = corner_cov_diags.reshape(4, 2)
-        corner_avg_cov = np.mean(reshaped_cov, axis=1)
+        # Normalize the point traces to [0, covariance_trace_init/4] (this is the max trace for a single point)
+        norm_point_traces = min_max_normalize(point_traces, 0, self.covariance_trace_init/4)
         
         # Pass the car state to the KDTree evaluation to get the reward
-        mean_reward = self.eval_kd_tree.evaluate(action, state[0], corner_avg_cov, draw=draw)
+        mean_reward = self.eval_kd_tree.evaluate(action, state[0], norm_point_traces, depth, self.discount_factor, draw=draw)
         
         return mean_reward
     
     # Same repeating action evaluation as in evaluation.py but using full environment step
-    def full_evaluate(self, action, state, draw=False) -> float:
+    def full_evaluate(self, action, state, depth, draw=False) -> float:
         # Use the full environment step to evaluate the reward eval_steps times
         cumulative_reward = 0.
         for i in range(self.eval_steps):
             state, reward, done = self.step(state, action, dt=self.eval_dt)
-            cumulative_reward += reward
+            discounted_reward = reward * (self.discount_factor**(depth+i))
+            cumulative_reward += discounted_reward
             
             # Draw the state if draw is True with size based on reward
             if draw:
-                self.ui.draw_circle(state[0][:2], reward, color='r')
-            
-                print(f'i={i} Fl Reward={reward}')
-            print()
+                # self.ui.draw_circle(state[0][:2], 0.1, color='r')
+                self.ui.draw_text(f'fl: {reward:.2f}', state[0][:2] + np.array([-0.2, 0.6]), color='black', fontsize=12)
+            #     print(f'i={i} Fl Reward={reward}')
+            # print()
         
         return cumulative_reward
     
     # Run evaluation with display from starting state for debugging
     def display_evaluation(self, state, pause_time=0.1, draw=False) -> None:
         # Run both evaluations for comparison on each action
-        # test_actions = np.array([[1.0, -1.0], [1.0, -0.5], [1.0, 0.0], [1.0, 0.5], [1.0, 1.0]])
-        test_actions = np.array([[0., 0.]])
+        test_actions = np.array([[1.0, -1.0], [1.0, -0.5], [1.0, 0.0], [1.0, 0.5], [1.0, 1.0]])
+        # test_actions = np.array([[0., 0.]])
         # test_actions = np.array([[-1.0, 0.0], [-1.0, -1.0], [-1.0, 1.0]])
+        
         for a in test_actions:
+        # for a in self.all_actions:
             print()
             print(f'Action: {a}')
             # Run the KDTree evaluation
             print('KD TREE EVALUATION')
-            kd_cumulative_reward = self.evaluate(a, state, draw=draw)
+            kd_cumulative_reward = self.evaluate(a, state, 0, draw=draw)
             
             # Run the full environment evaluation
             print('FULL EVALUATION')
-            full_cumulative_reward = self.full_evaluate(a, state, draw=draw)
+            full_cumulative_reward = self.full_evaluate(a, state, 0, draw=draw)
             
         if draw:  
             # Draw the initial state

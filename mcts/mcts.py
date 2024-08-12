@@ -28,7 +28,6 @@ class MCTS:
         _hash_action: Callable[[Any], Tuple],
         _hash_state: Callable[[Any], Tuple],
         discount_factor: float = 0.99,
-        deterministic: bool = True,
     ):
         
         self.env = env
@@ -36,7 +35,6 @@ class MCTS:
         self.root = DecisionNode(state=initial_obs, is_root=True)
         self._initialize_hash(_hash_action, _hash_state)
         self.discount_factor = discount_factor
-        self.deterministic = deterministic
 
     def get_node(self, node_hash: int) -> Optional[DecisionNode]:
         """
@@ -137,65 +135,91 @@ class MCTS:
         """
 
         decision_node = self.root
+        random_node = None
         internal_env = self.env
 
         ## SELECTION PHASE (traverse tree and pick nodes based on UCB until reaching leaf node)
-        # While goal has not been reached and we are not at a leaf node (has been visited)``
-        while (not decision_node.is_final) and decision_node.visits > 0:            
+        # While goal has not been reached and we are not at a leaf node (has been visited)
+        while (not decision_node.is_final) and decision_node.visits > 0:
             # Get action from this decision node using UCB
             a = self.select(decision_node)
 
             # Get the existing random node from the action and decision node
-            new_random_node = decision_node.next_random_node(a, self._hash_action)
+            random_node = decision_node.next_random_node(a, self._hash_action)
 
-            # Create new decision node using environment step function, 
-            # if stochastic or if this node has not been visited (not simulated) use environment to get the next state and reward
-            if not self.deterministic or new_random_node.visits == 0:
-                (new_decision_node, r) = self.select_outcome(internal_env, new_random_node)
+            # If we are at a leaf random node, break out of the loop and continue to expand this node
+            if len(random_node.children) == 0:
+                break
             
-            # If deterministic, we have already simulated this node, so just get the child decision node
-            else:
-                new_decision_node = list(new_random_node.children.values())[0]
-                r = new_decision_node.reward
+            # Move from random node to already existing decision node child (since environment is deterministic, there is only ever one child)
+            decision_node = list(random_node.children.values())[0]
+            
+            
+            # # Create new decision node using environment step function, 
+            # # if stochastic or if this node has not been visited (not simulated) use environment to get the next state and reward
+            # if not self.deterministic or new_random_node.visits == 0:
+            #     (new_decision_node, r) = self.select_outcome(internal_env, new_random_node)
+            
+            # # If deterministic, we have already simulated this node, so just get the child decision node
+            # else:
+            #     new_decision_node = list(new_random_node.children.values())[0]
+            #     r = new_decision_node.reward
 
-            # Ensure that the decision node is connected to its parent random node (not sure why it wouldn't be though...?)
-            new_decision_node = self.update_decision_node(new_decision_node, new_random_node, self._hash_state)
+            # # Ensure that the decision node is connected to its parent random node
+            # new_decision_node = self.update_decision_node(new_decision_node, new_random_node, self._hash_state)
 
-            # Set the reward of the new nodes
-            new_decision_node.reward = r
-            new_random_node.reward = r
+            # # Set the reward of the new nodes
+            # new_decision_node.reward = r
+            # new_random_node.reward = r
 
             # Continue the tree traversal
-            decision_node = new_decision_node
+            # decision_node = new_decision_node
+            
 
-        ### EXPANSION PHASE (Creating new action nodes for next learning iteration from ending leaf node)
-        eval_reward_total = 0.0 # Track total evaluation reward
+        ### EXPANSION PHASE (Create new decision node from ending leaf node)
+        # If this is the first learning iteration (random node not set yet), continue on to evaluation to create first set of random nodes
+        if random_node is not None:
+            # Run one environment simulation with the leaf random node we ended selection on (by taking the random node's action)
+            (new_decision_node, r) = self.select_outcome(internal_env, random_node)
+            
+            # Ensure that the decision node is connected to its parent random node
+            new_decision_node = self.update_decision_node(new_decision_node, random_node, self._hash_state)
+
+            # Set the reward of the new decision node and unsimulated random node
+            random_node.reward = r
+            new_decision_node.reward = r
+            
+            # Set this to be the new decision node to start evaluation from
+            decision_node = new_decision_node
         
+        
+        ### EVALUATION PHASE (rollout and predict value using repeated actions with entire action space from current state)
+        eval_reward_total = 0.0 # Track total evaluation reward
         # No need to do this if we are done (at the horizon)
         if not decision_node.is_final:
             # Expand with all actions
             for a in self.env.all_actions:
                 ### EVALUATION PHASE (rollout with action repeated from current state)
                 # KD tree simplified fast evaluation function in the environment class
-                eval_reward = self.env.evaluate(a, decision_node.state)
+                eval_reward = self.env.evaluate(a, decision_node.state, decision_node.get_depth())
                 eval_reward_total += eval_reward
                 
                 # NOTE: The idea here is to quickly evaluate actions so that a full simulation does not need
                 # to be done for each action. This lets the search tree grow faster and gravitates towards rewards better.
                 
                 # Action -> random node -> attach to decision node
-                new_random_node = RandomNode(a, parent=decision_node, cumulative_reward=eval_reward, eval_reward=eval_reward)
+                new_random_node = RandomNode(a, parent=decision_node, cumulative_reward=eval_reward, eval_reward=eval_reward, visits=1)
                 decision_node.add_children(new_random_node, self._hash_action)
 
         # Add a visit since we ended traversal on this decision node
         decision_node.visits += 1
         
-        # Average evaluation rewards, apply discount factor and place into the decision node
-        avg_eval_reward = eval_reward_total / len(self.env.all_actions)
-        decision_node.avg_eval_reward = self.discount_factor**(decision_node.get_depth() + 1) * avg_eval_reward
+        # Average evaluation rewards and place into the decision node
+        decision_node.avg_eval_reward = eval_reward_total / self.env.all_actions.shape[0]
         
         # Calculate return for this node (already discounted evaluation reward + discounted reward)
-        cumulative_reward = decision_node.avg_eval_reward + self.discount_factor**decision_node.get_depth() * decision_node.reward
+        # cumulative_reward = decision_node.avg_eval_reward + self.discount_factor**decision_node.get_depth() * decision_node.reward
+        cumulative_reward = self.discount_factor**decision_node.get_depth() * decision_node.reward
         
         ### BACKPROPAGATION PHASE
         # Back propagate the reward back to the root

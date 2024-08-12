@@ -3,23 +3,24 @@ from math import *
 from utils import wrapped_angle_diff
 
 # Measurement noise, size needs to be 2 * number of observations for x and y (row length = column length)
-def measurement_model(z, obs_indices, car_pos, car_yaw, min_dist=1, min_bearing=5, range_dev=1., bearing_dev=1.):
+def measurement_model(z, obs_indices, car_pos, car_yaw, min_range=5., min_bearing=5., range_dev=1., bearing_dev=0.5):
     # Create output array of length 2 * number of observations x 2 * number of observations
     R = np.zeros((2 * len(obs_indices), 2 * len(obs_indices)))
     
     # Apply range bearing sensor model for each of the corners in the OOI
     for i in range(len(obs_indices)):
         # Calculate the range and bearing to the corner
-        dist = max(np.linalg.norm(car_pos - z[i,:]), min_dist) # Distance to observation
+        dist = max(np.linalg.norm(car_pos - z[i,:]), min_range) # Distance to observation
         abs_bearing = np.arctan2(z[i, 1] - car_pos[1], z[i, 0] - car_pos[0]) - car_yaw # Direction of observation
         sensor_bearing = wrapped_angle_diff(abs_bearing, car_yaw) # Angle between center of sensor and observation
-        bearing_scale = np.clip(np.abs(sensor_bearing), np.radians(min_bearing), np.pi/2) # Lateral scaling in magnitude matrix
+        bearing_scale = np.clip(np.abs(sensor_bearing), np.radians(min_bearing), None) # Lateral scaling in magnitude matrix
         
         # Rotation matrix to rotate distribution before scaling
         G = np.array([[np.cos(sensor_bearing), -np.sin(sensor_bearing)], [np.sin(sensor_bearing), np.cos(sensor_bearing)]])
         
         # Magnitude matrix to scale distribution
-        M = np.diag([range_dev**2 * dist, bearing_dev**2 * np.pi * bearing_scale * dist])
+        # TODO: Add abs_bearing to bearing scaling to account for the angle between the sensor and the observation
+        M = np.diag([range_dev**2 * dist, bearing_dev**2 * np.pi * dist * bearing_scale])
         
         # Calculate covariance matrix for this corner
         r = G @ M @ G.T
@@ -30,10 +31,12 @@ def measurement_model(z, obs_indices, car_pos, car_yaw, min_dist=1, min_bearing=
     return R
 
 class StaticKalmanFilter:
-    def __init__(self, _s, _P, range_dev=1., bearing_dev=1.):
-        # Load noise scaling values
-        self.range_dev = range_dev
-        self.bearing_dev = bearing_dev
+    def __init__(self, _s, _P, range_dev=1., min_range=5., bearing_dev=0.5, min_bearing=5.):
+        # Load noise scaling values and minimum values for measurement model
+        self.range_dev = range_dev # range scaling value for measurement model
+        self.min_range = min_range # minimum range value (m) for measurement model
+        self.bearing_dev = bearing_dev # bearing scaling value for measurement model
+        self.min_bearing = min_bearing # minimum bearing value (degrees) for measurement model
 
         # Dimension of state and observation vectors
         self.s_dim = 8
@@ -82,7 +85,8 @@ class StaticKalmanFilter:
 
         # Get function outputs beforehand
         H = self.H(obs_indices)
-        R = measurement_model(z, obs_indices, car_pos, car_yaw, range_dev=self.range_dev, bearing_dev=self.bearing_dev)
+        R = measurement_model(z, obs_indices, car_pos, car_yaw, min_range=self.min_range, range_dev=self.range_dev,
+                              min_bearing=self.min_bearing, bearing_dev=self.bearing_dev)
         I = np.eye(self.s_dim)
         
         # Kalman gain

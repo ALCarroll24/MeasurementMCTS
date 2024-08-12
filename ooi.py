@@ -35,7 +35,7 @@ class OOI:
         self.ui.draw_polygon(self.corners, color='r', closed=True, alpha=0.5)
         
         # Draw soft collision polygon if available
-        self.ui.draw_polygon(self.soft_collision_points, color='b', closed=True, linestyle='--', alpha=0.2)
+        # self.ui.draw_polygon(self.soft_collision_points, color='b', closed=True, linestyle='--', alpha=0.2)
     
     # Return the corners of the OOI which are observable from the car (observation vectors do not intersect walls)
     def get_observation(self, car_state, corners=None, draw=True):
