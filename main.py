@@ -439,21 +439,15 @@ class ToyMeasurementControl:
             # Create plot for the UI
             self.ui.single_plot()
     
-    def draw_simulated_states(self, mcts_tree, velocity_scale=0.01, width_scale=0.01, color='y'):
+    def draw_simulated_states(self, mcts_tree, radius=0.1, color='y'):
         # Recursively go through tree of simulated states and draw them, width is based on average reward
         
         # Get the root node
         root = mcts_tree.root # root decision node
         
         def draw_child_states(decision_node):
-            # Draw an arrow for the state of this node (width based on reward, length and direction based on velocity)
-            start_point = decision_node.state[0][:2] # x, y
-            velocity_vector = np.array([np.cos(decision_node.state[0][3]), np.sin(decision_node.state[0][3])]) * decision_node.state[0][2] # vx, vy (from 0,0)
-            end_point = start_point + velocity_vector * velocity_scale
-            width = width_scale * np.abs(decision_node.reward / decision_node.visits) # width based on average reward
-            
-            # Draw the arrow
-            self.ui.draw_arrow(start_point, end_point, width=width, color=color)
+            # Place a point at the state of this node
+            self.ui.draw_point(decision_node.state[0][:2], color=color, radius=radius)
             
             # Draw the children
             for child_random_node in decision_node.children.values():

@@ -134,14 +134,14 @@ class MatPlotLibUI:
         self.ax.add_patch(ellipse)
         self.patches.append(ellipse)
         
-    def draw_point(self, point, color='r'):
+    def draw_point(self, point, color='r', radius=0.5):
         """
         Draw a point on the plot.
         :param point: Tuple (x, y) for the point.
         :param color: Color of the point.
         """
         # Create a point and add it to the plot
-        point = patches.Circle(point, 0.5, linewidth=1, edgecolor=color, facecolor=color)
+        point = patches.Circle(point, radius, linewidth=1, edgecolor=color, facecolor=color)
         self.ax.add_patch(point)
         self.patches.append(point)
         
