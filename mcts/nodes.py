@@ -114,6 +114,7 @@ class RandomNode:
         self.lock = Lock()
         self.eval_reward = eval_reward
         self.visits: int = visits
+        self.ucb1 = -1.0
 
     def add_children(
         self, 

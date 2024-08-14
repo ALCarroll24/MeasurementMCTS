@@ -55,6 +55,7 @@ def add_nodes_and_edges_pyvis(node, net, parent_hash=None):
             "Mean Reward: " + " " + str(np.round(mean_reward, 2)) + "\n" + \
             "Cum Reward: " + " " + str(np.round(node.cumulative_reward, 2)) + "\n" + \
             "Eval Reward: " + " " + str(np.round(node.eval_reward, 2)) + "\n" + \
+            "UCB1: " + " " + str(np.round(node.ucb1, 2)) + "\n" + \
             "Visits: " + " " + str(np.round(node.visits, 2))
             
         # Find the node level (2 times the horizon step + 1 for the random node)

@@ -34,9 +34,9 @@ class ToyMeasurementControl:
         self.simulation_dt = 0.3 # time step size for forward simulation search
         
         # MCTS search parameters
-        self.horizon = 5 # length of the planning horizon
-        self.learn_iterations = 100  # number of learning iterations for MCTS
-        self.exploration_factor = 0.2  # exploration factor for MCTS (Using sqrt(2) as recommended for rewards in [0,1])
+        self.horizon_length = 200 # length of the planning horizon
+        self.learn_iterations = 100 # number of learning iterations for MCTS (one set of: selection, expansion, evaluation, backpropagation)
+        self.exploration_factor = 0.4  # exploration factor for MCTS
         self.discount_factor = 1.0  # discount factor for MCTS (1 means no discounting and 0 only considers immediate rewards)
         self.final_cov_trace = 0.03 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
         
@@ -51,7 +51,7 @@ class ToyMeasurementControl:
         self.all_actions = np.concatenate((self.all_actions[zero_action_index:], self.all_actions[:zero_action_index]))
         
         # Simulated car and attached sensor parameters
-        initial_car_state = np.array([20.0, 15.0, 10., np.radians(135), 0.0, 0.0]) 
+        initial_car_state = np.array([50.0, 30.0, 10., np.radians(90), 0.0, 0.0])
         # [X (m), Y (m), v_x (m/s), psi (rad), delta (rad), delta_dot (rad/s)] (x pos, y pos, longitudinal velocity, yaw, steering angle, steering angle rate)
         self.min_range = 5. # minimum range for sensor model
         sensor_max_range = 40. # meters
@@ -62,8 +62,8 @@ class ToyMeasurementControl:
         self.eval_steps = 3  # number of steps to evaluate the base policy
         self.eval_dt = 0.5  # time step size for evaluation
         obstacle_std_dev = 3. # Number of standard deviations to inflate obstacle circle around OOI corners
-        corner_rew_norm_max = 0.5 # High normalization value to match full environment step rewards
-        obs_rew_norm_min = 12. # Amount to scale the obstacle punishment by (relative to rewards on [0, 1])
+        corner_rew_norm_max = 0.1 # High normalization value map corner rewards to [0, corner_rew_norm_max] (make this smaller than the rewards on [0, 1] because exploration term balances this)
+        obs_rew_norm_min = 12. # Amount to scale the obstacle punishment by (relative to rewards on [0, 1]) rewards in [-obs_rew_norm_min, 0]
         
         # Collision parameters
         self.soft_collision_buffer = 2. # buffer for soft collision (length from outline of OOI to new outline for all points)
@@ -89,7 +89,7 @@ class ToyMeasurementControl:
         self.covariance_trace_init = np.trace(ooi_init_covariance)
         
         # Create a plotter object unless we are profiling
-        title = f'sim step size={self.simulation_dt}, Explore factor={self.exploration_factor}, Horizon={self.horizon}, Learn Iterations={self.learn_iterations}\n' + \
+        title = f'sim step size={self.simulation_dt}, Explore factor={self.exploration_factor}, Horizon={self.horizon_length}, Learn Iterations={self.learn_iterations}\n' + \
                 f'Evaluation Steps={self.eval_steps}, Evaluation dt={self.eval_dt}, Obstacle rew min={-obs_rew_norm_min}'
         self.ui = MatPlotLibUI(update_rate=self.ui_update_rate, title=title, single_plot=display_evaluation)
         self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
@@ -185,8 +185,10 @@ class ToyMeasurementControl:
                 # Create an MCTS object
                 mcts = MCTS(initial_obs=self.get_state(), env=self, K=self.exploration_factor,
                             _hash_action=hash_action, _hash_state=hash_state,
-                            discount_factor=self.discount_factor)
+                            horizon_length=self.horizon_length, discount_factor=self.discount_factor)
+                start_time = time.time()
                 mcts.learn(self.learn_iterations, progress_bar=False)
+                print(f'MCTS Time: {time.time() - start_time}')
                     
                 # Get the best action from the MCTS tree
                 action_vector = mcts.best_action()
@@ -241,7 +243,7 @@ class ToyMeasurementControl:
                 self.ooi.draw()
                 self.skf.draw(self.ui)
                 self.eval_kd_tree.draw_obstacles()
-                self.draw_simulated_states(mcts, velocity_scale=1)
+                self.draw_simulated_states(mcts)
                     
                 # If we are only doing one iteration
                 if self.one_iteration:
@@ -268,7 +270,7 @@ class ToyMeasurementControl:
         '''
         return self.car.get_state(), self.skf.get_mean(), self.skf.get_covariance(), horizon
     
-    def step(self, state, action, dt=None, done_by_horizon=True) -> Tuple[float, np.ndarray]:
+    def step(self, state, action, dt=None) -> Tuple[float, np.ndarray]:
         """
         Step the environment by one time step. The action is applied to the car, and the state is observed by the OOI.
         The observation is then passed to the KF for update.
@@ -301,10 +303,6 @@ class ToyMeasurementControl:
         # Find the reward based prior vs new covariance matrix and car collision with OOI
         reward, done = self.get_reward(state[2], new_state[2], new_car_state)
         
-        # Check if we are at the end of the horizon
-        if done_by_horizon and not done and horizon == self.horizon:
-            done = True
-        
         # Return the reward and the new state
         return new_state, reward, done
     
@@ -331,22 +329,32 @@ class ToyMeasurementControl:
         """
         
         # Normalize the trace between 0 and 1 (in this case this just divides by initial variance times the dimensions)
-        prior_cov_trace = min_max_normalize(np.trace(prior_cov), 0, self.covariance_trace_init)
-        new_cov_trace = min_max_normalize(np.trace(new_cov), 0, self.covariance_trace_init)
+        # prior_cov_trace = min_max_normalize(np.trace(prior_cov), 0, self.covariance_trace_init)
+        # new_cov_trace = min_max_normalize(np.trace(new_cov), 0, self.covariance_trace_init)
+        # Normalize the trace between 0 and 1 using the final trace as the min and initial trace as the max
+        new_cov_trace = min_max_normalize(np.trace(new_cov), self.final_cov_trace, self.covariance_trace_init)
         
         # Reward is the difference in trace (higher difference is better)
         # This is the amount of information gained by the KF (by covariance getting smaller)
-        reward = prior_cov_trace - new_cov_trace
+        # reward = prior_cov_trace - new_cov_trace
+        
+        # Reward is mirrored over 0.5 (1 is now the final covariance and 0 is the initial covariance)
+        reward = 1-new_cov_trace
         
         # Print trace for debugging
         if print_rewards:
             print(f'Trace Reward: {reward}')    
         
-        # Get obstacle reward from KDTree evaluation
+        # Get obstacle reward from KDTree evaluation (will be [-obs_rew_norm_min, 0])
         obs_reward = self.eval_kd_tree.get_obstacle_cost(car_state)
         # Add the obstacle reward to the trace reward
         reward += obs_reward
         
+        # Find whether the episode is done based on the trace
+        done = new_cov_trace < self.final_cov_trace
+        
+        return reward, done
+    
         # # Remove large reward when car enters hard or soft boundary
         # car_poly = self.car.get_collision_polygon(car_state)
         
@@ -371,10 +379,6 @@ class ToyMeasurementControl:
         #     if print_rewards:
         #         print("Soft Collision")
         
-        # Find whether the episode is done TODO: done needs to also account for horizon length
-        done = new_cov_trace < self.final_cov_trace
-        
-        return reward, done
 
     # Quick state evaluation based on kdtree for quick distance lookup to corners and obstacles
     def evaluate(self, action, state, depth, draw=False) -> float:
