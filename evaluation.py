@@ -192,6 +192,7 @@ class KDTreeEvaluation:
                 # self.ui.draw_text(f'{action}', state[:2] + np.array([-0.6, 0.3]), color='black', fontsize=12)
                 self.ui.draw_text(f'kd: {reward:.2f}', state[:2] + np.array([-0.2, 0.2]), color='black', fontsize=12)
                 self.ui.draw_arrow(state[:2], state[:2] + 0.5 * np.array([np.cos(state[3]), np.sin(state[3])]), color='b')
+                
         # Average and return the cumulative reward
         return cumulative_reward / self.num_steps
 

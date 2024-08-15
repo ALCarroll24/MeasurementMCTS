@@ -35,8 +35,8 @@ class ToyMeasurementControl:
         
         # MCTS search parameters
         self.horizon_length = 200 # length of the planning horizon
-        self.learn_iterations = 100 # number of learning iterations for MCTS (one set of: selection, expansion, evaluation, backpropagation)
-        self.exploration_factor = 0.4  # exploration factor for MCTS
+        self.learn_iterations = 400 # number of learning iterations for MCTS (one set of: selection, expansion, evaluation, backpropagation)
+        self.exploration_factor = 0.3  # exploration factor for MCTS
         self.discount_factor = 1.0  # discount factor for MCTS (1 means no discounting and 0 only considers immediate rewards)
         self.final_cov_trace = 0.03 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
         
@@ -165,7 +165,9 @@ class ToyMeasurementControl:
                 self.ui_was_paused = False
                 
                 # Get the observation from the OOI, pass it to the KF for update
+                start_time = timeit.default_timer()
                 observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state(), draw=self.draw)
+                print(f'Observation Time: {timeit.default_timer() - start_time}')
                 
                 # If there are no observable corners, skip the update
                 if len(indeces) > 0:
