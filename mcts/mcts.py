@@ -2,7 +2,7 @@ import collections
 import numpy as np
 import math
 from abc import ABC, abstractmethod
-from typing import Tuple
+from typing import Tuple, Any
 
 class Environment(ABC):
   """
@@ -16,13 +16,13 @@ class Environment(ABC):
   """
   
   @abstractmethod
-  def step(self, state: np.ndarray, action: int) -> Tuple(np.ndarray, float, bool):
+  def step(self, state: np.ndarray, action: int) -> Tuple[np.ndarray, float, bool]:
     """
     Take a step in the environment
     
     params:
       state: the current state of the environment (np.ndarray(shape=(1, N)))
-      action: the action to take (int)
+      action: the action from in the action space to take (int)
       
     returns:
       new_state: the new state of the environment (np.ndarray(shape=(1, N)))
@@ -32,7 +32,7 @@ class Environment(ABC):
     pass
 
   @abstractmethod
-  def evaluate(self, state: np.ndarray) -> Tuple(np.ndarray, float):
+  def evaluate(self, state: np.ndarray) -> Tuple[np.ndarray, float]:
     """
     Evaluate the current state of the environment
     
@@ -78,7 +78,7 @@ class MCTSNode:
     self.action = action
     self.is_expanded = False
     self.parent = parent  # Optional[MCTSNode]
-    self.children = {}  # Dict[move, MCTSNode]
+    self.children = {}  # Dict[action, MCTSNode]
     self.child_priors = np.zeros([self.env.N], dtype=np.float32)
     self.child_total_value = np.zeros([self.env.N], dtype=np.float32)
     self.child_number_visits = np.zeros([self.env.N], dtype=np.float32)
@@ -135,7 +135,7 @@ class MCTSNode:
     if action not in self.children:
       # If not, Run the simulation and update the child
       new_state, reward, done = self.env.step(self.state, action)
-      self.children[action] = MCTSNode(new_state, action, parent=self)
+      self.children[action] = MCTSNode(self.env, new_state, action, parent=self)
       self.child_total_value[action] = reward # Replace the value estimate with the environment reward
 
     return self.children[action]
@@ -155,14 +155,14 @@ class MCTSNode:
       current.total_value += value_estimate
       current = current.parent
 
-# class DummyNode(object):
-#   """
-#   Dummy node class that represents the root node in the MCTS tree
-#   """
-#   def __init__(self):
-#     self.parent = None
-#     self.child_total_value = collections.defaultdict(float)
-#     self.child_number_visits = collections.defaultdict(float)
+class DummyNode(object):
+  """
+  Dummy node class that simplifies implimentation when it is the root of the MCTS tree
+  """
+  def __init__(self):
+    self.parent = None
+    self.child_total_value = collections.defaultdict(float)
+    self.child_number_visits = collections.defaultdict(float)
 
 
 def mcts_search(env: Environment, starting_state: np.ndarray, learning_iterations: int):
@@ -175,11 +175,12 @@ def mcts_search(env: Environment, starting_state: np.ndarray, learning_iteration
     
   returns:
     the index of the best action to take (int)
+    the root node of the MCTS tree (MCTSNode)
   """
-  root = MCTSNode(starting_state, action=None, parent=None)
+  root = MCTSNode(env, starting_state, action=None, parent=DummyNode())
   for _ in range(learning_iterations):
     leaf = root.select_leaf()
     child_priors, value_estimate = env.evaluate(leaf.state)
     leaf.expand(child_priors)
     leaf.backup(value_estimate)
-  return np.argmax(root.child_number_visits)
+  return np.argmax(root.child_number_visits), root

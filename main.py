@@ -7,8 +7,9 @@ from evaluation import KDTreeEvaluation
 from static_kf import StaticKalmanFilter, measurement_model
 from utils import wrap_angle, min_max_normalize, get_interpolated_polygon_points, rotate_about_point
 from shapely.affinity import rotate
-from mcts.mcts import MCTS
-from mcts.hash import hash_action, hash_state
+# from mcts.mcts import MCTS
+# from mcts.hash import hash_action, hash_state
+from mcts.mcts import mcts_search, Environment
 from mcts.tree_viz import render_graph, render_pyvis
 from flask_server import FlaskServer
 import argparse
@@ -17,7 +18,7 @@ from time import sleep
 import time
 import timeit
 
-class ToyMeasurementControl:
+class ToyMeasurementControl(Environment):
     def __init__(self, one_iteration=False, display_evaluation=False, time_evaluation=False, no_flask_server=False):
         # Flag for whether to run one iteration for profiling
         self.one_iteration = one_iteration
@@ -154,6 +155,13 @@ class ToyMeasurementControl:
         # Flag for whether goal has been reached
         self.done = False
 
+    @property
+    def N(self):
+        return len(self.all_actions)
+
+    @N.setter
+    def N(self, value):
+        self.N = value
 
     def run(self): 
     # Loop until matplotlib window is closed (handled by the UI class)
@@ -185,16 +193,24 @@ class ToyMeasurementControl:
                 
                 ############################ AUTONOMOUS CONTROL ############################
                 # Create an MCTS object
-                mcts = MCTS(initial_obs=self.get_state(), env=self, K=self.exploration_factor,
-                            _hash_action=hash_action, _hash_state=hash_state,
-                            horizon_length=self.horizon_length, discount_factor=self.discount_factor)
-                start_time = time.time()
-                mcts.learn(self.learn_iterations, progress_bar=False)
-                print(f'MCTS Time: {time.time() - start_time}')
-                    
+                # mcts = MCTS(initial_obs=self.get_state(), env=self, K=self.exploration_factor,
+                #             _hash_action=hash_action, _hash_state=hash_state,
+                #             horizon_length=self.horizon_length, discount_factor=self.discount_factor)                
+                # start_time = time.time()
+                # mcts.learn(self.learn_iterations, progress_bar=False)
+                # print(f'MCTS Time: {time.time() - start_time}')
+                # Run MCTS search
+                start_time = timeit.default_timer()
+                action_index, root_node = mcts_search(self, self.get_state(), self.learn_iterations)
+                end_time = timeit.default_timer()
+                print(f'MCTS Search Time: {end_time - start_time}')
+                
                 # Get the best action from the MCTS tree
-                action_vector = mcts.best_action()
-                print("MCTS Action: ", action_vector)
+                action_vector = self.all_actions[action_index]
+                
+                # # Get the best action from the MCTS tree
+                # action_vector = mcts.best_action()
+                # print("MCTS Action: ", action_vector)
                 
                 # Get the next state by looking through tree based on action    
                 # next_state = list(mcts.root.children[hash_action(action_vector)].children.values())[0].state
@@ -245,12 +261,12 @@ class ToyMeasurementControl:
                 self.ooi.draw()
                 self.skf.draw(self.ui)
                 self.eval_kd_tree.draw_obstacles()
-                self.draw_simulated_states(mcts)
+                # self.draw_simulated_states(mcts)
                     
                 # If we are only doing one iteration
                 if self.one_iteration:
                     # Render the MCTS tree (viewable in browser by opening tree_visualization.html)
-                    render_pyvis(mcts.root)
+                    # render_pyvis(mcts.root)
                     
                     # Create a single plot for the UI
                     self.ui.single_plot()
@@ -272,7 +288,7 @@ class ToyMeasurementControl:
         '''
         return self.car.get_state(), self.skf.get_mean(), self.skf.get_covariance(), horizon
     
-    def step(self, state, action, dt=None) -> Tuple[float, np.ndarray]:
+    def step(self, state, action_index, dt=None) -> Tuple[float, np.ndarray]:
         """
         Step the environment by one time step. The action is applied to the car, and the state is observed by the OOI.
         The observation is then passed to the KF for update.
@@ -288,6 +304,9 @@ class ToyMeasurementControl:
         # Pull out the state elements
         car_state, corner_means, corner_cov, horizon = state
         
+        # Convert action index into action using the action space
+        action = self.all_actions[action_index]
+        
         # Increment the horizon
         horizon += 1
         
@@ -299,11 +318,11 @@ class ToyMeasurementControl:
         new_mean, new_cov = self.skf.update(observable_corners, indeces, new_car_state,
                                             simulate=True, s_k_=corner_means, P_k_=corner_cov)
         
+        # Find the reward based prior vs new covariance matrix and car collision with OOI
+        reward, done = self.get_reward(new_cov, new_car_state)
+        
         # Combine the updated car state, mean, covariance and horizon into a new state
         new_state = (new_car_state, new_mean, new_cov, horizon)
-        
-        # Find the reward based prior vs new covariance matrix and car collision with OOI
-        reward, done = self.get_reward(state[2], new_state[2], new_car_state)
         
         # Return the reward and the new state
         return new_state, reward, done
@@ -321,7 +340,7 @@ class ToyMeasurementControl:
         # Check if the trace of the covariance matrix is below the final threshold
         return trace_normalized < self.final_cov_trace
     
-    def get_reward(self, prior_cov, new_cov, car_state, print_rewards=False) -> Tuple[float, bool]:
+    def get_reward(self, new_cov, car_state, print_rewards=False) -> Tuple[float, bool]:
         """
         Get the reward of the new state-action pair.
         
@@ -330,15 +349,8 @@ class ToyMeasurementControl:
         :return: (float, bool) the reward of the state-action pair, and whether the episode is done
         """
         
-        # Normalize the trace between 0 and 1 (in this case this just divides by initial variance times the dimensions)
-        # prior_cov_trace = min_max_normalize(np.trace(prior_cov), 0, self.covariance_trace_init)
-        # new_cov_trace = min_max_normalize(np.trace(new_cov), 0, self.covariance_trace_init)
         # Normalize the trace between 0 and 1 using the final trace as the min and initial trace as the max
         new_cov_trace = min_max_normalize(np.trace(new_cov), self.final_cov_trace, self.covariance_trace_init)
-        
-        # Reward is the difference in trace (higher difference is better)
-        # This is the amount of information gained by the KF (by covariance getting smaller)
-        # reward = prior_cov_trace - new_cov_trace
         
         # Reward is mirrored over 0.5 (1 is now the final covariance and 0 is the initial covariance)
         reward = 1-new_cov_trace
@@ -356,36 +368,12 @@ class ToyMeasurementControl:
         done = new_cov_trace < self.final_cov_trace
         
         return reward, done
-    
-        # # Remove large reward when car enters hard or soft boundary
-        # car_poly = self.car.get_collision_polygon(car_state)
         
-        # # If car is in collision with OOI, give a large negative reward
-        # if car_poly.overlaps(self.ooi_poly):
-        #     reward -= self.hard_collision_punishment
-            
-        #     if print_rewards:
-        #         print("Hard Collision")
-            
-        # # If car comes very close to OOI (soft collision), give a less large negative reward based on distance inside soft boundary
-        # if car_poly.overlaps(self.soft_ooi_poly):
-        #     # Find the car polygon's distance to the hard boundary
-        #     dist_to_ooi = car_poly.distance(self.ooi_poly)
-            
-        #     # Find the distance inside the soft boundary
-        #     dist_in_soft = self.soft_collision_buffer - dist_to_ooi
-            
-        #     # Reward is the percentage of the buffer distance inside the soft boundary squared
-        #     reward -= self.soft_collision_punishment * (dist_in_soft / self.soft_collision_buffer)**2
-            
-        #     if print_rewards:
-        #         print("Soft Collision")
-        
-
     # Quick state evaluation based on kdtree for quick distance lookup to corners and obstacles
-    def evaluate(self, action, state, depth, draw=False) -> float:
+    def evaluate(self, state, draw=False) -> float:
         # Get the diagonals of the covariance matrix for the corners to get trace
         corner_cov_diags = np.diag(state[2])
+        
         # Get the trace of every 2 diagonals (to get a per point trace)
         reshaped_cov_diags = corner_cov_diags.reshape(4, 2) # this puts x in first column and y in second
         point_traces = np.mean(reshaped_cov_diags, axis=1) # Sum the x and y covariances for each point to get trace
@@ -393,10 +381,15 @@ class ToyMeasurementControl:
         # Normalize the point traces to [0, covariance_trace_init/4] (this is the max trace for a single point)
         norm_point_traces = min_max_normalize(point_traces, 0, self.covariance_trace_init/4)
         
-        # Pass the car state to the KDTree evaluation to get the reward
-        mean_reward = self.eval_kd_tree.evaluate(action, state[0], norm_point_traces, depth, self.discount_factor, draw=draw)
+        # Evaluate for each action in action space
+        prior_reward = np.zeros([self.N], dtype=np.float32)
+        for n, action in enumerate(self.all_actions):
+            # Pass the car state to the KDTree evaluation to get the reward
+            prior_reward[n] = self.eval_kd_tree.evaluate(action, state[0], norm_point_traces, state[3], self.discount_factor, draw=draw)
+            
+        avg_reward = np.mean(prior_reward)
         
-        return mean_reward
+        return prior_reward, avg_reward
     
     # Same repeating action evaluation as in evaluation.py but using full environment step
     def full_evaluate(self, action, state, depth, draw=False) -> float:
