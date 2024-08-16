@@ -4,7 +4,10 @@ import math
 from abc import ABC, abstractmethod
 from typing import Tuple, Any
 import multiprocessing as mp
+from multiprocessing.sharedctypes import Array as mpArray
 import ctypes
+import timeit
+import pickle
 
 class Environment(ABC):
   """
@@ -74,47 +77,81 @@ class MCTSNode:
         expand: expand the current node with the given child_priors
         backup: backpropogate the value estimate up the tree to the root node
     """
-    def __init__(self, env: Environment, state: np.ndarray, action: np.ndarray, parent: 'MCTSNode'=None, shared_num_threads=None, lock=None):
+    def __init__(self, env: Environment, state: np.ndarray, action: np.ndarray, parent: 'MCTSNode'=None, 
+                 parallel: bool=False, is_expanded: bool=False, child_priors: np.ndarray=None):
+        # Initialize parameters
         self.env = env
         self.state = state
         self.action = action
-        self.is_expanded = False
         self.parent = parent  # Optional[MCTSNode]
+        self.parallel = parallel
+        self.is_expanded = is_expanded
         self.children = {}  # Dict[action, MCTSNode]
-        self.child_priors = np.zeros([self.env.N], dtype=np.float32)
-        self.child_total_value = np.zeros([self.env.N], dtype=np.float32)
-        self.child_number_visits = np.zeros([self.env.N], dtype=np.float32)
-
-        # Initialize shared_num_threads and lock if they are not provided
-        if shared_num_threads is None:
-            self.shared_num_threads = mp.Array(ctypes.c_int, [0] * self.env.N)
+        
+        # Initialize child priors to zeros if not given, otherwise use given child priors
+        if child_priors is None:
+            self.child_priors = np.zeros([self.env.N], dtype=np.float32)
         else:
-            self.shared_num_threads = shared_num_threads
+            self.child_priors = child_priors
 
-        if lock is None:
-        self.lock = mp.Lock()
+        if self.parallel:
+            # Initialize shared arrays if parallel
+            self.child_number_visits, self.shared_number_visits_base = create_shared_array((self.env.N,), ctypes.c_int)
+            self.child_total_value, self.shared_total_value_base = create_shared_array((self.env.N,), ctypes.c_float)
+            
+            # Initialize lock for making sure shared variables are updated correctly
+            self.lock = mp.Lock() # Does nothing if not parallel
         else:
-        self.lock = lock
+            # Initialize numpy arrays if not parallel
+            self.child_number_visits = np.zeros([self.env.N], dtype=np.int32)
+            self.child_total_value = np.zeros([self.env.N], dtype=np.float32)
+            self.lock = None # No lock if not parallel
 
     @property
     def number_visits(self):
-        """Get number of visits to this node"""
+        """Get the number of visits to this node."""
+        if self.lock:
+            with self.lock:
+                print('Getting visits object')
+                # print(f'Visits object: {self.shared_number_visits_base.get_obj()}')
+                print(f'Visits np: {self.parent.child_number_visits[self.action]}')
+                return self.parent.child_number_visits[self.action]
         return self.parent.child_number_visits[self.action]
 
     @number_visits.setter
     def number_visits(self, value):
-        """Set the number of visits to this node"""
-        self.parent.child_number_visits[self.action] = value
+        """Set the number of visits to this node."""
+        if self.lock:
+            with self.lock:
+                self.parent.child_number_visits[self.action] = value
+                print('Getting visits object')
+                # print(f'Visits object: {self.shared_number_visits_base.get_obj()}')
+                print(f'Visits np: {self.parent.child_number_visits[self.action]}')
+        else:
+            self.parent.child_number_visits[self.action] = value
 
     @property
     def total_value(self):
-        """Get the total value of this node"""
+        """Get the total value of this node."""
+        if self.lock:
+            with self.lock:
+                print('Getting value object')
+                # print(f'Value object: {self.shared_total_value_base.get_obj()}')
+                print(f'Value np: {self.parent.child_total_value[self.action]}')
+                return self.parent.child_total_value[self.action]
         return self.parent.child_total_value[self.action]
 
     @total_value.setter
     def total_value(self, value):
-        """Set the total value of this node"""
-        self.parent.child_total_value[self.action] = value
+        """Set the total value of this node."""
+        if self.lock:
+            with self.lock:
+                self.parent.child_total_value[self.action] = value
+                print('Getting value object')
+                # print(f'Value object: {self.shared_total_value_base.get_obj()}')
+                print(f'Value np: {self.parent.child_total_value[self.action]}')
+        else:
+            self.parent.child_total_value[self.action] = value
 
     def child_Q(self):
         """Get child Q values based on the stored total value and number of visits"""
@@ -122,36 +159,47 @@ class MCTSNode:
 
     def child_U(self):
         """Get child U values (upper confidence bounds)"""
-        exploration_factor = math.sqrt(self.number_visits) / (1 + self.shared_num_threads[self.action])
-        return exploration_factor * (self.child_priors / (1 + self.child_number_visits))
+        return math.sqrt(self.number_visits) * (
+            self.child_priors / (1 + self.child_number_visits))
 
     def best_child(self):
         """Get the best child based on the upper confidence bound"""
         return np.argmax(self.child_Q() + self.child_U())
 
-    def select_leaf(self):
+    def select_leaf(self, return_path=False):
         """From current node, select highest upper confidence bound node until at next leaf node"""
         current = self
+        path = []
         # While we aren't at a leaf node
         while current.is_expanded:
-            # Grab the lock to increment the thread shared variable num_threads when selecting a node
-            with self.lock:
-                # Pick the best child and move to that node
-                best_move = current.best_child()
-                current.shared_num_threads[best_move] += 1  # Increment the num_threads when selecting a node
-                current = current.maybe_add_child(best_move) # Child is only added if we reach the unsimulated leaf node
+            # Since the thread is passing through this node remove one from the total value to encourage other threads to explore other nodes
+            current.total_value -= 1 # This has no change with one thread because it is replaced in backup
+            
+            # Pick the best child and move to that node
+            best_action = current.best_child()
+            current = current.maybe_add_child(best_action) # Child is only added if we reach the unsimulated leaf node
+            path.append(best_action) # Add the action to the path
                 
         # Return the leaf node we ended on
+        if return_path:
+            return current, path
         return current
 
-    def maybe_add_child(self, action):
+    def maybe_add_child(self, action, insert_leaf=None):
         """Add a child if it does not exist"""
         # Check if the action has already been simulated
         if action not in self.children:
+            # If we have a leaf we want to insert since it was already simulated
+            if insert_leaf is not None:
+                # If the leaf node has already been created, add it to the children
+                self.children[action] = insert_leaf
+                # NOTE: Total value is shared and has already been added to the parent so it is not updated here
+             
             # If not, Run the simulation and update the child
-            new_state, reward, done = self.env.step(self.state, action)
-            self.children[action] = MCTSNode(self.env, new_state, action, parent=self)
-            self.child_total_value[action] = reward # Replace the value estimate with the environment reward
+            else:
+                new_state, reward, done = self.env.step(self.state, action)
+                self.children[action] = MCTSNode(self.env, new_state, action, parent=self, parallel=self.parallel)
+                self.child_total_value[action] = reward # Replace the value estimate with the environment reward
 
         return self.children[action]
 
@@ -166,18 +214,18 @@ class MCTSNode:
 
         # While we aren't at the root node which has no parent
         while current.parent is not None:
-            current.number_visits += 1
-            current.total_value += value_estimate
-            current = current.parent
+            current.number_visits += 1 # Add a visit to the node
+            current.total_value += value_estimate + 1 # Add the value back we subtracted in select_leaf
+            current = current.parent # Move to the parent node
 
 class DummyNode(object):
     """
     Dummy node class that simplifies implimentation when it is the root of the MCTS tree
     """
     def __init__(self):
-    self.parent = None
-    self.child_total_value = collections.defaultdict(float)
-    self.child_number_visits = collections.defaultdict(float)
+        self.parent = None
+        self.child_total_value = collections.defaultdict(float)
+        self.child_number_visits = collections.defaultdict(float)
 
 
 def mcts_search(env: Environment, starting_state: np.ndarray, learning_iterations: int):
@@ -185,7 +233,7 @@ def mcts_search(env: Environment, starting_state: np.ndarray, learning_iteration
     Run many iterations of MCTS to build up a tree and get the best action to take
     params:
     env: the environment to run MCTS on, class that inherits from Environment class
-    starting_state: the starting state of the search (np.ndarray(shape=(1, N)))
+    starting_state: the starting state of the search (Any)
     learning_iterations: the number of iterations to run MCTS (int)
 
     returns:
@@ -201,18 +249,54 @@ def mcts_search(env: Environment, starting_state: np.ndarray, learning_iteration
         
     return np.argmax(root.child_number_visits), root
 
-def mcts_worker(env: Environment, state: np.ndarray, output_queue: mp.Queue):
-    """Worker function for running MCTS in parallel."""
-    leaf = state.select_leaf()
+def create_shared_array(shape, dtype=ctypes.c_float):
+    """
+    Create a shared array with the given shape and dtype for parallel MCTS
+    """
+    shared_array_base = mpArray(dtype, int(np.prod(shape)))
+    shared_array = np.ctypeslib.as_array(shared_array_base.get_obj())
+    return shared_array.reshape(shape), shared_array_base
+
+def mcts_worker(env: Environment, root_mcts_node: MCTSNode, output_queue: mp.Queue):
+    """
+    Worker function for running MCTS in parallel.
+    
+    params:
+    env: the environment to run MCTS on, class that inherits from Environment class
+    root_mcts_node: the root node of the MCTS tree, which we are starting the search from
+    output_queue: the queue to put the tree additions into
+    """
+    
+    # Run stages of MCTS until we create a new leaf node
+    leaf, path = root_mcts_node.select_leaf(return_path=True)
     child_priors, value_estimate = env.evaluate(leaf.state)
     leaf.expand(child_priors)
-    leaf.backup(value_estimate)
-    output_queue.put((leaf.action, leaf.child_number_visits[leaf.action], leaf.child_total_value[leaf.action]))
+    
+    # Place the node parameters into the queue
+    leaf_parameters = (path, leaf.state, leaf.action, leaf.is_expanded, leaf.child_priors, value_estimate)
+    output_queue.put(leaf_parameters)
 
 def parallel_mcts_search(env: Environment, starting_state: np.ndarray, learning_iterations: int, num_processes: int):
-    root = MCTSNode(env, starting_state, action=None, parent=DummyNode())
+    """
+    Run many iterations of MCTS to build up a tree and get the best action to take in parallel
+    params:
+    env: the environment to run MCTS on, class that inherits from Environment class
+    starting_state: the starting state of the search (Any)
+    learning_iterations: the number of iterations to run MCTS (int)
+    
+    returns:
+    the index of the best action to take (int)
+    the root node of the MCTS tree (MCTSNode)
+    """
+    root = MCTSNode(env, starting_state, action=None, parent=DummyNode(), parallel=True)
     output_queue = mp.Queue()
-
+    
+    mcts_worker(env, root, output_queue)
+    print(f'Visits value: {root.shared_number_visits_base.value}')
+    print(f'Value value: {root.shared_total_value_base.value}')
+    
+    exit()
+    
     for _ in range(learning_iterations // num_processes):
         processes = []
         for _ in range(num_processes):
@@ -222,8 +306,29 @@ def parallel_mcts_search(env: Environment, starting_state: np.ndarray, learning_
 
         for p in processes:
             p.join()
-            action, visits, total_value = output_queue.get()
-            root.child_number_visits[action] += visits
-            root.child_total_value[action] += total_value
+            
+            # Get the parameters to create a new leaf node
+            path, state, action, is_expanded, child_priors, value_estimate = output_queue.get()
+            
+            # Recreate the leaf node
+            leaf = MCTSNode(env, state, action, parent=root, parallel=True, 
+                            is_expanded=is_expanded, child_priors=child_priors)
+            
+            # Add the leaf node using the path of actions
+            current = root
+            for action in path:
+                current = current.maybe_add_child(action, insert_leaf=leaf)
+                
+            # Backup the value estimate
+            current.backup(value_estimate)
 
     return np.argmax(root.child_number_visits), root
+
+def test_picklable(obj):
+    try:
+        pickle.dumps(obj)
+        print('Picklable')
+    except pickle.PicklingError as e:
+        print(f'PicklingError: {e}')
+    except TypeError as e:
+        print(f'TypeError: {e}')

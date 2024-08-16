@@ -9,7 +9,7 @@ from utils import wrap_angle, min_max_normalize, get_interpolated_polygon_points
 from shapely.affinity import rotate
 # from mcts.mcts import MCTS
 # from mcts.hash import hash_action, hash_state
-from mcts.mcts import mcts_search, Environment
+from mcts.mcts import mcts_search, Environment, parallel_mcts_search
 from mcts.tree_viz import render_graph, render_pyvis
 from flask_server import FlaskServer
 import argparse
@@ -203,8 +203,12 @@ class ToyMeasurementControl(Environment):
                 start_time = timeit.default_timer()
                 action_index, root_node = mcts_search(self, self.get_state(), self.learn_iterations)
                 end_time = timeit.default_timer()
-                print(f'MCTS Search Time: {end_time - start_time}')
+                print(f'Single threaded MCTS Search Time: {end_time - start_time}')
                 
+                start_time = timeit.default_timer()
+                action_index, root_node = parallel_mcts_search(self, self.get_state(), self.learn_iterations, num_processes=1)
+                end_time = timeit.default_timer()
+                print(f'Multi threaded MCTS Search Time: {end_time - start_time}')
                 # Get the best action from the MCTS tree
                 action_vector = self.all_actions[action_index]
                 
