@@ -200,10 +200,10 @@ class ToyMeasurementControl(Environment):
                 # mcts.learn(self.learn_iterations, progress_bar=False)
                 # print(f'MCTS Time: {time.time() - start_time}')
                 # Run MCTS search
-                start_time = timeit.default_timer()
-                action_index, root_node = mcts_search(self, self.get_state(), self.learn_iterations)
-                end_time = timeit.default_timer()
-                print(f'Single threaded MCTS Search Time: {end_time - start_time}')
+                # start_time = timeit.default_timer()
+                # action_index, root_node = mcts_search(self, self.get_state(), self.learn_iterations)
+                # end_time = timeit.default_timer()
+                # print(f'Single threaded MCTS Search Time: {end_time - start_time}')
                 
                 start_time = timeit.default_timer()
                 action_index, root_node = parallel_mcts_search(self, self.get_state(), self.learn_iterations, num_processes=1)

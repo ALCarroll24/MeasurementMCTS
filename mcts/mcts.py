@@ -292,8 +292,8 @@ def parallel_mcts_search(env: Environment, starting_state: np.ndarray, learning_
     output_queue = mp.Queue()
     
     mcts_worker(env, root, output_queue)
-    print(f'Visits value: {root.shared_number_visits_base.value}')
-    print(f'Value value: {root.shared_total_value_base.value}')
+    print(f'Visits value: {root.shared_number_visits_base[:]}')
+    print(f'Value value: {root.shared_total_value_base[:]}')
     
     exit()
     
