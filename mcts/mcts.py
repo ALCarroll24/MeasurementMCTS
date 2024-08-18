@@ -77,22 +77,17 @@ class MCTSNode:
         expand: expand the current node with the given child_priors
         backup: backpropogate the value estimate up the tree to the root node
     """
-    def __init__(self, env: Environment, state: np.ndarray, action: np.ndarray, parent: 'MCTSNode'=None, 
-                 parallel: bool=False, is_expanded: bool=False, child_priors: np.ndarray=None):
+    def __init__(self, env: Environment, state: np.ndarray, action: np.ndarray, 
+                 parent: 'MCTSNode'=None, parallel: bool=False):
         # Initialize parameters
         self.env = env
         self.state = state
         self.action = action
         self.parent = parent  # Optional[MCTSNode]
         self.parallel = parallel
-        self.is_expanded = is_expanded
+        self.is_expanded = False
         self.children = {}  # Dict[action, MCTSNode]
-        
-        # Initialize child priors to zeros if not given, otherwise use given child priors
-        if child_priors is None:
-            self.child_priors = np.zeros([self.env.N], dtype=np.float32)
-        else:
-            self.child_priors = child_priors
+        self.child_priors = np.zeros([self.env.N], dtype=np.float32)
 
         if self.parallel:
             # Initialize shared arrays if parallel
@@ -108,13 +103,20 @@ class MCTSNode:
             self.lock = None # No lock if not parallel
 
     @property
+    def prior(self):
+        """Get the prior probability of the action that led to this node"""
+        return self.parent.child_priors[self.action]
+    
+    @prior.setter
+    def prior(self, value):
+        """Set the prior probability of the action that led to this node"""
+        self.parent.child_priors[self.action] = value
+
+    @property
     def number_visits(self):
         """Get the number of visits to this node."""
         if self.lock:
             with self.lock:
-                print('Getting visits object')
-                # print(f'Visits object: {self.shared_number_visits_base.get_obj()}')
-                print(f'Visits np: {self.parent.child_number_visits[self.action]}')
                 return self.parent.child_number_visits[self.action]
         return self.parent.child_number_visits[self.action]
 
@@ -124,9 +126,6 @@ class MCTSNode:
         if self.lock:
             with self.lock:
                 self.parent.child_number_visits[self.action] = value
-                print('Getting visits object')
-                # print(f'Visits object: {self.shared_number_visits_base.get_obj()}')
-                print(f'Visits np: {self.parent.child_number_visits[self.action]}')
         else:
             self.parent.child_number_visits[self.action] = value
 
@@ -135,9 +134,6 @@ class MCTSNode:
         """Get the total value of this node."""
         if self.lock:
             with self.lock:
-                print('Getting value object')
-                # print(f'Value object: {self.shared_total_value_base.get_obj()}')
-                print(f'Value np: {self.parent.child_total_value[self.action]}')
                 return self.parent.child_total_value[self.action]
         return self.parent.child_total_value[self.action]
 
@@ -147,9 +143,6 @@ class MCTSNode:
         if self.lock:
             with self.lock:
                 self.parent.child_total_value[self.action] = value
-                print('Getting value object')
-                # print(f'Value object: {self.shared_total_value_base.get_obj()}')
-                print(f'Value np: {self.parent.child_total_value[self.action]}')
         else:
             self.parent.child_total_value[self.action] = value
 
@@ -193,6 +186,7 @@ class MCTSNode:
             if insert_leaf is not None:
                 # If the leaf node has already been created, add it to the children
                 self.children[action] = insert_leaf
+                self.children[action].parent = self
                 # NOTE: Total value is shared and has already been added to the parent so it is not updated here
              
             # If not, Run the simulation and update the child
@@ -270,10 +264,9 @@ def mcts_worker(env: Environment, root_mcts_node: MCTSNode, output_queue: mp.Que
     # Run stages of MCTS until we create a new leaf node
     leaf, path = root_mcts_node.select_leaf(return_path=True)
     child_priors, value_estimate = env.evaluate(leaf.state)
-    leaf.expand(child_priors)
     
     # Place the node parameters into the queue
-    leaf_parameters = (path, leaf.state, leaf.action, leaf.is_expanded, leaf.child_priors, value_estimate)
+    leaf_parameters = (path, leaf.state, leaf.action, child_priors, value_estimate)
     output_queue.put(leaf_parameters)
 
 def parallel_mcts_search(env: Environment, starting_state: np.ndarray, learning_iterations: int, num_processes: int):
@@ -291,12 +284,6 @@ def parallel_mcts_search(env: Environment, starting_state: np.ndarray, learning_
     root = MCTSNode(env, starting_state, action=None, parent=DummyNode(), parallel=True)
     output_queue = mp.Queue()
     
-    mcts_worker(env, root, output_queue)
-    print(f'Visits value: {root.shared_number_visits_base[:]}')
-    print(f'Value value: {root.shared_total_value_base[:]}')
-    
-    exit()
-    
     for _ in range(learning_iterations // num_processes):
         processes = []
         for _ in range(num_processes):
@@ -308,18 +295,18 @@ def parallel_mcts_search(env: Environment, starting_state: np.ndarray, learning_
             p.join()
             
             # Get the parameters to create a new leaf node
-            path, state, action, is_expanded, child_priors, value_estimate = output_queue.get()
-            
+            path, state, action, child_priors, value_estimate = output_queue.get()
+
             # Recreate the leaf node
-            leaf = MCTSNode(env, state, action, parent=root, parallel=True, 
-                            is_expanded=is_expanded, child_priors=child_priors)
+            leaf = MCTSNode(env, state, action, parallel=True)
             
-            # Add the leaf node using the path of actions
+            # Add the leaf node using the path of actions (If path is empty, leaf is the root node, no need to add)
             current = root
             for action in path:
                 current = current.maybe_add_child(action, insert_leaf=leaf)
                 
-            # Backup the value estimate
+            # Expand node with priors and backup value estimate
+            current.expand(child_priors)
             current.backup(value_estimate)
 
     return np.argmax(root.child_number_visits), root

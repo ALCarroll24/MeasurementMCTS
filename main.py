@@ -15,7 +15,6 @@ from flask_server import FlaskServer
 import argparse
 from copy import deepcopy
 from time import sleep
-import time
 import timeit
 
 class ToyMeasurementControl(Environment):
@@ -35,8 +34,9 @@ class ToyMeasurementControl(Environment):
         self.simulation_dt = 0.3 # time step size for forward simulation search
         
         # MCTS search parameters
-        self.horizon_length = 200 # length of the planning horizon
-        self.learn_iterations = 400 # number of learning iterations for MCTS (one set of: selection, expansion, evaluation, backpropagation)
+        self.num_processes = 32 # number of processes to use for parallel MCTS search (1 for single threaded)
+        self.horizon_length = 500 # length of the planning horizon
+        self.learn_iterations = 1000 # number of learning iterations for MCTS (one set of: selection, expansion, evaluation, backpropagation)
         self.exploration_factor = 0.3  # exploration factor for MCTS
         self.discount_factor = 1.0  # discount factor for MCTS (1 means no discounting and 0 only considers immediate rewards)
         self.final_cov_trace = 0.03 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
@@ -157,6 +157,7 @@ class ToyMeasurementControl(Environment):
 
     @property
     def N(self):
+        """ Number of actions in the action space """
         return len(self.all_actions)
 
     @N.setter
@@ -199,22 +200,26 @@ class ToyMeasurementControl(Environment):
                 # start_time = time.time()
                 # mcts.learn(self.learn_iterations, progress_bar=False)
                 # print(f'MCTS Time: {time.time() - start_time}')
-                # Run MCTS search
-                # start_time = timeit.default_timer()
-                # action_index, root_node = mcts_search(self, self.get_state(), self.learn_iterations)
-                # end_time = timeit.default_timer()
-                # print(f'Single threaded MCTS Search Time: {end_time - start_time}')
-                
-                start_time = timeit.default_timer()
-                action_index, root_node = parallel_mcts_search(self, self.get_state(), self.learn_iterations, num_processes=1)
-                end_time = timeit.default_timer()
-                print(f'Multi threaded MCTS Search Time: {end_time - start_time}')
-                # Get the best action from the MCTS tree
-                action_vector = self.all_actions[action_index]
                 
                 # # Get the best action from the MCTS tree
                 # action_vector = mcts.best_action()
                 # print("MCTS Action: ", action_vector)
+                
+                # Run MCTS search
+                if self.num_processes == 1:
+                    # Single threaded MCTS search
+                    start_time = timeit.default_timer()
+                    action_index, root_node = mcts_search(self, self.get_state(), self.learn_iterations)
+                    print(f'Single Threaded MCTS Time: {timeit.default_timer() - start_time}')
+                else:
+                    # Parallel MCTS search
+                    start_time = timeit.default_timer()
+                    action_index, root_node = parallel_mcts_search(self, self.get_state(), self.learn_iterations,
+                                                                   num_processes=self.num_processes)
+                    print(f'Parallel MCTS Time: {timeit.default_timer() - start_time}')
+                
+                # Get the best action from the MCTS tree
+                action_vector = self.all_actions[action_index]
                 
                 # Get the next state by looking through tree based on action    
                 # next_state = list(mcts.root.children[hash_action(action_vector)].children.values())[0].state
@@ -236,7 +241,7 @@ class ToyMeasurementControl(Environment):
             else:
                 # Only render the MCTS tree if the UI was not paused before the last iteration so that the tree is not rendered multiple times
                 if not self.ui_was_paused:
-                    render_pyvis(mcts.root)
+                    render_pyvis(root_node)
                     self.ui_was_paused = True
                     
                 # Check if a node has been clicked
@@ -270,7 +275,7 @@ class ToyMeasurementControl(Environment):
                 # If we are only doing one iteration
                 if self.one_iteration:
                     # Render the MCTS tree (viewable in browser by opening tree_visualization.html)
-                    # render_pyvis(mcts.root)
+                    render_pyvis(root_node)
                     
                     # Create a single plot for the UI
                     self.ui.single_plot()
