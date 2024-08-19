@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from collections import namedtuple, deque
 from itertools import count
 import sys
+import timeit
+from typing import List, Tuple
 
 import torch
 import torch.nn as nn
@@ -21,16 +23,16 @@ class PolicyValueNetwork(nn.Module):
     """
     Neural net combining policy and value network (state -> (policy, value))
     params:
-        state_dims: Number of dimensions of the state space
-        action_length: Number of actions in the action space
+        state_dims: Number of dimensions in the state space
+        action_dims: Number of dimensions in the action space
     """
-    def __init__(self, state_dims, action_length):
+    def __init__(self, state_dims, action_dims):
         super(PolicyValueNetwork, self).__init__()
         self.layer1 = nn.Linear(state_dims, 128)
         self.layer2 = nn.Linear(128, 128)
-        self.layer3 = nn.Linear(128, action_length+1) # +1 for the value output
+        self.layer3 = nn.Linear(128, action_dims+1) # +1 for the value output
 
-    # Called with either one element to determine next action, or a batch
+    # Called with either one element to determine next action, or a transitions
     # during optimization. Returns tensor([[left0exp,right0exp]...]).
     def forward(self, x):
         x = F.relu(self.layer1(x))
@@ -42,11 +44,12 @@ class PolicyValueNetwork(nn.Module):
 Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward', 'done'))
 
-class ReplayMemory(object):
+class ReplayMemory:
     """
     Replay memory for storing transitions
     Creates a deque with a maximum length of capacity. Transitions are stored as named tuples.
-    
+    parameters:
+        capacity: Maximum number of transitions to store
     methods:
         push(*args): Save a transition
         sample(batch_size): Sample a batch of transitions
@@ -55,7 +58,6 @@ class ReplayMemory(object):
         self.memory = deque([], maxlen=capacity)
 
     def push(self, *args):
-        """Save a transition"""
         self.memory.append(Transition(*args))
 
     def sample(self, batch_size):
@@ -64,38 +66,76 @@ class ReplayMemory(object):
     def __len__(self):
         return len(self.memory)
 
-class MCTSRLWrapper():
-    def __init__(self, q_network: PolicyValueNetwork, target_q_network: PolicyValueNetwork,
-                 replay_memory: ReplayMemory, gamma: float=0.99, batch_size: int=64, 
-                 lr: float=0.001, tau: float=0.005):
+class MCTSRLWrapper:
+    def __init__(self, width_pixels: int, width_meters: float, q_network: PolicyValueNetwork, target_q_network: PolicyValueNetwork,
+                 gamma: float=0.99, batch_size: int=64, lr: float=0.001, tau: float=0.005,
+                 max_transitions: int=10000):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print("Using device:", self.device)
         
-        self.q_network = q_network.to(self.device) # Q Network which is changed only after full batch is processed
-        self.target_q_network = target_q_network.to(self.device) # Q network which is updated during batch training
-        self.replay_memory = replay_memory # Replay memory for storing transitions
+        self.width_pixels = width_pixels
+        self.width_meters = width_meters
+        self.q_network = q_network.to(self.device) # Q Network which is trained on batches
+        self.target_q_network = target_q_network.to(self.device) # Q network used to generate targets (very slowly updated for stability)
         self.gamma = gamma # Discount factor
         self.batch_size = batch_size # Number of transitions to sample for training
         self.tau = tau # Soft update parameter for target network (target = tau * q_network + (1 - tau) * target_q_network)
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=lr, amsgrad=True) # Adam optimizer for training the Q network
+        self.replay_memory = ReplayMemory(max_transitions) # Replay memory for storing transitions
         
-    def loss(self, batch):
+    def add_transition(self, state, action, next_state, reward, done):
+        """
+        Add a transition to the replay memory using full environment state
+        params: 
+            state: Full state tuple
+            action: Action taken
+            next_state: Next state tuple
+            reward: Reward received
+            done: Whether the episode is done
+        """
+        # Convert states to neural net states
+        nn_state = get_nn_state(state, self.device)
+        nn_next_state = get_nn_state(next_state, self.device)
+        
+        # Convert other components to tensors
+        action = torch.tensor([action], dtype=torch.int64, device=self.device)
+        reward = torch.tensor([reward], dtype=torch.float32, device=self.device)
+        done = torch.tensor([done], dtype=torch.uint8, device=self.device)
+        
+        # Add the transition to the replay memory
+        self.replay_memory.push(nn_state, action, nn_next_state, reward, done)
+        
+        
+    def loss(self, transitions: List[Transition]) -> torch.Tensor:
         """
         Calculate the loss for a batch of transitions
+        params: 
+            transitions: List of transitions
+        returns:
+            loss: Loss for the batch (MSE between target and predicted Q values)
         """
-        # Pull out the components of the batch
-        state_batch, action_batch, next_state_batch, reward_batch, done_batch = batch
+        # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
+        # detailed explanation). This converts batch-array of Transitions
+        # to Transition of batch-arrays.
+        transitions = Transition(*zip(*transitions))
+        
+        # Pull out the components of the batch and concatinate them (concatenate scalar lists and stack tensor lists)
+        state_transitions = torch.stack(transitions.state)
+        action_transitions = torch.cat(transitions.action)
+        next_state_transitions = torch.stack(transitions.next_state)
+        reward_transitions = torch.cat(transitions.reward)
+        done_transitions = torch.cat(transitions.done)
         
         # Get max Q target values of next state from target network (max_a' Q_target(s', a'))
-        max_next_q_value = self.target_q_network(next_state_batch).max(dim=1).values
+        max_next_q_value = self.target_q_network(next_state_transitions).max(dim=1).values
         
-        # Calculate the target (r + γ * max_a' Q_target(s', a'))
-        y_targets = reward_batch + self.gamma * max_next_q_value * (1 - done_batch) # If done, the target is just the reward
+        # Calculate the target (r + γ * max_a' Q_target(s', a')), what we want the Q network to predict
+        y_targets = reward_transitions + self.gamma * max_next_q_value * ~done_transitions # If done, the target is just the reward
         
-        # Get the q_values and reshape to match y_targets
-        q_values = self.q_network(state_batch).gather(1, action_batch)
-        
-        # Calculate the loss
+        # Get the current q_values, pick the values that are from the actions taken and then squeeze the tensor (remove the extra dimension)
+        q_values = self.q_network(state_transitions).gather(1, action_transitions).squeeze()
+
+        # Calculate the loss (difference between the target and the current q_value prediction)
         loss = F.mse_loss(y_targets, q_values)
         
         return loss
@@ -111,25 +151,25 @@ class MCTSRLWrapper():
         # Set the network to training mode
         self.q_network.train()
         
-        # Zero the gradients
+        # Zero the gradients (reset the optimizer)
         self.optimizer.zero_grad()
         
         # Calculate the loss
         loss = self.loss(transitions)
         
-        # Backpropagate the loss
+        # Backpropagate the loss (calculate gradients for each parameter)
         loss.backward()
         
-        # Perform a step of optimization
+        # Perform a step of optimization (update the parameters of the q_network)
         self.optimizer.step()
-        
-        # Soft update of the target network
+
+        # Soft update of the target network (slow changes to make training more stable)
         for target_param, param in zip(self.target_q_network.parameters(), self.q_network.parameters()):
             target_param.data.copy_(self.tau * param.data + (1.0 - self.tau) * target_param.data)
             
 
 # Create state image from car position, OOI corners, car width, car_length and obstacles
-def get_image_based_state(env: ToyMeasurementControl, state: tuple, width_pixels=200, width_meters=50):
+def get_image_based_state(env: ToyMeasurementControl, state: tuple, width_pixels=200, width_meters=50) -> Tuple[np.ndarray, np.ndarray]:
     # Get car collision length and width
     car_width, car_length = env.car.width, env.car.length
     
@@ -194,3 +234,24 @@ def get_image_based_state(env: ToyMeasurementControl, state: tuple, width_pixels
         
     # Return the neural net state and the image
     return nn_car_state, image
+
+def get_nn_state(env: ToyMeasurementControl, state: tuple, device: torch.device) -> torch.Tensor:
+    """
+    Convert full state into image and then combine car state and flattened image into a single tensor
+    params:
+        env: ToyMeasurementControl environment
+        state: Full state tuple
+        device: Device to put the tensor on
+    """
+    nn_car_state, image = get_image_based_state(env, state)
+    
+    nn_state = torch.cat((torch.tensor(nn_car_state, dtype=torch.float32, device=device),
+                          torch.tensor(image.flatten(), dtype=torch.float32, device=device)))
+    
+    return nn_state
+
+def plot_state_image(image, title):
+    plt.imshow(image.T, cmap='gray', origin='lower')
+    plt.colorbar(label='Value')
+    plt.title(title)
+    plt.show()
