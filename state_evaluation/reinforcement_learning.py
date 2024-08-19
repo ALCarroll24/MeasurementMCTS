@@ -67,21 +67,64 @@ class ReplayMemory:
         return len(self.memory)
 
 class MCTSRLWrapper:
-    def __init__(self, width_pixels: int, width_meters: float, q_network: PolicyValueNetwork, target_q_network: PolicyValueNetwork,
+    def __init__(self, model: str, width_pixels: int, width_meters: float, num_actions: int,
                  gamma: float=0.99, batch_size: int=64, lr: float=0.001, tau: float=0.005,
                  max_transitions: int=10000):
+        """
+        Wrapper for MCTS with reinforcement learning on the ToyMeasurementControl environment
+        params:
+            model: Name of the model to load or 'new' to create a new model
+            width_pixels: Width of the image in pixels
+            width_meters: Width of the image in meters
+            num_actions: Number of actions in the action space
+            gamma: Discount factor
+            batch_size: Number of transitions to sample for training
+            lr: Learning rate for the optimizer
+            tau: Soft update parameter for target network
+            max_transitions: Maximum number of transitions to store in replay memory
+        methods:
+            add_transition(state, action, next_state, reward, done): Add a transition to the replay memory
+            inference(state): Get the action probabilities and value of a state
+            save_model(name): Save the model to a file
+            optimize_model(): Optimize the Q network using a batch of transitions from the replay memory, soft update the target Q network
+        """
+        # Check device and use GPU if available
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print("Using device:", self.device)
         
+        # Find observation (nn state) dimensions and output size
+        observation_dims = 3 + width_pixels**2 # NN Car state + num image pixels
+        output_dims = num_actions + 1 # probability of each action being best + value of state
+        
+        # Create the target network which is updated slowly for stability and used to create targets 
+        self.target_q_network = PolicyValueNetwork(observation_dims, output_dims).to(self.device)
+            
+        # If we are making a new model
+        if model == 'new':
+            self.q_network = PolicyValueNetwork(observation_dims, output_dims).to(self.device)
+            
+        # Otherwise check if the model exists by listing the models in the models directory
+        else:
+            try:
+                self.q_network = torch.load(f'models/{model}').to(self.device)
+            except:
+                raise Exception("Model does not exist")
+            
+        # Copy the weights of the q network to the target q network
+        self.target_q_network.load_state_dict(self.q_network.state_dict()) 
+        
+        # Width of the image in pixels and meters for the state image
         self.width_pixels = width_pixels
         self.width_meters = width_meters
-        self.q_network = q_network.to(self.device) # Q Network which is trained on batches
-        self.target_q_network = target_q_network.to(self.device) # Q network used to generate targets (very slowly updated for stability)
+        
+        # Hyperparameters
         self.gamma = gamma # Discount factor
         self.batch_size = batch_size # Number of transitions to sample for training
         self.tau = tau # Soft update parameter for target network (target = tau * q_network + (1 - tau) * target_q_network)
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=lr, amsgrad=True) # Adam optimizer for training the Q network
         self.replay_memory = ReplayMemory(max_transitions) # Replay memory for storing transitions
+        
+        print("Model loaded")
         
     def add_transition(self, state, action, next_state, reward, done):
         """
@@ -105,6 +148,32 @@ class MCTSRLWrapper:
         # Add the transition to the replay memory
         self.replay_memory.push(nn_state, action, nn_next_state, reward, done)
         
+    def inference(self, state: tuple) -> Tuple[np.ndarray, float]:
+        """
+        Get the action probabilities and value of a state
+        params:
+            state: Full state tuple
+        returns:
+            action_probs: Probabilities of each action being the best
+            value: Value of the state
+        """
+        # Convert state to neural net state
+        nn_state = get_nn_state(state, self.device)
+        
+        # Get the action probabilities and value from the q_network
+        with torch.no_grad():
+            self.q_network.eval()
+            action_probs, value = self.q_network(nn_state)
+        
+        return action_probs.cpu().numpy(), value.cpu().item()
+        
+    def save_model(self, name: str):
+        """
+        Save the model to a file
+        params:
+            name: Name of the file to save the model to
+        """
+        torch.save(self.q_network.state_dict(), f'models/{name}')
         
     def loss(self, transitions: List[Transition]) -> torch.Tensor:
         """
@@ -141,6 +210,9 @@ class MCTSRLWrapper:
         return loss
     
     def optimize_model(self):
+        """
+        Optimize the Q network using a batch of transitions from the replay memory, soft update the target Q network
+        """
         # Check if there are enough transitions in the replay memory to optimize
         if len(self.replay_memory) < self.batch_size:
             return
