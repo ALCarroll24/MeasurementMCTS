@@ -52,8 +52,7 @@ class Car:
         # From rearanging: theta = 1/2 * alpha * t^2, we get alpha = 2 * theta / t^2:
         self.max_steering_alpha = np.pi / (quarter_rotation_time**2) / steering_ratio  # Maximum steering angular acceleration in rad/s^2
         self.max_steering_angle = max_steering_wheel_turns * np.pi / steering_ratio  # Maximum steering angle from center in radians
-        print("Max steering alpha: ", self.max_steering_alpha)
-        print("Max steering angle: ", self.max_steering_angle)
+        
     # Vehicle model Matrices
     def get_A_matrix(self, yaw, dt):
         # Maps state space to new state (non-linear by function parameters)
@@ -241,7 +240,7 @@ class Car:
         # Use the update_pure_pursuit method to update the car state based on the lookahead point
         return self.get_action_pure_pursuit(path[lookahead_index], starting_state)
 
-    def get_collision_polygon(self, car_state=None):
+    def get_collision_points(self, car_state=None):
         # If we are calculating the polygon for a different state, use that state
         if car_state is not None:
             position = car_state[0:2]
@@ -260,7 +259,12 @@ class Car:
         # Rotate the points by the yaw
         points = rotate(np.array(points_no_yaw) - position, yaw - np.radians(90)) + position
         
-        return Polygon(points)
+        return points
+    
+    def get_collision_polygon(self, car_state=None):
+        poly = Polygon(self.get_collision_points(car_state))
+        
+        return poly
 
     def draw(self):
         # Return if we didn't get a UI

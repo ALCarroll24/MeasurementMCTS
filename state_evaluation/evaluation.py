@@ -73,6 +73,15 @@ class KDTreeEvaluation:
         # Calculate the maximum possible corner reward based on the min range and min bearing (times 4 for 4 corners)
         self.corner_rew_max = 4 * (self.range_dev**2 * self.max_range + self.bearing_dev**2 * np.pi * self.max_range * self.max_bearing)
 
+    def get_corner_points(self):
+        return self.kd_tree.data[len(self.obstacle_radii):]
+    
+    def get_obstacle_points(self):
+        return self.kd_tree.data[:len(self.obstacle_radii)]
+    
+    def get_obstacle_radii(self):
+        return self.obstacle_radii
+
     # Get nearest points within a radius of a point from kdtree
     def get_nearest_points(self, tree, point, radius):
         # Find all points within the radius of the point (returns points sorted by distance and their indices)

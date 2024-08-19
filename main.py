@@ -3,7 +3,7 @@ from typing import Tuple
 from ui import MatPlotLibUI
 from car import Car
 from ooi import OOI
-from evaluation import KDTreeEvaluation
+from state_evaluation.evaluation import KDTreeEvaluation
 from static_kf import StaticKalmanFilter, measurement_model
 from utils import wrap_angle, min_max_normalize, get_interpolated_polygon_points, rotate_about_point
 from shapely.affinity import rotate
@@ -18,7 +18,7 @@ from time import sleep
 import timeit
 
 class ToyMeasurementControl(Environment):
-    def __init__(self, one_iteration=False, display_evaluation=False, time_evaluation=False, no_flask_server=False):
+    def __init__(self, one_iteration=False, display_evaluation=False, time_evaluation=False, no_flask_server=False, enable_ui=True):
         # Flag for whether to run one iteration for profiling
         self.one_iteration = one_iteration
         if self.one_iteration:
@@ -92,7 +92,10 @@ class ToyMeasurementControl(Environment):
         # Create a plotter object unless we are profiling
         title = f'sim step size={self.simulation_dt}, Explore factor={self.exploration_factor}, Horizon={self.horizon_length}, Learn Iterations={self.learn_iterations}\n' + \
                 f'Evaluation Steps={self.eval_steps}, Evaluation dt={self.eval_dt}, Obstacle rew min={-obs_rew_norm_min}'
-        self.ui = MatPlotLibUI(update_rate=self.ui_update_rate, title=title, single_plot=display_evaluation)
+        if enable_ui:
+            self.ui = MatPlotLibUI(update_rate=self.ui_update_rate, title=title, single_plot=display_evaluation)
+        else:
+            self.ui = None
         self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
         
         # Create a car object
@@ -119,11 +122,11 @@ class ToyMeasurementControl(Environment):
         # if true time difference between evaluations (KDTree vs Full environment step evaluation)
         if time_evaluation:
             start_time = timeit.default_timer()
-            _ = self.evaluate(self.all_actions[0,:], self.get_state(), draw=False)
+            _ = self.evaluate(self.get_state(), draw=False)
             kd_tree_time_taken = timeit.default_timer() - start_time
             print(f'KDTree Evaluation Time: {kd_tree_time_taken} seconds')
             start_time = timeit.default_timer()
-            _ = self.full_evaluate(self.all_actions[0,:], self.get_state(), draw=False)
+            _ = self.full_evaluate(self.all_actions[0,:], self.get_state(), depth=0, draw=False)
             full_time_taken = timeit.default_timer() - start_time
             print(f'Full Evaluation Time: {full_time_taken} seconds')
             times_faster = full_time_taken / kd_tree_time_taken
@@ -154,6 +157,8 @@ class ToyMeasurementControl(Environment):
         
         # Flag for whether goal has been reached
         self.done = False
+        
+        print("Toy Measurement Control Initialized")
 
     @property
     def N(self):
@@ -378,8 +383,8 @@ class ToyMeasurementControl(Environment):
         
         return reward, done
         
-    # Quick state evaluation based on kdtree for quick distance lookup to corners and obstacles
-    def evaluate(self, state, draw=False) -> float:
+    # Get normlized covariance trace for each point in the corners
+    def get_normalized_cov_pt_traces(self, state) -> np.ndarray:
         # Get the diagonals of the covariance matrix for the corners to get trace
         corner_cov_diags = np.diag(state[2])
         
@@ -389,6 +394,13 @@ class ToyMeasurementControl(Environment):
         
         # Normalize the point traces to [0, covariance_trace_init/4] (this is the max trace for a single point)
         norm_point_traces = min_max_normalize(point_traces, 0, self.covariance_trace_init/4)
+        
+        return norm_point_traces
+        
+    # Quick state evaluation based on kdtree for quick distance lookup to corners and obstacles
+    def evaluate(self, state, draw=False) -> float:
+        # Get the normalized covariance trace for each corner
+        norm_point_traces = self.get_normalized_cov_pt_traces(state)
         
         # Evaluate for each action in action space
         prior_reward = np.zeros([self.N], dtype=np.float32)
@@ -464,7 +476,7 @@ class ToyMeasurementControl(Environment):
                     
         # Recuriousely draw the children
         draw_child_states(root)
-        
+                
     
 if __name__ == '__main__':
     # Create parser
