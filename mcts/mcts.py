@@ -8,6 +8,11 @@ from multiprocessing.sharedctypes import Array as mpArray
 import ctypes
 import timeit
 import pickle
+import sys
+
+# Measurement MCTS python package imports
+sys.path.append("..")  # Adds higher directory to python modules path.
+# from state_evaluation.reinforcement_learning import MCTSRLWrapper
 
 class Environment(ABC):
   """
@@ -63,6 +68,8 @@ class MCTSNode:
         state: the state of the node (np.ndarray(shape=(1, N)))
         action: the action that led to this state (int)
         parent: the parent node of this node (MCTSNode)
+        done: whether the episode is done (bool)
+        parallel: whether to run MCTS in parallel (bool)
 
     properties:
         number_visits: get/set the number of visits to this node
@@ -78,12 +85,14 @@ class MCTSNode:
         backup: backpropogate the value estimate up the tree to the root node
     """
     def __init__(self, env: Environment, state: np.ndarray, action: np.ndarray, 
-                 parent: 'MCTSNode'=None, parallel: bool=False):
+                 parent: 'MCTSNode'=None, done: bool=False, parallel: bool=False):
         # Initialize parameters
         self.env = env
+        self.eval = eval
         self.state = state
         self.action = action
         self.parent = parent  # Optional[MCTSNode]
+        self.done = done
         self.parallel = parallel
         self.is_expanded = False
         self.children = {}  # Dict[action, MCTSNode]
@@ -192,7 +201,7 @@ class MCTSNode:
             # If not, Run the simulation and update the child
             else:
                 new_state, reward, done = self.env.step(self.state, action)
-                self.children[action] = MCTSNode(self.env, new_state, action, parent=self, parallel=self.parallel)
+                self.children[action] = MCTSNode(self.env, new_state, action, parent=self, done=done, parallel=self.parallel)
                 self.child_total_value[action] = reward # Replace the value estimate with the environment reward
 
         return self.children[action]
@@ -222,7 +231,7 @@ class DummyNode(object):
         self.child_number_visits = collections.defaultdict(float)
 
 
-def mcts_search(env: Environment, starting_state: np.ndarray, learning_iterations: int):
+def mcts_search(env: Environment, eval, starting_state: np.ndarray, learning_iterations: int):
     """
     Run many iterations of MCTS to build up a tree and get the best action to take
     params:
@@ -236,10 +245,17 @@ def mcts_search(env: Environment, starting_state: np.ndarray, learning_iteration
     """
     root = MCTSNode(env, starting_state, action=None, parent=DummyNode())
     for _ in range(learning_iterations):
-        leaf = root.select_leaf()
-        child_priors, value_estimate = env.evaluate(leaf.state)
-        leaf.expand(child_priors)
-        leaf.backup(value_estimate)
+        leaf = root.select_leaf() # Select with UCB up to the leaf node and do one environment step
+        
+        # Add the transition to the replay buffer for training (except for the root node)
+        if type(leaf.parent) != DummyNode:
+            eval.add_transition(leaf.parent.state, leaf.action, leaf.state, leaf.child_total_value[leaf.action], leaf.done) 
+        child_priors, value_estimate = eval.inference(leaf.state) # Inference the model to get the probability of each action and the value estimate
+        
+        leaf.expand(child_priors) # Expand the leaf node with the child priors
+        leaf.backup(value_estimate) # Backup the value estimate up the tree to the root node
+        
+        eval.optimize_model() # Optimize the model using replay memory which we just added one transition to
         
     return np.argmax(root.child_number_visits), root
 

@@ -17,8 +17,8 @@ from copy import deepcopy
 from time import sleep
 import timeit
 
-class ToyMeasurementControl(Environment):
-    def __init__(self, one_iteration=False, display_evaluation=False, time_evaluation=False, no_flask_server=False, enable_ui=True):
+class MeasurementControlEnvironment(Environment):
+    def __init__(self, notebook=False, one_iteration=False, display_evaluation=False, time_evaluation=False, no_flask_server=False, enable_ui=True):
         # Flag for whether to run one iteration for profiling
         self.one_iteration = one_iteration
         if self.one_iteration:
@@ -34,7 +34,7 @@ class ToyMeasurementControl(Environment):
         self.simulation_dt = 0.3 # time step size for forward simulation search
         
         # MCTS search parameters
-        self.num_processes = 32 # number of processes to use for parallel MCTS search (1 for single threaded)
+        self.num_processes = 1 # number of processes to use for parallel MCTS search (1 for single threaded)
         self.horizon_length = 500 # length of the planning horizon
         self.learn_iterations = 1000 # number of learning iterations for MCTS (one set of: selection, expansion, evaluation, backpropagation)
         self.exploration_factor = 0.3  # exploration factor for MCTS
@@ -93,25 +93,35 @@ class ToyMeasurementControl(Environment):
         title = f'sim step size={self.simulation_dt}, Explore factor={self.exploration_factor}, Horizon={self.horizon_length}, Learn Iterations={self.learn_iterations}\n' + \
                 f'Evaluation Steps={self.eval_steps}, Evaluation dt={self.eval_dt}, Obstacle rew min={-obs_rew_norm_min}'
         if enable_ui:
-            self.ui = MatPlotLibUI(update_rate=self.ui_update_rate, title=title, single_plot=display_evaluation)
+            self.ui = MatPlotLibUI(notebook=notebook, update_rate=self.ui_update_rate, title=title, single_plot=display_evaluation)
         else:
             self.ui = None
         self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
         
         # Create a car object
-        self.car = Car(self.ui, initial_car_state, max_bearing=sensor_max_bearing, max_range=sensor_max_range)
+        self.car = Car(initial_car_state, max_bearing=sensor_max_bearing, max_range=sensor_max_range, ui=self.ui)
         
         # Create an OOI object
-        self.ooi = OOI(self.ui, ooi_ground_truth_corners, car_max_range=sensor_max_range, car_max_bearing=sensor_max_bearing)
+        self.ooi = OOI(ooi_ground_truth_corners, car_max_range=sensor_max_range, car_max_bearing=sensor_max_bearing, ui=self.ui)
         
         # Create a Static Vectorized Kalman Filter object
-        self.skf = StaticKalmanFilter(ooi_noisy_corners, ooi_init_covariance, range_dev=range_dev, min_range=self.min_range, bearing_dev=bearing_dev, min_bearing=self.min_bearing)
+        self.skf = StaticKalmanFilter(ooi_noisy_corners, ooi_init_covariance, range_dev=range_dev, min_range=self.min_range,
+                                      bearing_dev=bearing_dev, min_bearing=self.min_bearing, ui=self.ui)
         
         # Create a KDTree for evaluation TODO: This should be created in each main loop (one real time step)
         self.eval_kd_tree = KDTreeEvaluation([ooi_noisy_corners], num_steps=self.eval_steps, dt=self.eval_dt, max_range=sensor_max_range, 
                                              max_bearing=sensor_max_bearing, obstacle_std_dev=obstacle_std_dev, corner_rew_norm_max=corner_rew_norm_max,
                                              obs_rew_norm_min=obs_rew_norm_min, range_dev=range_dev, bearing_dev=bearing_dev,
                                              min_range=self.min_range, min_bearing=self.min_bearing, ui=self.ui)
+        
+        # Initial random state bounds (when environment is reset)
+        #                                 X,           Y,          v_x,         psi,           delta,       delta_dot
+        self.car_state_bounds = np.array([[10., 90.], [10., 90.], [-10., 10.], [-np.pi, np.pi], [-0.5, 0.5], [-0.5, 0.5]])
+        self.mean_corners_bounds = np.array([[30., 70.], [30., 70.]]) # Mean of corners (x, y) bounds (corners picked around mean)
+        self.length_and_width = np.array([8., 4.]) # Length and width of the OOI
+        self.init_corner_std_dev = 0.5 # Standard deviation of gaussian distribution which will be used to sample corners locations
+        self.rotate_corner_bounds = np.array([0, 2*np.pi]) # Rotation bounds for corners
+        self.trace_init = 64. # Initial trace of covariance matrix
 
         # Get and set OOI collision polygons
         # self.ooi_poly = self.ooi.get_collision_polygon()
@@ -266,14 +276,14 @@ class ToyMeasurementControl(Environment):
             if self.drawing_simulated_state:
                 # Update displays based on clicked node
                 self.car.draw_state(self.last_node_clicked.state[0])
-                self.skf.draw_state(self.last_node_clicked.state[1], self.last_node_clicked.state[2], self.ui)
+                self.skf.draw_state(self.last_node_clicked.state[1], self.last_node_clicked.state[2])
                 self.ooi.draw() # Just draw rectangles same ground truth
                 self.eval_kd_tree.draw_obstacles()
             else:
                 # Update current state displays
                 self.car.draw()
                 self.ooi.draw()
-                self.skf.draw(self.ui)
+                self.skf.draw()
                 self.eval_kd_tree.draw_obstacles()
                 # self.draw_simulated_states(mcts)
                     
@@ -295,6 +305,41 @@ class ToyMeasurementControl(Environment):
             if self.ui.shutdown and self.enable_flask_server:
                 self.flask_server.stop_flask()
                 break
+            
+    def reset(self) -> tuple:
+        """
+        Reset the environment to a random state
+        
+        returns (Tuple[Car, OOI mean corners, Covariance matrix]) the initial state of the environment
+        """
+        
+        # Pick the car state at random within the bounds
+        car_state = np.random.uniform(self.car_state_bounds[:,0], self.car_state_bounds[:,1])
+        
+        # Pick the mean of the corners from the bounds
+        center_mean_corners = np.random.uniform(self.mean_corners_bounds[:,0], self.mean_corners_bounds[:,1])
+        x, y = center_mean_corners
+        
+        # Use the length and width to get the corners of the OOI and sample the corners from a gaussian distribution
+        width, length = self.length_and_width
+        perfect_corner_means = np.array([[x - width/2, y - length/2], # Bottom left corner
+                                         [x + width/2, y - length/2], # Top left corner
+                                         [x + width/2, y + length/2], # Top right corner
+                                         [x - width/2, y + length/2]]) # Bottom right corner
+        
+        # Sample gaussian distributions for each corner around the mean to get initial corner means
+        corner_means = np.random.normal(perfect_corner_means, self.init_corner_std_dev, (4, 2))
+        
+        # Update KD tree with new corners
+        self.eval_kd_tree.create_kd_tree([corner_means])
+        
+        # Create initial covariance using initial trace
+        initial_covariance = np.eye(8) * self.trace_init/8
+        
+        # Return the initial state
+        return (car_state, corner_means.flatten(), initial_covariance, 0)
+        
+        
             
     def get_state(self, horizon=0) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
         '''
@@ -341,18 +386,6 @@ class ToyMeasurementControl(Environment):
         # Return the reward and the new state
         return new_state, reward, done
     
-    def check_done(self, state) -> bool:
-        """
-        Check if the episode is done based on the state.
-        
-        :param state: (np.ndarray) the state of the car and OOI (position(0:2), corner means(2:10), corner covariances(10:74))
-        :return: (bool) whether the episode is done
-        """
-        # Normalize the trace between 0 and 1 (in this case this just divides by initial variance times the dimensions)
-        trace_normalized = min_max_normalize(np.trace(state[2]), 0, self.covariance_trace_init)
-                                             
-        # Check if the trace of the covariance matrix is below the final threshold
-        return trace_normalized < self.final_cov_trace
     
     def get_reward(self, new_cov, car_state, print_rewards=False) -> Tuple[float, bool]:
         """
@@ -383,6 +416,19 @@ class ToyMeasurementControl(Environment):
         
         return reward, done
         
+    def check_done(self, state) -> bool:
+        """
+        Check if the episode is done based on the state.
+        
+        :param state: (np.ndarray) the state of the car and OOI (position(0:2), corner means(2:10), corner covariances(10:74))
+        :return: (bool) whether the episode is done
+        """
+        # Normalize the trace between 0 and 1 (in this case this just divides by initial variance times the dimensions)
+        trace_normalized = min_max_normalize(np.trace(state[2]), 0, self.covariance_trace_init)
+                                             
+        # Check if the trace of the covariance matrix is below the final threshold
+        return trace_normalized < self.final_cov_trace
+    
     # Get normlized covariance trace for each point in the corners
     def get_normalized_cov_pt_traces(self, state) -> np.ndarray:
         # Get the diagonals of the covariance matrix for the corners to get trace
@@ -452,12 +498,29 @@ class ToyMeasurementControl(Environment):
         if draw:  
             # Draw the initial state
             self.car.draw_state(state[0])
-            self.skf.draw_state(state[1], state[2], self.ui)
+            self.skf.draw_state(state[1], state[2])
             self.ooi.draw()
             self.eval_kd_tree.draw_obstacles()
             
             # Create plot for the UI
             self.ui.single_plot()
+    
+    def draw_state(self, state) -> None:
+        """
+        Draw the state on the UI.
+        
+        :param state: (np.ndarray) the state of the car and OOI (position, corner means, corner covariances)
+        """
+        # Draw the car state
+        self.car.draw_state(state[0])
+        
+        # Draw the KF state
+        self.skf.draw_state(state[1], state[2])
+        
+        # Draw the obstacles
+        self.eval_kd_tree.draw_obstacles()
+        
+        self.ui.single_plot()
     
     def draw_simulated_states(self, mcts_tree, radius=0.1, color='y'):
         # Recursively go through tree of simulated states and draw them, width is based on average reward
@@ -491,8 +554,8 @@ if __name__ == '__main__':
     # Parse arguments
     args = parser.parse_args()
     
-    # Create an instance of ToyMeasurementControl using command line arguments
-    tmc = ToyMeasurementControl(one_iteration=args.one_iteration,
+    # Create an instance of MeasurementControlEnvironment using command line arguments
+    tmc = MeasurementControlEnvironment(one_iteration=args.one_iteration,
                                 display_evaluation=args.display_evaluation,
                                 time_evaluation=args.time_evaluation,
                                 no_flask_server=args.no_flask_server)

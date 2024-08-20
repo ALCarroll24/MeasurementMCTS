@@ -8,9 +8,7 @@ from shapely import Polygon
 from copy import deepcopy
 
 class Car:
-    def __init__(self, ui, initial_state, max_range=100., max_bearing=45., max_velocity=10., range_arrow_length=10.0):
-        self.ui = ui
-        
+    def __init__(self, initial_state, max_range=100., max_bearing=45., max_velocity=10., range_arrow_length=10.0, ui=None):
         # Save initial state
         self.state = initial_state
         
@@ -18,7 +16,8 @@ class Car:
         self.max_range = max_range # m
         self.max_bearing = np.radians(max_bearing) # Max sensor fov in radians (converted from degrees)
         self.max_velocity = max_velocity # m/s
-        self.range_arrow_length = range_arrow_length
+        self.range_arrow_length = range_arrow_length # Length of the range arrow which shows the sensor fov
+        self.ui = ui # UI object for plotting
         
         ###### Jeep Grand Cherokee Trailhawk Parameters ######
         ### Car dimension parameters
@@ -267,9 +266,8 @@ class Car:
         return poly
 
     def draw(self):
-        # Return if we didn't get a UI
         if self.ui is None:
-            return
+            raise ValueError('UI object is not set')
         
         # Draw the car as a rectangle in the UI
         self.ui.draw_rectangle(self.state[:2], self.length, self.width, self.state[3])
@@ -287,9 +285,8 @@ class Car:
 
         
     def draw_state(self, state):
-        # Return if we didn't get a UI
         if self.ui is None:
-            return
+            raise ValueError('UI object is not set')
         
         # Draw the car as a rectangle in the UI
         self.ui.draw_rectangle(state[0:2], self.length, self.width, state[3])

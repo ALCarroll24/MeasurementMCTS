@@ -27,6 +27,9 @@ class KDTreeEvaluation:
         self.max_range = max_range # Maximum range of the sensor
         self.max_bearing = np.radians(max_bearing) # Maximum bearing (FOV) of the sensor
         
+        # Obstacle parameters
+        self.obstacle_std_dev = obstacle_std_dev # Standard deviation of the obstacle corners to create radius
+        
         # Output reward range parameters [0, corner_reward_norm_max] and [-obs_rew_norm_min, 0]
         self.corner_rew_norm_max = corner_rew_norm_max # High normalization value to match full environment step rewards
         self.obs_rew_norm_min = obs_rew_norm_min # Amount to scale the obstacle punishment by
@@ -43,6 +46,9 @@ class KDTreeEvaluation:
         # Create a car to use simulation update (state initialization does nothing here)
         self.car = Car(None, np.zeros(6))
         
+        self.create_kd_tree(oois)
+
+    def create_kd_tree(self, oois: np.ndarray):        
         # Create needed vectors
         kd_tree_pts = np.zeros((len(oois) * 5, 2)) # 4 corner points + mean obstacle point rows and (x, y) columns
         obstacle_radii = np.zeros((len(oois), 1)) # Radius of obstacle (based on std deviation)
@@ -50,7 +56,7 @@ class KDTreeEvaluation:
         # First calculate circular obstacles at mean of oois
         for i, ooi in enumerate(oois):
             mean = np.mean(ooi, axis=0) # Calculate mean of ooi corners
-            std_dev = obstacle_std_dev * np.std(ooi, axis=0) # Calculate std deviation of ooi corners scaled by std_devs
+            std_dev = self.obstacle_std_dev * np.std(ooi, axis=0) # Calculate std deviation of ooi corners scaled by std_devs
             
             # Add obstacle mean to points for kd tree (beginning is for obstacles)
             kd_tree_pts[i, :] = mean

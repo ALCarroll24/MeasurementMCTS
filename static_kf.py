@@ -31,12 +31,13 @@ def measurement_model(z, obs_indices, car_pos, car_yaw, min_range=5., min_bearin
     return R
 
 class StaticKalmanFilter:
-    def __init__(self, _s, _P, range_dev=1., min_range=5., bearing_dev=0.5, min_bearing=5.):
+    def __init__(self, _s, _P, range_dev=1., min_range=5., bearing_dev=0.5, min_bearing=5., ui=None):
         # Load noise scaling values and minimum values for measurement model
         self.range_dev = range_dev # range scaling value for measurement model
         self.min_range = min_range # minimum range value (m) for measurement model
         self.bearing_dev = bearing_dev # bearing scaling value for measurement model
         self.min_bearing = min_bearing # minimum bearing value (degrees) for measurement model
+        self.ui = ui # UI object for plotting
 
         # Dimension of state and observation vectors
         self.s_dim = 8
@@ -109,30 +110,36 @@ class StaticKalmanFilter:
             return s_k, P_k
         
     # Draw the mean and covariance on the UI
-    def draw(self, ui):
+    def draw(self):
+        if self.ui is None:
+            raise ValueError('UI object is not set')
+        
         for i in range(0, self.s_dim, 2):
             # Get the scalings and angle of ellipse
             scalings, angle = self.get_ellipse_scaling(self.P_k[i:i+2, i:i+2])
             
             # Draw the mean point and covariance ellipse
-            ui.draw_point(self.s_k[i:i+2], color='g')
-            ui.draw_ellipse(self.s_k[i:i+2], scalings[0], scalings[1], angle=angle, color='b', alpha=0.25, linestyle='-')
+            self.ui.draw_point(self.s_k[i:i+2], color='g')
+            self.ui.draw_ellipse(self.s_k[i:i+2], scalings[0], scalings[1], angle=angle, color='b', alpha=0.25, linestyle='-')
         
         # Draw a polygon between the points
-        ui.draw_polygon(self.s_k.reshape(4, 2), color='r', closed=True, linestyle='-')
+        self.ui.draw_polygon(self.s_k.reshape(4, 2), color='r', closed=True, linestyle='-')
     
     # Draw the state on the UI
-    def draw_state(self, mean, cov, ui):
+    def draw_state(self, mean, cov):
+        if self.ui is None:
+            raise ValueError('UI object is not set')
+        
         for i in range(0, self.s_dim, 2):            
             # Get the scalings and angle of ellipse
             scalings, angle = self.get_ellipse_scaling(cov[i:i+2, i:i+2])
             
             # Draw the mean point and covariance ellipse
-            ui.draw_point(mean[i:i+2], color='g')
-            ui.draw_ellipse(mean[i:i+2], scalings[0], scalings[1], angle=angle, color='b')
+            self.ui.draw_point(mean[i:i+2], color='g')
+            self.ui.draw_ellipse(mean[i:i+2], scalings[0], scalings[1], angle=angle, color='b')
             
         # Draw a polygon between the points
-        ui.draw_polygon(mean.reshape(4, 2), color='r', closed=True, linestyle='-')
+        self.ui.draw_polygon(mean.reshape(4, 2), color='r', closed=True, linestyle='-')
             
     def get_ellipse_scaling(self, cov):
         eigvals, eigvecs = np.linalg.eig(cov)

@@ -1,10 +1,8 @@
 import math
 import random
-import matplotlib
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import namedtuple, deque
-from itertools import count
 import sys
 import timeit
 from typing import List, Tuple
@@ -16,7 +14,7 @@ import torch.nn.functional as F
 
 # MCTS code imports
 sys.path.append("..")  # Adds higher directory to python modules path.
-from main import ToyMeasurementControl
+from main import MeasurementControlEnvironment
 from utils import rotate_about_point
 
 class PolicyValueNetwork(nn.Module):
@@ -24,13 +22,13 @@ class PolicyValueNetwork(nn.Module):
     Neural net combining policy and value network (state -> (policy, value))
     params:
         state_dims: Number of dimensions in the state space
-        action_dims: Number of dimensions in the action space
+        action_space_len: Number of dimensions in the action space
     """
-    def __init__(self, state_dims, action_dims):
+    def __init__(self, state_dims, action_space_len):
         super(PolicyValueNetwork, self).__init__()
         self.layer1 = nn.Linear(state_dims, 128)
         self.layer2 = nn.Linear(128, 128)
-        self.layer3 = nn.Linear(128, action_dims+1) # +1 for the value output
+        self.layer3 = nn.Linear(128, action_space_len+1) # +1 for the value output
 
     # Called with either one element to determine next action, or a transitions
     # during optimization. Returns tensor([[left0exp,right0exp]...]).
@@ -67,26 +65,30 @@ class ReplayMemory:
         return len(self.memory)
 
 class MCTSRLWrapper:
-    def __init__(self, model: str, width_pixels: int, width_meters: float, num_actions: int,
-                 gamma: float=0.99, batch_size: int=64, lr: float=0.001, tau: float=0.005,
+    def __init__(self, env: MeasurementControlEnvironment, model: str, num_actions: int, width_pixels: int=200, 
+                 width_meters: float=50, gamma: float=0.99, batch_size: int=64, lr: float=0.001, tau: float=0.005,
                  max_transitions: int=10000):
         """
-        Wrapper for MCTS with reinforcement learning on the ToyMeasurementControl environment
+        Wrapper for MCTS with reinforcement learning on the Measurement Control environment
+        
         params:
+            env: Measurement Control environment
             model: Name of the model to load or 'new' to create a new model
+            num_actions: Number of actions in the action space
             width_pixels: Width of the image in pixels
             width_meters: Width of the image in meters
-            num_actions: Number of actions in the action space
             gamma: Discount factor
             batch_size: Number of transitions to sample for training
             lr: Learning rate for the optimizer
             tau: Soft update parameter for target network
             max_transitions: Maximum number of transitions to store in replay memory
+            
         methods:
             add_transition(state, action, next_state, reward, done): Add a transition to the replay memory
             inference(state): Get the action probabilities and value of a state
             save_model(name): Save the model to a file
             optimize_model(): Optimize the Q network using a batch of transitions from the replay memory, soft update the target Q network
+            
         """
         # Check device and use GPU if available
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -94,14 +96,13 @@ class MCTSRLWrapper:
         
         # Find observation (nn state) dimensions and output size
         observation_dims = 3 + width_pixels**2 # NN Car state + num image pixels
-        output_dims = num_actions + 1 # probability of each action being best + value of state
         
         # Create the target network which is updated slowly for stability and used to create targets 
-        self.target_q_network = PolicyValueNetwork(observation_dims, output_dims).to(self.device)
+        self.target_q_network = PolicyValueNetwork(observation_dims, num_actions).to(self.device)
             
         # If we are making a new model
         if model == 'new':
-            self.q_network = PolicyValueNetwork(observation_dims, output_dims).to(self.device)
+            self.q_network = PolicyValueNetwork(observation_dims, num_actions).to(self.device)
             
         # Otherwise check if the model exists by listing the models in the models directory
         else:
@@ -118,6 +119,7 @@ class MCTSRLWrapper:
         self.width_meters = width_meters
         
         # Hyperparameters
+        self.env = env # Measurement Control environment
         self.gamma = gamma # Discount factor
         self.batch_size = batch_size # Number of transitions to sample for training
         self.tau = tau # Soft update parameter for target network (target = tau * q_network + (1 - tau) * target_q_network)
@@ -137,8 +139,8 @@ class MCTSRLWrapper:
             done: Whether the episode is done
         """
         # Convert states to neural net states
-        nn_state = get_nn_state(state, self.device)
-        nn_next_state = get_nn_state(next_state, self.device)
+        nn_state = get_nn_state(self.env, state, self.device)
+        nn_next_state = get_nn_state(self.env, next_state, self.device)
         
         # Convert other components to tensors
         action = torch.tensor([action], dtype=torch.int64, device=self.device)
@@ -158,14 +160,23 @@ class MCTSRLWrapper:
             value: Value of the state
         """
         # Convert state to neural net state
-        nn_state = get_nn_state(state, self.device)
+        nn_state = get_nn_state(self.env, state, self.device)
         
         # Get the action probabilities and value from the q_network
         with torch.no_grad():
             self.q_network.eval()
-            action_probs, value = self.q_network(nn_state)
+            inference = self.q_network(nn_state)
         
-        return action_probs.cpu().numpy(), value.cpu().item()
+        # Put the inference on the CPU and convert to numpy
+        inference_np = inference.cpu().numpy()
+        print(f'Inference shape: {inference_np.shape}')
+        
+        # Split the inference into action probabilities and value
+        action_probs, value = inference_np[:-1], inference_np[-1]
+        print(f'Action probs shape: {action_probs.shape}')
+        print(f'Value shape: {value.shape}')
+        
+        return action_probs, value
         
     def save_model(self, name: str):
         """
@@ -241,7 +252,7 @@ class MCTSRLWrapper:
             
 
 # Create state image from car position, OOI corners, car width, car_length and obstacles
-def get_image_based_state(env: ToyMeasurementControl, state: tuple, width_pixels=200, width_meters=50) -> Tuple[np.ndarray, np.ndarray]:
+def get_image_based_state(env: MeasurementControlEnvironment, state: tuple, width_pixels=200, width_meters=50) -> Tuple[np.ndarray, np.ndarray]:
     # Get car collision length and width
     car_width, car_length = env.car.width, env.car.length
     
@@ -307,11 +318,11 @@ def get_image_based_state(env: ToyMeasurementControl, state: tuple, width_pixels
     # Return the neural net state and the image
     return nn_car_state, image
 
-def get_nn_state(env: ToyMeasurementControl, state: tuple, device: torch.device) -> torch.Tensor:
+def get_nn_state(env: MeasurementControlEnvironment, state: tuple, device: torch.device) -> torch.Tensor:
     """
     Convert full state into image and then combine car state and flattened image into a single tensor
     params:
-        env: ToyMeasurementControl environment
+        env: ToyMeasurement Control environment
         state: Full state tuple
         device: Device to put the tensor on
     """

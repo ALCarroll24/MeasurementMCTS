@@ -6,12 +6,15 @@ import threading
 import webbrowser
 
 class MatPlotLibUI:
-    def __init__(self, update_rate=10, figsize=(8, 8), single_plot=False, async_loop=False, title=None):
-        # Initialize the Matplotlib figure and axes
-        self.fig, self.ax = plt.subplots(figsize=figsize)
-        # self.fig.canvas.mpl_connect('button_press_event', self.on_click)
-        self.fig.canvas.mpl_connect('close_event', self.handle_close)
-        self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
+    def __init__(self, notebook=False, update_rate=10, figsize=(8, 8), single_plot=False, title=None):
+        self.notebook = notebook
+        self.figsize = figsize
+        if not self.notebook:
+            # Initialize the Matplotlib figure and axes
+            self.fig, self.ax = plt.subplots(figsize=self.figsize)
+            # self.fig.canvas.mpl_connect('button_press_event', self.on_click)
+            self.fig.canvas.mpl_connect('close_event', self.handle_close)
+            self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
         
         # Store the keys being pressed for later retrieval
         self.keys = []
@@ -22,16 +25,12 @@ class MatPlotLibUI:
         # Text is an artist which we can also save for later update
         self.artists = []
         
-        # Flag for stopping the plotting loop
+        # Flag for stopping the plotting loop and title
         self.shutdown = False
-        
-        # If title is not none, set the title of the plot
-        if title is not None:
-            self.title = title
-            self.ax.set_title(title)
+        self.title = title
         
         # If single_plot is True, don't create buttons or setup for looping
-        if not single_plot:
+        if not single_plot and not self.notebook:
             # Create Buttons
             play_button_ax = self.fig.add_axes([0.3, 0.94, 0.2, 0.03])  # Adjust as necessary
             self.play_button = Button(play_button_ax, 'Play/Pause', color='lightgoldenrodyellow', hovercolor='0.975')
@@ -50,16 +49,6 @@ class MatPlotLibUI:
             # Set the update rate and period
             self.rate = update_rate
             self.period = 1.0 / update_rate
-            
-            # THIS DOESN'T WORK (matplotlib doesn't like multithreading)
-            # Spawn a thread to update the plot asynchronously
-            # self.thread = threading.Thread(target=self.async_loop)
-            # self.thread.start()
-            
-            
-            # If async_loop is True, start the asynchronous plotting loop
-            if async_loop:
-                self.start_async_loop()
         
     def single_plot(self):
         # Update the plot
@@ -67,16 +56,6 @@ class MatPlotLibUI:
         
         # Create a single plot
         plt.show(block=True)
-
-    # Runs a loop to update the plot asynchronously
-    def start_async_loop(self):
-        while not self.shutdown:
-            # Update the plot every 1/rate seconds
-            # self.draw_rectangle((50, 50), 20, 20, np.radians(45))
-            self.draw_ellipse((50, 50), 20, 10, np.radians(45))
-            self.update_display()
-            plt.draw()
-            # plt.pause(self.period)
             
     def update(self):
         # Update the plot
@@ -105,7 +84,6 @@ class MatPlotLibUI:
         rect = patches.Rectangle(bottom_left, width, length, linewidth=1, edgecolor=color, facecolor='none', rotation_point='center')
         rect.set_angle(np.degrees(angle))
         
-        self.ax.add_patch(rect)
         self.patches.append(rect)
         
     def draw_circle(self, center, radius, color='r'):
@@ -116,7 +94,7 @@ class MatPlotLibUI:
         """
         # Create a circle and add it to the plot
         circle = patches.Circle(center, radius, linewidth=1, edgecolor=color, facecolor='none')
-        self.ax.add_patch(circle)
+
         self.patches.append(circle)
         
     def draw_ellipse(self, center, width, length, angle=0, color='r', alpha=1.0, linestyle='-', linewidth=1):
@@ -131,7 +109,6 @@ class MatPlotLibUI:
         ellipse = patches.Ellipse(center, width, length, edgecolor=color, facecolor='none', linestyle=linestyle, linewidth=linewidth, alpha=alpha)
         ellipse.set_angle(np.degrees(angle))
         
-        self.ax.add_patch(ellipse)
         self.patches.append(ellipse)
         
     def draw_point(self, point, color='r', radius=0.5):
@@ -142,7 +119,7 @@ class MatPlotLibUI:
         """
         # Create a point and add it to the plot
         point = patches.Circle(point, radius, linewidth=1, edgecolor=color, facecolor=color)
-        self.ax.add_patch(point)
+
         self.patches.append(point)
         
     def draw_arrow(self, start, end, color='b', width=1):
@@ -153,7 +130,7 @@ class MatPlotLibUI:
         """
         # Create an arrow and add it to the plot
         arrow = patches.Arrow(start[0], start[1], end[0] - start[0], end[1] - start[1], width=width, color=color)
-        self.ax.add_patch(arrow)
+
         self.patches.append(arrow)
         
     def draw_polygon(self, points, color='b', linestyle='--', linewidth=1, closed=True, alpha=1.0):
@@ -181,6 +158,9 @@ class MatPlotLibUI:
         """
         Refresh the display with new positions and orientations.
         """
+        if self.notebook:
+            self.fig, self.ax = plt.subplots(figsize=self.figsize)
+        
         # Clear the current axes
         self.ax.clear()
         
@@ -202,7 +182,6 @@ class MatPlotLibUI:
             
         # Redraw the text (or other artist objects)
         for artist in self.artists:
-            print(artist)
             self.ax.add_artist(artist)
                     
         # Remove rectangles from the list
@@ -241,9 +220,4 @@ class MatPlotLibUI:
             
         # print(f"Key pressed: {keys}")
         self.keys = keys
-
-if __name__ == '__main__':
-    # Create an instance of the MatPlotLibUI class
-    ui = MatPlotLibUI()
-    ui.start_async_loop()
 

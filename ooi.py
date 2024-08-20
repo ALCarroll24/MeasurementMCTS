@@ -5,15 +5,14 @@ from typing import Union
 from scipy.spatial import KDTree
 
 class OOI:
-    def __init__(self, ui, corner_locations, std_dev=0.5,
-                 car_max_range=20.0, car_max_bearing=45.0):
+    def __init__(self, corner_locations, std_dev=0.5, car_max_range=20.0, 
+                 car_max_bearing=45.0, ui=None):
         self.mean = np.mean(corner_locations, axis=0)
         self.corners = corner_locations
-        self.ui = ui
         self.std_dev = std_dev
-        
         self.max_range = car_max_range # meters
         self.max_bearing = np.radians(car_max_bearing) # radians from degrees
+        self.ui = ui
         
         # Calculate the collision polygon
         self.collision_polygon = self.get_collision_polygon()
@@ -31,6 +30,9 @@ class OOI:
         return Polygon(self.corners)
         
     def draw(self):
+        if self.ui is None:
+            raise ValueError('UI object is not set')
+        
         # Close rectangle and draw it
         self.ui.draw_polygon(self.corners, color='r', closed=True, alpha=0.5)
         
@@ -76,6 +78,9 @@ class OOI:
         observable_corners = corners[observable_corner_idx == True]
         
         if draw:
+            if self.ui is None:
+                raise ValueError('UI object is not set')
+        
             # Draw observable corners
             for corner in observable_corners:
                 self.ui.draw_circle(corner, 0.6, color='g')
@@ -91,6 +96,9 @@ class OOI:
         noisy_observable_corners = observable_corners + np.random.normal(mean, self.std_dev, observable_corners.shape)
         
         if draw:
+            if self.ui is None:
+                raise ValueError('UI object is not set')
+            
             # Draw noisy observable corners
             for corner in noisy_observable_corners:
                 self.ui.draw_circle(corner, 0.6, color='g')
@@ -143,6 +151,9 @@ class OOI:
             observable_indeces = np.array([min_idx, observable_neighbor_idx]).sort()
             
             if draw:
+                if self.ui is None:
+                    raise ValueError('UI object is not set')
+                
                 # Draw observable corners
                 for corner in observable_corners:
                     self.ui.draw_circle(corner, 0.6, color='g')
