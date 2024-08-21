@@ -11,36 +11,93 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+from torch.amp import GradScaler, autocast
 
 # MCTS code imports
 sys.path.append("..")  # Adds higher directory to python modules path.
 from main import MeasurementControlEnvironment
 from utils import rotate_about_point
 
+# Only fully connected layers (untested but not good for image based state)
+# class PolicyValueNetwork(nn.Module):
+#     """
+#     Neural net combining policy and value network (state -> (policy, value))
+#     params:
+#         state_dims: Number of dimensions in the state space
+#         action_space_len: Number of dimensions in the action space
+#     """
+#     def __init__(self, state_dims, action_space_len):
+#         super(PolicyValueNetwork, self).__init__()
+#         self.layer1 = nn.Linear(state_dims, 128)
+#         self.layer2 = nn.Linear(128, 128)
+#         self.layer3 = nn.Linear(128, action_space_len+1) # +1 for the value output
+
+#     # Called with either one element to determine next action, or a transitions
+#     # during optimization. Returns tensor([[left0exp,right0exp]...]).
+#     def forward(self, x):
+#         x = F.relu(self.layer1(x))
+#         x = F.relu(self.layer2(x))
+#         return self.layer3(x)
+
 class PolicyValueNetwork(nn.Module):
     """
     Neural net combining policy and value network (state -> (policy, value))
     params:
-        state_dims: Number of dimensions in the state space
+        vector_state_size: Number of dimensions in the vector state space
+        image_state_size: Dimensions of the image state space (H, W)
         action_space_len: Number of dimensions in the action space
     """
-    def __init__(self, state_dims, action_space_len):
+    def __init__(self, vector_state_size, image_state_size, action_space_len):
         super(PolicyValueNetwork, self).__init__()
-        self.layer1 = nn.Linear(state_dims, 128)
-        self.layer2 = nn.Linear(128, 128)
-        self.layer3 = nn.Linear(128, action_space_len+1) # +1 for the value output
+        
+        # Convolutional layers for image state processing
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=5, stride=1, padding=2)
+        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1)
+        
+        # Compute the size of the flattened feature map after convolutions
+        conv_output_size = 64 * (image_state_size[0] // 4) * (image_state_size[1] // 4)
+        
+        # Fully connected layers for vector state processing
+        self.fc_vector = nn.Linear(vector_state_size, 128)
+        
+        # Fully connected layers for combined feature processing
+        self.fc_combined = nn.Linear(128 + conv_output_size, 256)
+        
+        # Separate heads for policy and value output
+        self.policy_head = nn.Linear(256, action_space_len)
+        self.value_head = nn.Linear(256, 1)
+    
+    def forward(self, vector_state, image_state):
+        print(f'Image state shape: {image_state.shape}')
+        # Process the image state through convolutional layers
+        x_img = F.relu(self.conv1(image_state))
+        x_img = F.max_pool2d(x_img, 2)
+        x_img = F.relu(self.conv2(x_img))
+        x_img = F.max_pool2d(x_img, 2)
+        
+        # Flatten the feature map
+        x_img = x_img.view(x_img.size(0), -1)
+        
+        # Process the vector state through a fully connected layer
+        x_vec = F.relu(self.fc_vector(vector_state))
+        
+        # Combine the features from both states
+        x = torch.cat((x_vec, x_img), dim=1)
+        
+        # Further processing through fully connected layers
+        x = F.relu(self.fc_combined(x))
+        
+        # Separate the outputs into policy and value
+        policy = self.policy_head(x)
+        value = self.value_head(x)
+        
+        return policy, value
 
-    # Called with either one element to determine next action, or a transitions
-    # during optimization. Returns tensor([[left0exp,right0exp]...]).
-    def forward(self, x):
-        x = F.relu(self.layer1(x))
-        x = F.relu(self.layer2(x))
-        return self.layer3(x)
 
 
-# Named tuple for transitions
+# Named tuple for transitions with separate vector and image states
 Transition = namedtuple('Transition',
-                        ('state', 'action', 'next_state', 'reward', 'done'))
+                        ('vector_state', 'image_state', 'action', 'next_vector_state', 'next_image_state', 'reward', 'done'))
 
 class ReplayMemory:
     """
@@ -94,15 +151,18 @@ class MCTSRLWrapper:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print("Using device:", self.device)
         
-        # Find observation (nn state) dimensions and output size
-        observation_dims = 3 + width_pixels**2 # NN Car state + num image pixels
+        # Find the image representation of the state's dimensions using the width of the image
+        image_state_dims = [width_pixels, width_pixels] # Image dimensions
+        
+        # The states not represented in the image are the car's velocity, steering angle and steering angle rate
+        vector_state_dims = 3 # [vx, delta, delta_dot]
         
         # Create the target network which is updated slowly for stability and used to create targets 
-        self.target_q_network = PolicyValueNetwork(observation_dims, num_actions).to(self.device)
+        self.target_q_network = PolicyValueNetwork(vector_state_dims, image_state_dims, num_actions).to(self.device)
             
         # If we are making a new model
         if model == 'new':
-            self.q_network = PolicyValueNetwork(observation_dims, num_actions).to(self.device)
+            self.q_network = PolicyValueNetwork(vector_state_dims, image_state_dims, num_actions).to(self.device)
             
         # Otherwise check if the model exists by listing the models in the models directory
         else:
@@ -114,6 +174,7 @@ class MCTSRLWrapper:
         # Copy the weights of the q network to the target q network
         self.target_q_network.load_state_dict(self.q_network.state_dict()) 
         
+        
         # Width of the image in pixels and meters for the state image
         self.width_pixels = width_pixels
         self.width_meters = width_meters
@@ -123,8 +184,13 @@ class MCTSRLWrapper:
         self.gamma = gamma # Discount factor
         self.batch_size = batch_size # Number of transitions to sample for training
         self.tau = tau # Soft update parameter for target network (target = tau * q_network + (1 - tau) * target_q_network)
+
+        # Optimizer and replay memory
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=lr, amsgrad=True) # Adam optimizer for training the Q network
         self.replay_memory = ReplayMemory(max_transitions) # Replay memory for storing transitions
+        
+        # Create a Gradient Scalar object which allows for mixed precision training (smaller or bigger numbers as needed :)
+        self.scalar = GradScaler()
         
         print("Model loaded")
         
@@ -139,16 +205,19 @@ class MCTSRLWrapper:
             done: Whether the episode is done
         """
         # Convert states to neural net states
-        nn_state = get_nn_state(self.env, state, self.device)
-        nn_next_state = get_nn_state(self.env, next_state, self.device)
+        car_state, image_state = self.get_nn_state(state)
+        next_car_state, next_image_state = self.get_nn_state(next_state)
+        print(f'Add transition, image state shape: {image_state.shape}')
+        # Find the index of this action in the action space using numpy
+        action_index = np.where(np.all(action == self.env.all_actions, axis=1))[0][0]
         
         # Convert other components to tensors
-        action = torch.tensor([action], dtype=torch.int64, device=self.device)
+        action_index = torch.tensor([action_index], dtype=torch.int64, device=self.device)
         reward = torch.tensor([reward], dtype=torch.float32, device=self.device)
         done = torch.tensor([done], dtype=torch.uint8, device=self.device)
         
         # Add the transition to the replay memory
-        self.replay_memory.push(nn_state, action, nn_next_state, reward, done)
+        self.replay_memory.push(car_state, image_state, action_index, next_car_state, next_image_state, reward, done)
         
     def inference(self, state: tuple) -> Tuple[np.ndarray, float]:
         """
@@ -160,12 +229,16 @@ class MCTSRLWrapper:
             value: Value of the state
         """
         # Convert state to neural net state
-        nn_state = get_nn_state(self.env, state, self.device)
+        nn_state = self.get_nn_state(state)
         
-        # Get the action probabilities and value from the q_network
+        # For inferencing we disable gradient calculations since they aren't needed for speed
         with torch.no_grad():
             self.q_network.eval()
-            inference = self.q_network(nn_state)
+            
+            # When inferencing use autocast for mixed precision training
+            with autocast(device_type=self.device.type):
+                # Get the action probabilities and value from the q_network
+                inference = self.q_network(nn_state)
         
         # Put the inference on the CPU and convert to numpy
         inference_np = inference.cpu().numpy()
@@ -200,20 +273,24 @@ class MCTSRLWrapper:
         transitions = Transition(*zip(*transitions))
         
         # Pull out the components of the batch and concatinate them (concatenate scalar lists and stack tensor lists)
-        state_transitions = torch.stack(transitions.state)
+        print(f'Image state size before stack: {transitions.image_state[0].shape}')
+        vector_state_transitions = torch.stack(transitions.vector_state)
+        image_state_transitions = torch.stack(transitions.image_state)
         action_transitions = torch.cat(transitions.action)
-        next_state_transitions = torch.stack(transitions.next_state)
+        next_vector_state_transitions = torch.stack(transitions.next_vector_state)
+        next_image_state_transitions = torch.stack(transitions.next_image_state)
         reward_transitions = torch.cat(transitions.reward)
         done_transitions = torch.cat(transitions.done)
+        print(f'Entire image state shape: {image_state_transitions.shape}')
         
         # Get max Q target values of next state from target network (max_a' Q_target(s', a'))
-        max_next_q_value = self.target_q_network(next_state_transitions).max(dim=1).values
+        max_next_q_value = self.target_q_network(next_vector_state_transitions, next_image_state_transitions)[0].max(dim=1).values
         
         # Calculate the target (r + γ * max_a' Q_target(s', a')), what we want the Q network to predict
         y_targets = reward_transitions + self.gamma * max_next_q_value * ~done_transitions # If done, the target is just the reward
         
         # Get the current q_values, pick the values that are from the actions taken and then squeeze the tensor (remove the extra dimension)
-        q_values = self.q_network(state_transitions).gather(1, action_transitions).squeeze()
+        q_values = self.q_network(vector_state_transitions, image_state_transitions)[0].gather(1, action_transitions).squeeze()
 
         # Calculate the loss (difference between the target and the current q_value prediction)
         loss = F.mse_loss(y_targets, q_values)
@@ -237,18 +314,39 @@ class MCTSRLWrapper:
         # Zero the gradients (reset the optimizer)
         self.optimizer.zero_grad()
         
-        # Calculate the loss
-        loss = self.loss(transitions)
+        # Perform the loss calculation with autocast (Allows for mixed precision training)
+        with autocast(device_type=self.device.type):
+            # Calculate the loss
+            loss = self.loss(transitions)
         
-        # Backpropagate the loss (calculate gradients for each parameter)
-        loss.backward()
+        # Backpropagate the loss (scalar is used to scale the gradients in the calculation for mixed precision training)
+        self.scalar.scale(loss).backward()
         
         # Perform a step of optimization (update the parameters of the q_network)
-        self.optimizer.step()
+        self.scalar.step(self.optimizer)
+        
+        # Update the scaler for the next iteration
+        self.scalar.update()
 
         # Soft update of the target network (slow changes to make training more stable)
         for target_param, param in zip(self.target_q_network.parameters(), self.q_network.parameters()):
             target_param.data.copy_(self.tau * param.data + (1.0 - self.tau) * target_param.data)
+            
+    def get_nn_state(self, state: tuple) -> torch.Tensor:
+        """
+        Convert full state into image and then combine car state and flattened image into a single tensor
+        params:
+            env: ToyMeasurement Control environment
+            state: Full state tuple
+            device: Device to put the tensor on
+        """
+        non_image_car_state, image = get_image_based_state(self.env, state)
+        
+        nn_car_state = torch.tensor(non_image_car_state, dtype=torch.float32, device=self.device)
+        nn_image_state = torch.tensor(image, dtype=torch.float32, device=self.device).unsqueeze(0) # Add a channel dimension
+        print(f'after unsqueeze: {nn_image_state.shape}')
+        
+        return nn_car_state, nn_image_state
             
 
 # Create state image from car position, OOI corners, car width, car_length and obstacles
@@ -268,7 +366,7 @@ def get_image_based_state(env: MeasurementControlEnvironment, state: tuple, widt
     
     # Since image is body frame representation of car, obstacles and OOIs. The neural net only needs [vx, delta, delta_dot] as input
     # These are the components of the state which will determine how actions effect the car state, the rest of the state is used to generate the image
-    nn_car_state = car_state[[2, 4, 5]]
+    non_image_car_state = car_state[[2, 4, 5]]
     
     # Make the image
     image = np.zeros((width_pixels, width_pixels), dtype=np.float32)
@@ -316,22 +414,7 @@ def get_image_based_state(env: MeasurementControlEnvironment, state: tuple, widt
     image[in_bounds_corner_pixels[:, 0], in_bounds_corner_pixels[:, 1]] = pt_traces[in_bounds_corners]
         
     # Return the neural net state and the image
-    return nn_car_state, image
-
-def get_nn_state(env: MeasurementControlEnvironment, state: tuple, device: torch.device) -> torch.Tensor:
-    """
-    Convert full state into image and then combine car state and flattened image into a single tensor
-    params:
-        env: ToyMeasurement Control environment
-        state: Full state tuple
-        device: Device to put the tensor on
-    """
-    nn_car_state, image = get_image_based_state(env, state)
-    
-    nn_state = torch.cat((torch.tensor(nn_car_state, dtype=torch.float32, device=device),
-                          torch.tensor(image.flatten(), dtype=torch.float32, device=device)))
-    
-    return nn_state
+    return non_image_car_state, image
 
 def plot_state_image(image, title):
     plt.imshow(image.T, cmap='gray', origin='lower')

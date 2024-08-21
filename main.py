@@ -347,7 +347,7 @@ class MeasurementControlEnvironment(Environment):
         '''
         return self.car.get_state(), self.skf.get_mean(), self.skf.get_covariance(), horizon
     
-    def step(self, state, action_index, dt=None) -> Tuple[float, np.ndarray]:
+    def step(self, state, action, dt=None) -> Tuple[float, np.ndarray]:
         """
         Step the environment by one time step. The action is applied to the car, and the state is observed by the OOI.
         The observation is then passed to the KF for update.
@@ -362,9 +362,6 @@ class MeasurementControlEnvironment(Environment):
         
         # Pull out the state elements
         car_state, corner_means, corner_cov, horizon = state
-        
-        # Convert action index into action using the action space
-        action = self.all_actions[action_index]
         
         # Increment the horizon
         horizon += 1
