@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 from typing import Tuple
 from ui import MatPlotLibUI
 from car import Car
@@ -16,6 +17,8 @@ import argparse
 from copy import deepcopy
 from time import sleep
 import timeit
+from matplotlib.animation import FuncAnimation
+from IPython.display import display, HTML
 
 class MeasurementControlEnvironment(Environment):
     def __init__(self, notebook=False, one_iteration=False, display_evaluation=False, time_evaluation=False, no_flask_server=False, enable_ui=True):
@@ -52,7 +55,7 @@ class MeasurementControlEnvironment(Environment):
         self.all_actions = np.concatenate((self.all_actions[zero_action_index:], self.all_actions[:zero_action_index]))
         
         # Simulated car and attached sensor parameters
-        initial_car_state = np.array([50.0, 30.0, 10., np.radians(90), 0.0, 0.0])
+        initial_car_state = np.array([30.0, 20.0, 10., np.radians(45), 0.0, 0.0])
         # [X (m), Y (m), v_x (m/s), psi (rad), delta (rad), delta_dot (rad/s)] (x pos, y pos, longitudinal velocity, yaw, steering angle, steering angle rate)
         self.min_range = 5. # minimum range for sensor model
         sensor_max_range = 40. # meters
@@ -224,17 +227,14 @@ class MeasurementControlEnvironment(Environment):
                 if self.num_processes == 1:
                     # Single threaded MCTS search
                     start_time = timeit.default_timer()
-                    action_index, root_node = mcts_search(self, self.get_state(), self.learn_iterations)
+                    action_vector, root_node = mcts_search(self, self.get_state(), self.learn_iterations)
                     print(f'Single Threaded MCTS Time: {timeit.default_timer() - start_time}')
                 else:
                     # Parallel MCTS search
                     start_time = timeit.default_timer()
-                    action_index, root_node = parallel_mcts_search(self, self.get_state(), self.learn_iterations,
+                    action_vector, root_node = parallel_mcts_search(self, self.get_state(), self.learn_iterations,
                                                                    num_processes=self.num_processes)
                     print(f'Parallel MCTS Time: {timeit.default_timer() - start_time}')
-                
-                # Get the best action from the MCTS tree
-                action_vector = self.all_actions[action_index]
                 
                 # Get the next state by looking through tree based on action    
                 # next_state = list(mcts.root.children[hash_action(action_vector)].children.values())[0].state
@@ -256,7 +256,7 @@ class MeasurementControlEnvironment(Environment):
             else:
                 # Only render the MCTS tree if the UI was not paused before the last iteration so that the tree is not rendered multiple times
                 if not self.ui_was_paused:
-                    render_pyvis(root_node)
+                    render_pyvis(root_node, self.all_actions)
                     self.ui_was_paused = True
                     
                 # Check if a node has been clicked
@@ -502,7 +502,7 @@ class MeasurementControlEnvironment(Environment):
             # Create plot for the UI
             self.ui.single_plot()
     
-    def draw_state(self, state) -> None:
+    def draw_state(self, state, plot=True) -> None:
         """
         Draw the state on the UI.
         
@@ -517,7 +517,8 @@ class MeasurementControlEnvironment(Environment):
         # Draw the obstacles
         self.eval_kd_tree.draw_obstacles()
         
-        self.ui.single_plot()
+        if plot:
+            self.ui.single_plot()
     
     def draw_simulated_states(self, mcts_tree, radius=0.1, color='y'):
         # Recursively go through tree of simulated states and draw them, width is based on average reward
@@ -536,7 +537,47 @@ class MeasurementControlEnvironment(Environment):
                     
         # Recuriousely draw the children
         draw_child_states(root)
+    
+    def draw_action_set(self, state, action_set):
+        """
+        Use matplotlib animate to create a video with the normal state display over time with actions
+        params: state - initial state of the environment
+                action_set - list of actions to take in the environment
+        """
+        # Function called by matplotlib animate to get a frame of the video
+        def animate(i):
+            # Use the state and axis from the parent function
+            nonlocal state
+            nonlocal ax
+            
+            # Clear all existing patches from the axis
+            for patch in ax.patches:
+                patch.remove()
+            
+            # Get the action
+            action = action_set[i]
+            
+            # Update the state
+            state, reward, done = self.step(state, action)
+            
+            # Draw the state create artists in UI class
+            self.draw_state(state, plot=False)
+            
+            artists = self.ui.get_artists()
+            
+            for artist in artists:
+                ax.add_patch(artist)
                 
+            return ax.patches
+        
+        # Get the figure and axis from the UI
+        fig, ax = self.ui.get_figure()
+        plt.close()
+        
+        ani = FuncAnimation(fig, animate, frames=len(action_set), interval=200, blit=False)
+            
+        # Display the animation in the notebook
+        display(HTML(ani.to_jshtml()))
     
 if __name__ == '__main__':
     # Create parser

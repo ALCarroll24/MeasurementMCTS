@@ -7,6 +7,7 @@ import multiprocessing as mp
 from multiprocessing.sharedctypes import Array as mpArray
 import ctypes
 import timeit
+import time
 import pickle
 import sys
 
@@ -85,12 +86,13 @@ class MCTSNode:
         backup: backpropogate the value estimate up the tree to the root node
     """
     def __init__(self, env: Environment, state: np.ndarray, action: np.ndarray, 
-                 parent: 'MCTSNode'=None, done: bool=False, parallel: bool=False):
+                 reward: float=0, parent: 'MCTSNode'=None, done: bool=False, parallel: bool=False):
         # Initialize parameters
         self.env = env
         self.eval = eval
         self.state = state
         self.action = action
+        self.reward = reward
         self.parent = parent  # Optional[MCTSNode]
         self.done = done
         self.parallel = parallel
@@ -200,9 +202,8 @@ class MCTSNode:
              
             # If not, Run the simulation and update the child
             else:
-                new_state, reward, done = self.env.step(self.state, action)
-                self.children[action] = MCTSNode(self.env, new_state, action, parent=self, done=done, parallel=self.parallel)
-                self.child_total_value[action] = reward # Replace the value estimate with the environment reward
+                new_state, reward, done = self.env.step(self.state, self.env.all_actions[action])
+                self.children[action] = MCTSNode(self.env, new_state, action, reward=reward, parent=self, done=done, parallel=self.parallel)
 
         return self.children[action]
 
@@ -217,9 +218,34 @@ class MCTSNode:
 
         # While we aren't at the root node which has no parent
         while current.parent is not None:
-            current.number_visits += 1 # Add a visit to the node
-            current.total_value += value_estimate + 1 # Add the value back we subtracted in select_leaf
+            # Add a visit to since we are adding a new value estimate to this node (N is the number of estimates for average)
+            current.number_visits += 1
+            
+            # Add the value estimate to the total value of the node (Reward + expected reward to go)
+            current.total_value += current.reward + value_estimate + 1 # Add the 1 value back we subtracted in select_leaf
             current = current.parent # Move to the parent node
+            
+def get_best_action_trajectory(root: MCTSNode, highest_Q=False):
+    """Get the best action trajectory from the root node"""
+    current = root
+    trajectory = []
+    
+    # Iterate through the best actions until the best action node does not exist
+    while True:
+        if highest_Q:
+            best_action = np.argmax(current.child_Q())
+        else:
+            best_action = current.best_child() # this accounts for upper confidence bound
+        trajectory.append(current.env.all_actions[best_action])
+        
+        # Break if the best child node does not exist (hasn't been expanded yet)
+        if best_action not in current.children:
+            break
+        
+        # Continue traversal
+        current = current.children[best_action]
+        
+    return trajectory
 
 class DummyNode(object):
     """
@@ -248,16 +274,17 @@ def mcts_search(env: Environment, eval, starting_state: np.ndarray, learning_ite
         leaf = root.select_leaf() # Select with UCB up to the leaf node and do one environment step
         
         # Add the transition to the replay buffer for training (except for the root node)
-        if type(leaf.parent) != DummyNode:
-            eval.add_transition(leaf.parent.state, leaf.action, leaf.state, leaf.child_total_value[leaf.action], leaf.done) 
         child_priors, value_estimate = eval.inference(leaf.state) # Inference the model to get the probability of each action and the value estimate
+        # child_priors, value_estimate = np.ones([env.N]) / env.N, 0 # Even probability for each action for testing and no expected reward to go
+        # time.sleep(0.0003) # Simulate inference time
         
         leaf.expand(child_priors) # Expand the leaf node with the child priors
         leaf.backup(value_estimate) # Backup the value estimate up the tree to the root node
         
-        eval.optimize_model() # Optimize the model using replay memory which we just added one transition to
-        
-    return np.argmax(root.child_number_visits), root
+        # eval.optimize_model() # Optimize the model using replay memory which we just added one transition to
+
+    # Return the action with the most visits and the root node
+    return env.all_actions[np.argmax(root.child_number_visits)], root
 
 def create_shared_array(shape, dtype=ctypes.c_float):
     """

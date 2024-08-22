@@ -186,6 +186,39 @@ class MatPlotLibUI:
                     
         # Remove rectangles from the list
         self.patches = []
+        
+    def get_artists(self, clear=True):
+        """
+        Get the artists from the plot.
+        :param clear: Whether to clear the artists after getting them.
+        :return: List of artists.
+        """
+        artists = self.patches + self.artists
+        if clear:
+            self.patches = []
+            self.artists = []
+        return artists
+    
+    def get_figure(self) -> tuple[plt.figure, plt.axes]:
+        """
+        Get the figure and axes of the plot.
+        :return: Tuple of the figure and axes.
+        """
+        fig, ax = plt.subplots(figsize=self.figsize)
+        
+        # Set title
+        ax.set_title(self.title)
+        
+        # Set the aspect of the plot to be equal
+        ax.set_aspect('equal', adjustable='box')
+        
+        # Set plot limits and labels
+        ax.set_xlim(0, 100)
+        ax.set_ylim(0, 100)
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        
+        return fig, ax
 
     def on_play_button_click(self, event):
         print("play/pause button clicked")
