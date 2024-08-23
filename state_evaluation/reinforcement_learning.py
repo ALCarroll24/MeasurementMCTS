@@ -280,19 +280,21 @@ class MCTSRLWrapper:
         print(f'Entire image state shape: {image_state_transitions.shape}')
         
         # Get target network policy and value estimates (max_a' Q_target(s', a'))
-        next_policy, next_value = self.target_q_network(next_vector_state_transitions, next_image_state_transitions)
+        # next_policy, next_value = self.target_q_network(next_vector_state_transitions, next_image_state_transitions)
         
         # Find the best policy at this state by taking the max of the next policy
-        max_next_q_value = next_policy.max(dim=1).values
+        # max_next_q_value = next_policy.max(dim=1).values
         
         # Calculate the target (r + γ * max_a' Q_target(s', a')), what we want the Q network to predict
-        y_targets = reward_transitions + self.gamma * max_next_q_value * ~done_transitions # If done, the target is just the reward
+        # y_targets = reward_transitions + self.gamma * max_next_q_value * ~done_transitions # If done, the target is just the reward
         
         # Get the current q_values, pick the values that are from the actions taken and then squeeze the tensor (remove the extra dimension)
         q_values = self.q_network(vector_state_transitions, image_state_transitions)[0].gather(1, action_transitions).squeeze()
 
         # Calculate the loss (difference between the target and the current q_value prediction)
-        loss = F.mse_loss(y_targets, q_values)
+        # loss = F.mse_loss(y_targets, q_values)
+        
+        
         
         return loss
     

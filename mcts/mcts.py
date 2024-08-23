@@ -68,6 +68,8 @@ class MCTSNode:
         env: the environment to run MCTS on, class that inherits from Environment class
         state: the state of the node (np.ndarray(shape=(1, N)))
         action: the action that led to this state (int)
+        explore_factor: the exploration factor for UCB in selection (float)
+        discount_factor: the discount factor for the value estimate (float)
         parent: the parent node of this node (MCTSNode)
         done: whether the episode is done (bool)
         parallel: whether to run MCTS in parallel (bool)
@@ -85,13 +87,15 @@ class MCTSNode:
         expand: expand the current node with the given child_priors
         backup: backpropogate the value estimate up the tree to the root node
     """
-    def __init__(self, env: Environment, state: np.ndarray, action: np.ndarray, 
-                 reward: float=0, parent: 'MCTSNode'=None, done: bool=False, parallel: bool=False):
+    def __init__(self, env: Environment, state: np.ndarray, action: np.ndarray,
+                 explore_factor: float=1., discount_factor: float=0.9, reward: float=0.,
+                 parent: 'MCTSNode'=None, done: bool=False, parallel: bool=False):
         # Initialize parameters
         self.env = env
-        self.eval = eval
         self.state = state
         self.action = action
+        self.explore_factor = explore_factor
+        self.discount_factor = discount_factor
         self.reward = reward
         self.parent = parent  # Optional[MCTSNode]
         self.done = done
@@ -113,6 +117,8 @@ class MCTSNode:
             self.child_total_value = np.zeros([self.env.N], dtype=np.float32)
             self.lock = None # No lock if not parallel
 
+
+    # These properties are designed to allow you to use values of this node despite the vectorized structure
     @property
     def prior(self):
         """Get the prior probability of the action that led to this node"""
@@ -156,6 +162,16 @@ class MCTSNode:
                 self.parent.child_total_value[self.action] = value
         else:
             self.parent.child_total_value[self.action] = value
+            
+    @property
+    def Q(self):
+        """Get the Q value of this node"""
+        return self.parent.child_Q()[self.action]
+    
+    @property
+    def U(self):
+        """Get the U value of this node"""
+        return self.parent.child_U()[self.action]
 
     def child_Q(self):
         """Get child Q values based on the stored total value and number of visits"""
@@ -163,7 +179,7 @@ class MCTSNode:
 
     def child_U(self):
         """Get child U values (upper confidence bounds)"""
-        return math.sqrt(self.number_visits) * (
+        return self.explore_factor * math.sqrt(self.number_visits) * (
             self.child_priors / (1 + self.child_number_visits))
 
     def best_child(self):
@@ -177,7 +193,7 @@ class MCTSNode:
         # While we aren't at a leaf node
         while current.is_expanded:
             # Since the thread is passing through this node remove one from the total value to encourage other threads to explore other nodes
-            current.total_value -= 1 # This has no change with one thread because it is replaced in backup
+            # current.total_value -= 1 # This has no change with one thread because it is replaced in backup
             
             # Pick the best child and move to that node
             best_action = current.best_child()
@@ -203,7 +219,9 @@ class MCTSNode:
             # If not, Run the simulation and update the child
             else:
                 new_state, reward, done = self.env.step(self.state, self.env.all_actions[action])
-                self.children[action] = MCTSNode(self.env, new_state, action, reward=reward, parent=self, done=done, parallel=self.parallel)
+                self.children[action] = MCTSNode(self.env, new_state, action, explore_factor=self.explore_factor,
+                                                 discount_factor=self.discount_factor, reward=reward, parent=self, 
+                                                 done=done, parallel=self.parallel)
 
         return self.children[action]
 
@@ -216,17 +234,29 @@ class MCTSNode:
         """Backpropogate the value estimate up the tree to the root node"""
         current = self
 
+        # Cumulate the rewards in each node and tack on the value estimate
+        # This is done because we want to incorporate the rewards we have simulated so far plus the expected reward to go
+        backup_cumulative_rewards = value_estimate
+        
         # While we aren't at the root node which has no parent
         while current.parent is not None:
             # Add a visit to since we are adding a new value estimate to this node (N is the number of estimates for average)
             current.number_visits += 1
             
+            # Add this nodes reward to the backup cumulative rewards
+            backup_cumulative_rewards += self.discount_factor * current.reward
+            
             # Add the value estimate to the total value of the node (Reward + expected reward to go)
-            current.total_value += current.reward + value_estimate + 1 # Add the 1 value back we subtracted in select_leaf
+            current.total_value += backup_cumulative_rewards # Add the 1 value back we subtracted in select_leaf
+            # current.total_value += backup_cumulative_rewards + 1 # Add the 1 value back we subtracted in select_leaf
             current = current.parent # Move to the parent node
             
 def get_best_action_trajectory(root: MCTSNode, highest_Q=False):
-    """Get the best action trajectory from the root node"""
+    """
+    Get the best action trajectory from the root node
+    :param root: the root node of the MCTS tree
+    :param highest_Q: whether to take the highest Q value action or the highest UCB action
+    """
     current = root
     trajectory = []
     
@@ -257,7 +287,7 @@ class DummyNode(object):
         self.child_number_visits = collections.defaultdict(float)
 
 
-def mcts_search(env: Environment, eval, starting_state: np.ndarray, learning_iterations: int):
+def mcts_search(env: Environment, eval, starting_state: np.ndarray, learning_iterations: int=1000, explore_factor: float=1., discount_factor: float=0.9):
     """
     Run many iterations of MCTS to build up a tree and get the best action to take
     params:
@@ -269,14 +299,13 @@ def mcts_search(env: Environment, eval, starting_state: np.ndarray, learning_ite
     the index of the best action to take (int)
     the root node of the MCTS tree (MCTSNode)
     """
-    root = MCTSNode(env, starting_state, action=None, parent=DummyNode())
+    root = MCTSNode(env, starting_state, action=None, parent=DummyNode(), explore_factor=explore_factor, discount_factor=discount_factor)
     for _ in range(learning_iterations):
         leaf = root.select_leaf() # Select with UCB up to the leaf node and do one environment step
         
         # Add the transition to the replay buffer for training (except for the root node)
-        child_priors, value_estimate = eval.inference(leaf.state) # Inference the model to get the probability of each action and the value estimate
-        # child_priors, value_estimate = np.ones([env.N]) / env.N, 0 # Even probability for each action for testing and no expected reward to go
-        # time.sleep(0.0003) # Simulate inference time
+        # child_priors, value_estimate = eval.inference(leaf.state) # Inference the model to get the probability of each action and the value estimate
+        child_priors, value_estimate = np.ones([env.N]) / env.N, 0. # Even probability for each action for testing and no expected reward to go
         
         leaf.expand(child_priors) # Expand the leaf node with the child priors
         leaf.backup(value_estimate) # Backup the value estimate up the tree to the root node

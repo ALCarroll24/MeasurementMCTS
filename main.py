@@ -375,7 +375,7 @@ class MeasurementControlEnvironment(Environment):
                                             simulate=True, s_k_=corner_means, P_k_=corner_cov)
         
         # Find the reward based prior vs new covariance matrix and car collision with OOI
-        reward, done = self.get_reward(new_cov, new_car_state)
+        reward, done = self.get_reward(corner_cov, new_cov, new_car_state)
         
         # Combine the updated car state, mean, covariance and horizon into a new state
         new_state = (new_car_state, new_mean, new_cov, horizon)
@@ -384,7 +384,7 @@ class MeasurementControlEnvironment(Environment):
         return new_state, reward, done
     
     
-    def get_reward(self, new_cov, car_state, print_rewards=False) -> Tuple[float, bool]:
+    def get_reward(self, cov, new_cov, car_state, print_rewards=False) -> Tuple[float, bool]:
         """
         Get the reward of the new state-action pair.
         
@@ -393,11 +393,13 @@ class MeasurementControlEnvironment(Environment):
         :return: (float, bool) the reward of the state-action pair, and whether the episode is done
         """
         
-        # Normalize the trace between 0 and 1 using the final trace as the min and initial trace as the max
+        # Normalize the traces between 0 and 1 using the final trace as the min and initial trace as the max
+        cov_trace = min_max_normalize(np.trace(cov), self.final_cov_trace, self.covariance_trace_init)
         new_cov_trace = min_max_normalize(np.trace(new_cov), self.final_cov_trace, self.covariance_trace_init)
         
-        # Reward is mirrored over 0.5 (1 is now the final covariance and 0 is the initial covariance)
-        reward = 1-new_cov_trace
+        
+        # Reward is how much the trace has decreased (higher is better)
+        reward = cov_trace - new_cov_trace
         
         # Print trace for debugging
         if print_rewards:
@@ -410,6 +412,10 @@ class MeasurementControlEnvironment(Environment):
         
         # Find whether the episode is done based on the trace
         done = new_cov_trace < self.final_cov_trace
+        
+        # If done then add a 1 reward to the final state
+        if done:
+            reward += 1
         
         return reward, done
         
@@ -502,11 +508,14 @@ class MeasurementControlEnvironment(Environment):
             # Create plot for the UI
             self.ui.single_plot()
     
-    def draw_state(self, state, plot=True) -> None:
+    def draw_state(self, state, plot=True, root_node=None, rew=None, q_val=None, qu_val=None, scaling=1, bias=0, max=4) -> None:
         """
         Draw the state on the UI.
         
         :param state: (np.ndarray) the state of the car and OOI (position, corner means, corner covariances)
+        :param plot: (bool) whether to plot the state
+        :param root_node: (Node) the root node of the MCTS tree (used for drawing the simulated states when passed)
+        :param radius: (float) the radius of the points to draw for the simulated states
         """
         # Draw the car state
         self.car.draw_state(state[0])
@@ -517,26 +526,49 @@ class MeasurementControlEnvironment(Environment):
         # Draw the obstacles
         self.eval_kd_tree.draw_obstacles()
         
+        # Draw the simulated states
+        if root_node is not None:
+            self.draw_simulated_states(root_node, rew=rew, q_val=q_val, qu_val=qu_val, scaling=scaling, bias=bias, max=max)
+        
         if plot:
             self.ui.single_plot()
     
-    def draw_simulated_states(self, mcts_tree, radius=0.1, color='y'):
-        # Recursively go through tree of simulated states and draw them, width is based on average reward
+    def draw_simulated_states(self, node, rew=False, q_val=False, qu_val=False, scaling=1, bias=0, max=4) -> None:
+        """
+        Recursively go through tree of simulated states and draw points of each position sized by the reward
+        :param node: (Node) the node to draw the simulated states from
+        :param color: (str) the color of the points to draw 
+        :param rew: (bool) whether to size based on reward
+        :param q_val: (bool) whether to size based on Q value
+        :param qu_val: (bool) whether to size based on upper confidence bound
+        :param scaling: (float) the scaling factor for the radius of the points
+        :param bias: (float) the bias to add to the radius of the points
+        """
+        if not (rew or q_val or qu_val):
+            raise ValueError("Must select at least one of rew, q_val, or qu_val to draw simulated states")
         
-        # Get the root node
-        root = mcts_tree.root # root decision node
-        
-        def draw_child_states(decision_node):
-            # Place a point at the state of this node
-            self.ui.draw_point(decision_node.state[0][:2], color=color, radius=radius)
+        if rew:
+            # Rewards are already normalized between 0 and 1, add 0.05 to make all rewards visible
+            radius = node.reward
             
-            # Draw the children
-            for child_random_node in decision_node.children.values():
-                if len(child_random_node.children.values()) > 0:
-                    draw_child_states(next(iter(child_random_node.children.values())))
-                    
-        # Recuriousely draw the children
-        draw_child_states(root)
+        elif q_val:
+            # Q values are normalized between 0 and 1, add 0.05 to make all rewards visible
+            radius = node.Q
+            
+        elif qu_val:
+            radius = node.Q + node.U
+            
+        color = 'g' if radius >= 0 else 'r'
+        radius = np.abs(radius) * scaling + bias
+        radius = np.clip(radius, 0, max)
+            
+        # Place a point at the state of this node
+        self.ui.draw_point(node.state[0][:2], color=color, radius=radius, alpha=0.2)
+        
+        # Draw the children recursively by calling this function
+        for child in node.children.values():
+            self.draw_simulated_states(child, rew=rew, q_val=q_val, qu_val=qu_val, scaling=scaling, bias=bias, max=max)
+
     
     def draw_action_set(self, state, action_set):
         """
