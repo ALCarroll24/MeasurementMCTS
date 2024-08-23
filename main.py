@@ -581,6 +581,7 @@ class MeasurementControlEnvironment(Environment):
             # Use the state and axis from the parent function
             nonlocal state
             nonlocal ax
+            nonlocal last_index
             
             # Clear all existing patches from the axis
             for patch in ax.patches:
@@ -589,9 +590,6 @@ class MeasurementControlEnvironment(Environment):
             # Get the action
             action = action_set[i]
             
-            # Update the state
-            state, reward, done = self.step(state, action)
-            
             # Draw the state create artists in UI class
             self.draw_state(state, plot=False)
             
@@ -599,12 +597,20 @@ class MeasurementControlEnvironment(Environment):
             
             for artist in artists:
                 ax.add_patch(artist)
-                
+            
+            # Update state for next iteration if it hasn't already been called
+            if last_index != i:
+                state, reward, done = self.step(state, action)
+            last_index = i
+            
             return ax.patches
         
         # Get the figure and axis from the UI
         fig, ax = self.ui.get_figure()
         plt.close()
+        
+        # Track the last index to avoid desyncing from the action set when matplotlib calls the same frame multiple times
+        last_index = -1
         
         ani = FuncAnimation(fig, animate, frames=len(action_set), interval=200, blit=False)
             
