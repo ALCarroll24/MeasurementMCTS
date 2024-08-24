@@ -50,12 +50,15 @@ class MatPlotLibUI:
             self.rate = update_rate
             self.period = 1.0 / update_rate
         
-    def single_plot(self):
+    def single_plot(self, get_fig_ax: bool=False):
         # Update the plot
         self.update_display()
         
         # Create a single plot
-        plt.show(block=True)
+        # plt.show()
+        
+        if get_fig_ax:
+            return self.fig, self.ax
             
     def update(self):
         # Update the plot

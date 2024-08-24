@@ -1,5 +1,6 @@
 import numpy as np
 from shapely.geometry import Polygon, LineString
+from typing import Tuple
 
 def wrap_angle(angle):
     # Wrap an angle to the range [-pi, pi]
@@ -71,6 +72,22 @@ def rotate(points: np.ndarray, angle):
         
     return rotated_points
 
+
+# def rotate(points: np.ndarray, angle: float) -> np.ndarray:
+#     # Create rotation matrix
+#     rot_matrix = np.array([[np.cos(angle), -np.sin(angle)], 
+#                            [np.sin(angle), np.cos(angle)]])
+    
+#     # Ensure points is at least 2D (nx2 or 1x2)
+#     points = np.atleast_2d(points)
+    
+#     # Perform the rotation using matrix multiplication
+#     rotated_points = points @ rot_matrix.T
+    
+#     # Return rotated points, ensuring original dimensionality is preserved
+#     return rotated_points.squeeze()
+
+
 def rotate_about_point(points: np.ndarray, angle, center):
     # Subtract the center from the points, rotate them, and add the center back
     return rotate(points - center, angle) + center
@@ -87,3 +104,19 @@ def get_interpolated_polygon_points(polygon: Polygon, num_points: int = 200):
     line = LineString(polygon.exterior.coords)
     densified_coords = [line.interpolate(float(i) / num_points, normalized=True).coords[0] for i in range(num_points + 1)]
     return np.array(densified_coords)
+
+def get_pixels_and_values(grid: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Convert a grid to pixel indices and corresponding values.
+    :param grid: Grid to convert.
+    :return: Tuple of pixel indices and corresponding values.
+    """
+    # Convert grid into W*Wx2 array where each row is a pixel and the columns are [x_idx, y_idx] combinations
+    X_idxs, Y_idxs = np.meshgrid(np.arange(grid.shape[0]), np.arange(grid.shape[1]))
+    X_idxs_flat, Y_idxs_flat = X_idxs.ravel(), Y_idxs.ravel()
+    pixel_indices = np.vstack([X_idxs_flat, Y_idxs_flat]).T # rows are now [x_idx, y_idx] combinations
+    
+    # Get the values of the cells in the explore grid that match the pixel indices indices
+    values = grid[pixel_indices[:, 0], pixel_indices[:, 1]] # Values of cells matching the pixel indices
+    
+    return pixel_indices, values

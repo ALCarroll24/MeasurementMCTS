@@ -16,7 +16,7 @@ from torch.amp import GradScaler, autocast
 # MCTS code imports
 sys.path.append("..")  # Adds higher directory to python modules path.
 from main import MeasurementControlEnvironment
-from utils import rotate_about_point
+from utils import rotate_about_point, get_pixels_and_values
 
 # Only fully connected layers (untested but not good for image based state)
 # class PolicyValueNetwork(nn.Module):
@@ -333,35 +333,60 @@ class MCTSRLWrapper:
         for target_param, param in zip(self.target_q_network.parameters(), self.q_network.parameters()):
             target_param.data.copy_(self.tau * param.data + (1.0 - self.tau) * target_param.data)
             
-    def get_nn_state(self, state: tuple) -> Tuple[torch.Tensor, torch.Tensor]:
+    def get_nn_state(self, state: tuple, explore_grid: np.ndarray=None, grid_origin: np.ndarray=None)-> Tuple[torch.Tensor, torch.Tensor]:
         """
         Convert full state into image and then combine car state and flattened image into a single tensor
-        params:
+        Args:
             env: ToyMeasurement Control environment
             state: Full state tuple
-            device: Device to put the tensor on
-        returns:
+            explore_grid: Exploration grid to overlay on the image
+            grid_origin: Origin of the exploration grid
+            
+        Returns:
             nn_car_state: Tensor of the car state
             nn_image_state: Tensor of the image state
         """
         # car state is 3,0 vector, image state is class width_pixels x width_pixels
-        car_state, image = get_image_based_state(self.env, state, width_pixels=self.width_pixels, width_meters=self.width_meters)
+        car_state, image = get_image_based_state(self.env, state, width_pixels=self.width_pixels,
+                                                 width_meters=self.width_meters, explore_grid=explore_grid,
+                                                 grid_origin=grid_origin)
         nn_car_state = torch.tensor(car_state, dtype=torch.float32, device=self.device).unsqueeze(0) # Add a channel dimension (1,3)
         nn_image_state = torch.tensor(image, dtype=torch.float32, device=self.device).unsqueeze(0) # Add a channel dimension [channel, H, W]
         nn_image_state = nn_image_state.unsqueeze(0) # Add a batch dimension - [batch, channel, H, W]
         
         return nn_car_state, nn_image_state
     
-    def plot_state_image(self, state: tuple):
-        car_state, image = get_image_based_state(self.env, state, width_pixels=self.width_pixels, width_meters=self.width_meters)
+    def plot_state(self, state: tuple, explore_grid: np.ndarray=None, grid_origin: np.ndarray=None):
+        """Plot the state image the neural network sees with full environment state
+
+        Args:
+            state (tuple): Full state tuple
+            grid (np.ndarray, optional): Exploration grid to add to the image. Defaults to None.
+            grid_origin (np.ndarray, optional): Origin of the exploration grid. Defaults to None.
+        """
+        car_state, image = get_image_based_state(self.env, state, width_pixels=self.width_pixels,
+                                                 width_meters=self.width_meters, explore_grid=explore_grid,
+                                                 grid_origin=grid_origin)
         
         plot_state_image(image, "State Image")
-            
 
 # Create state image from car position, OOI corners, car width, car_length and obstacles
-def get_image_based_state(env: MeasurementControlEnvironment, state: tuple, width_pixels=200, width_meters=50) -> Tuple[np.ndarray, np.ndarray]:
-    # Get car collision length and width
-    car_width, car_length = env.car.width, env.car.length
+def get_image_based_state(env: MeasurementControlEnvironment, state: tuple, width_pixels=30, 
+                          width_meters=50, explore_grid: np.ndarray=None, grid_origin: np.ndarray=None, meters_per_pixel: float=None) -> Tuple[np.ndarray, np.ndarray]:
+    """Generate the image representation of the state the neural network will see
+
+    Args:
+        env (MeasurementControlEnvironment): The game environment
+        state (tuple): Full state tuple
+        width_pixels (int, optional): Width of image in pixels. Defaults to 30.
+        width_meters (int, optional): Width of the image in meters. Defaults to 50.
+        explore_grid (np.ndarray, optional): Exploration grid to overlay on image. Defaults to None.
+        grid_origin (np.ndarray, optional): Origin of the grid in meters. Defaults to None.
+        meters_per_pixel (float, optional): Meters per pixel for the explore grid. Defaults to None.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: NN vector car state and NN image state
+    """
     
     # Get obstacle means and radii
     obstacle_means, obstacle_radii = env.eval_kd_tree.get_obstacle_points(), env.eval_kd_tree.get_obstacle_radii()
@@ -369,6 +394,10 @@ def get_image_based_state(env: MeasurementControlEnvironment, state: tuple, widt
     # Pull out the state components
     car_state, corner_means, corner_covariance, horizon = state
     corner_means = corner_means.reshape(-1, 2) # Reshape to 2D array where each row is a corner point
+    
+    # Get car collision length, width and car position and yaw
+    car_width, car_length = env.car.width, env.car.length
+    car_pos, car_yaw = car_state[:2], car_state[3]
     
     # Get normalized point covariances
     pt_traces = env.get_normalized_cov_pt_traces(state)
@@ -383,8 +412,25 @@ def get_image_based_state(env: MeasurementControlEnvironment, state: tuple, widt
     # Calculate the scaling factor from meters to pixels
     scale = width_pixels / width_meters
     
+    # If we have the parameters for the explore grid, overlay it on the image (done first to make sure it is in the background)
+    if (explore_grid is not None) and (grid_origin is not None) and (meters_per_pixel is not None):        
+        # Convert grid into W*Wx2 array where each row is a pixel and the columns are [x_idx, y_idx] combinations
+        pixel_points, values = get_pixels_and_values(explore_grid)
+        
+        # Now convert the pixel points to world coords and then to car frame
+        world_coords = grid_origin + meters_per_pixel * pixel_points
+        car_trans_points = world_coords - car_state[:2] # rows are now [x_m, y_m] in car frame (but only translated)
+        car_frame_points = rotate_about_point(car_trans_points, np.pi/2-car_yaw, np.array([0,0])) # rows are now [x_m, y_m] in car frame
+        
+        # Find which points are within the image bounds
+        in_bounds = (-width_meters/2 <= car_frame_points[:, 0]) & (car_frame_points[:, 0] <= width_meters/2) & \
+                    (-width_meters/2 <= car_frame_points[:, 1]) & (car_frame_points[:, 1] <= width_meters/2)
+        
+        # Place the in bounds points on the image
+        in_bounds_pixels = (car_frame_points[in_bounds] * scale + width_pixels / 2).astype(int)
+        image[in_bounds_pixels[:, 0], in_bounds_pixels[:, 1]] = values[in_bounds]
+    
     # Rotate the obstacle and corner points to the car's yaw angle
-    car_pos, car_yaw = car_state[:2], car_state[3]
     rotated_corners = rotate_about_point(corner_means, np.pi/2-car_yaw, car_pos) # Negative to rotate into a coordinate system where the car is facing up
     rotated_obstacles = rotate_about_point(obstacle_means, np.pi/2-car_yaw, car_pos)
     
@@ -411,7 +457,7 @@ def get_image_based_state(env: MeasurementControlEnvironment, state: tuple, widt
         x, y = np.ogrid[-x_pixel:width_pixels-x_pixel, -y_pixel:width_pixels-y_pixel]
         mask = x*x + y*y <= radius_pixel*radius_pixel
         image[mask] = -1.0
-        
+
     # Place the car (draw a rectangle at the center given length and width), car is always facing up (positive x axis)
     car_width_pixels = int(car_width * scale)
     car_length_pixels = int(car_length * scale)
@@ -426,7 +472,7 @@ def get_image_based_state(env: MeasurementControlEnvironment, state: tuple, widt
     return non_image_car_state, image
 
 def plot_state_image(image, title):
-    plt.imshow(image.T, cmap='gray', origin='lower')
-    plt.colorbar(label='Value')
-    plt.title(title)
-    plt.show()
+    fig, ax = plt.subplots()
+    ax.imshow(image.T, cmap='RdYlGn', origin='lower')
+    fig.colorbar(ax.imshow(image.T, cmap='RdYlGn', origin='lower', vmin=-1, vmax=1), ax=ax, label='Value')
+    ax.set_title(title)

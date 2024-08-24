@@ -314,7 +314,9 @@ class MeasurementControlEnvironment(Environment):
         """
         
         # Pick the car state at random within the bounds
-        car_state = np.random.uniform(self.car_state_bounds[:,0], self.car_state_bounds[:,1])
+        car_pos = np.random.uniform(self.car_state_bounds[:,0], self.car_state_bounds[:,1])
+        car_yaw = np.random.uniform(-np.pi, np.pi)
+        car_state = np.array([car_pos[0], car_pos[1], 0., car_yaw, 0.0, 0.0])
         
         # Pick the mean of the corners from the bounds
         center_mean_corners = np.random.uniform(self.mean_corners_bounds[:,0], self.mean_corners_bounds[:,1])
@@ -347,14 +349,14 @@ class MeasurementControlEnvironment(Environment):
         '''
         return self.car.get_state(), self.skf.get_mean(), self.skf.get_covariance(), horizon
     
-    def step(self, state, action, dt=None) -> Tuple[float, np.ndarray]:
+    def step(self, state, action, dt=None) -> Tuple[tuple, float, bool]:
         """
         Step the environment by one time step. The action is applied to the car, and the state is observed by the OOI.
         The observation is then passed to the KF for update.
         
-        :param state: (np.ndarray) the state of the car and KF (Car state(x,y,yaw), corner means, corner covariances)
+        :param state: (np.ndarray) the state (Car state(x,y,yaw), corner means, corner covariances)
         :param action: (np.ndarray) the control input to the car (velocity, steering angle)
-        :return: (float, np.ndarray) the reward of the state-action pair, and the new state
+        :return: (tuple, float, bool) the new state, the reward of the state-action pair, and whether the episode is done
         """
         # If dt is not specified, use the default period
         if dt is None:
@@ -508,14 +510,19 @@ class MeasurementControlEnvironment(Environment):
             # Create plot for the UI
             self.ui.single_plot()
     
-    def draw_state(self, state, plot=True, root_node=None, rew=None, q_val=None, qu_val=None, scaling=1, bias=0, max=4) -> None:
+    def draw_state(self, state, plot=True, root_node=None, rew=None, q_val=None, qu_val=None, scaling=1, bias=0, max=4, get_fig_ax: bool=False) -> None:
         """
         Draw the state on the UI.
         
         :param state: (np.ndarray) the state of the car and OOI (position, corner means, corner covariances)
         :param plot: (bool) whether to plot the state
         :param root_node: (Node) the root node of the MCTS tree (used for drawing the simulated states when passed)
-        :param radius: (float) the radius of the points to draw for the simulated states
+        :param rew: (bool) whether to size based on reward
+        :param q_val: (bool) whether to size based on Q value
+        :param qu_val: (bool) whether to size based on upper confidence bound
+        :param scaling: (float) the scaling factor for the radius of the points
+        :param bias: (float) the bias to add to the radius of the points
+        :param max: (float) the maximum radius of the points
         """
         # Draw the car state
         self.car.draw_state(state[0])
@@ -531,7 +538,10 @@ class MeasurementControlEnvironment(Environment):
             self.draw_simulated_states(root_node, rew=rew, q_val=q_val, qu_val=qu_val, scaling=scaling, bias=bias, max=max)
         
         if plot:
-            self.ui.single_plot()
+            if get_fig_ax:
+                return self.ui.single_plot(get_fig_ax=get_fig_ax)
+            else:
+                self.ui.single_plot(get_fig_ax=get_fig_ax)
     
     def draw_simulated_states(self, node, rew=False, q_val=False, qu_val=False, scaling=1, bias=0, max=4) -> None:
         """
