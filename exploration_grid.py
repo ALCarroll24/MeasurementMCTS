@@ -33,12 +33,20 @@ class ExplorationGrid:
 
         # Create grid using pixel height and width
         self.grid = np.ones((int(pixel_HW[0]), int(pixel_HW[1])))
+        self.initial_grid = copy(self.grid)
         
         # Get the car parameters we need
         self.car_max_range = self.env.car.max_range
         self.car_max_bearing = env.car.max_bearing
         self.car_length = env.car.length
         
+        
+    def get_state(self):
+        """
+        Get the state of the grid.
+        :return: Tuple of the grid and the number of points in range and field of view.
+        """
+        return self.grid
         
     def draw_grid(self, grid: np.ndarray, color: str='g'):
         """
@@ -56,14 +64,13 @@ class ExplorationGrid:
             self.env.ui.patches.append(Rectangle(world_xy, self.meters_per_pixel, self.meters_per_pixel,
                                              linewidth=1, alpha=0.2, facecolor='g' if value == 1 else 'w'))
             
-    def update(self, state: Tuple[int, int], grid):
+    def update(self, grid: np.ndarray, car_state: np.ndarray):
         """
         Update the grid with the state.
         :param state: Tuple (x, y) for the state.
-        :return Tuple of updated grid and number of points in range and field of view.
+        :return Tuple of updated grid and number of points which were explored.
         """
-        # Pull out the elements of the state
-        car_state, corner_means, corner_covs, horizon = state
+        # Pull out the elements of the car state
         car_pos, car_yaw = car_state[:2], car_state[3]
         
         # Get a copy before modifying the given grid
@@ -94,12 +101,14 @@ class ExplorationGrid:
         
         # Find the indeces that are in range and in the field of view
         in_range_fov = in_range & in_fov
-        num_in_range_fov = np.sum(in_range_fov)
+        
+        # Find how many points were prviosuly unexplored and are now explored
+        num_explored = np.sum(in_range_fov & (values == 1))
         
         # Update the grid points that are in range and in the field of view with the value of 0
         new_grid[pixel_indices[in_range_fov, 0], pixel_indices[in_range_fov, 1]] = 0
         
-        return new_grid, num_in_range_fov
+        return new_grid, num_explored
     
     def get_upscaled_pixels_and_values(self, grid: np.ndarray, meters_per_pixel: float=1) -> Tuple[np.ndarray, np.ndarray, float]:
         """

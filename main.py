@@ -7,11 +7,9 @@ from ooi import OOI
 from state_evaluation.evaluation import KDTreeEvaluation
 from static_kf import StaticKalmanFilter, measurement_model
 from utils import wrap_angle, min_max_normalize, get_interpolated_polygon_points, rotate_about_point
-from shapely.affinity import rotate
-# from mcts.mcts import MCTS
-# from mcts.hash import hash_action, hash_state
-from mcts.mcts import mcts_search, Environment, parallel_mcts_search
-from mcts.tree_viz import render_graph, render_pyvis
+# from shapely.affinity import rotate
+from mcts.mcts import Environment
+from exploration_grid import ExplorationGrid
 from flask_server import FlaskServer
 import argparse
 from copy import deepcopy
@@ -76,7 +74,21 @@ class MeasurementControlEnvironment(Environment):
         ooi_init_covariance = measurement_model(ooi_noisy_corners, np.arange(4), initial_car_state[:2], initial_car_state[3], # Initial Covariance matrix for the OOI
                                                 min_range=self.min_range, min_bearing=self.min_bearing, range_dev=initial_range_std_dev, bearing_dev=initial_bearing_std_dev)
         self.covariance_trace_init = np.trace(ooi_init_covariance)
+        
+        # Exploration grid parameters
+        padding = np.array([15,15]) # padding to add to the grid for x and y
+        meters_per_pixel = 1 # meters per pixel of the grid
+        self.explored_cell_reward = 0.0015 # reward for exploring a cell
                 
+        # Initial random state bounds (when environment is reset)
+        #                                 X,           Y,          v_x,         psi,           delta,       delta_dot
+        self.car_state_bounds = np.array([[10., 90.], [10., 90.], [-10., 10.], [-np.pi, np.pi], [-0.5, 0.5], [-0.5, 0.5]])
+        self.mean_corners_bounds = np.array([[30., 70.], [30., 70.]]) # Mean of corners (x, y) bounds (corners picked around mean)
+        self.length_and_width = np.array([8., 4.]) # Length and width of the OOI
+        self.init_corner_std_dev = 0.5 # Standard deviation of gaussian distribution which will be used to sample corners locations
+        self.rotate_corner_bounds = np.array([0, 2*np.pi]) # Rotation bounds for corners
+        self.reset_trace_init = 64. # Initial trace of covariance matrix
+        
         self.ui = MatPlotLibUI()
         
         # Create a car object
@@ -89,21 +101,15 @@ class MeasurementControlEnvironment(Environment):
         self.skf = StaticKalmanFilter(ooi_noisy_corners, ooi_init_covariance, range_dev=range_dev, min_range=self.min_range,
                                       bearing_dev=bearing_dev, min_bearing=self.min_bearing, ui=self.ui)
         
+        # Exploration grid which gives rewards for exploring the environment
+        self.explore_grid = ExplorationGrid(self, self.mean_corners_bounds, padding=padding, meters_per_pixel=meters_per_pixel)
+        
         # Create a KDTree for evaluation TODO: This should be created in each main loop (one real time step)
         self.eval_kd_tree = KDTreeEvaluation([ooi_noisy_corners], num_steps=self.eval_steps, dt=self.eval_dt, max_range=sensor_max_range, 
                                              max_bearing=sensor_max_bearing, obstacle_std_dev=obstacle_std_dev, corner_rew_norm_max=corner_rew_norm_max,
                                              obs_rew_norm_min=obs_rew_norm_min, range_dev=range_dev, bearing_dev=bearing_dev,
                                              min_range=self.min_range, min_bearing=self.min_bearing, ui=self.ui)
         
-        # Initial random state bounds (when environment is reset)
-        #                                 X,           Y,          v_x,         psi,           delta,       delta_dot
-        self.car_state_bounds = np.array([[10., 90.], [10., 90.], [-10., 10.], [-np.pi, np.pi], [-0.5, 0.5], [-0.5, 0.5]])
-        self.mean_corners_bounds = np.array([[30., 70.], [30., 70.]]) # Mean of corners (x, y) bounds (corners picked around mean)
-        self.length_and_width = np.array([8., 4.]) # Length and width of the OOI
-        self.init_corner_std_dev = 0.5 # Standard deviation of gaussian distribution which will be used to sample corners locations
-        self.rotate_corner_bounds = np.array([0, 2*np.pi]) # Rotation bounds for corners
-        self.trace_init = 64. # Initial trace of covariance matrix
-
         # Get and set OOI collision polygons
         # self.ooi_poly = self.ooi.get_collision_polygon()
         # self.ooi.soft_collision_polygon = self.ooi_poly.buffer(self.soft_collision_buffer)
@@ -173,16 +179,19 @@ class MeasurementControlEnvironment(Environment):
         self.eval_kd_tree.create_kd_tree([corner_means])
         
         # Create initial covariance using initial trace
-        initial_covariance = np.eye(8) * self.trace_init/8
+        initial_covariance = np.eye(8) * self.reset_trace_init/8
+        
+        # Use the initial grid to get the initial grid state
+        grid = self.explore_grid.initial_grid
         
         # Return the initial state
-        return (car_state, corner_means.flatten(), initial_covariance, 0)
+        return (car_state, corner_means.flatten(), initial_covariance, grid, 0)
         
-    def get_state(self, horizon=0) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    def get_state(self, horizon=0) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
         '''
         Returns full state -> Tuple[Car State, Corner Mean, Corner Covariance, Horizon]
         '''
-        return self.car.get_state(), self.skf.get_mean(), self.skf.get_covariance(), horizon
+        return self.car.get_state(), self.skf.get_mean(), self.skf.get_covariance(), self.explore_grid.get_state(), horizon
     
     def step(self, state, action, dt=None) -> Tuple[tuple, float, bool]:
         """
@@ -198,7 +207,7 @@ class MeasurementControlEnvironment(Environment):
             dt = self.simulation_dt
         
         # Pull out the state elements
-        car_state, corner_means, corner_cov, horizon = state
+        car_state, corner_means, corner_cov, grid, horizon = state
         
         # Increment the horizon
         horizon += 1
@@ -211,22 +220,27 @@ class MeasurementControlEnvironment(Environment):
         new_mean, new_cov = self.skf.update(observable_corners, indeces, new_car_state,
                                             simulate=True, s_k_=corner_means, P_k_=corner_cov)
         
+        # Update the exploration grid with the new state
+        new_grid, num_explored = self.explore_grid.update(grid, new_car_state)
+        
         # Find the reward based prior vs new covariance matrix and car collision with OOI
-        reward, done = self.get_reward(corner_cov, new_cov, new_car_state)
+        reward, done = self.get_reward(corner_cov, new_cov, new_car_state, num_explored)
         
         # Combine the updated car state, mean, covariance and horizon into a new state
-        new_state = (new_car_state, new_mean, new_cov, horizon)
+        new_state = (new_car_state, new_mean, new_cov, new_grid, horizon)
         
         # Return the reward and the new state
         return new_state, reward, done
     
     
-    def get_reward(self, cov, new_cov, car_state, print_rewards=False) -> Tuple[float, bool]:
+    def get_reward(self, cov, new_cov, car_state, num_explored, print_rewards=False) -> Tuple[float, bool]:
         """
         Get the reward of the new state-action pair.
         
-        :param new_state: (np.ndarray) the new state of the car and OOI (position(0:2), corner means(2:10), corner covariances(10:74))
-        :param action: (np.ndarray) the control input to the car (velocity, steering angle)
+        :cov: (np.ndarray) the covariance matrix of the corners
+        :new_cov: (np.ndarray) the new covariance matrix of the corners
+        :car_state: (np.ndarray) the state of the car
+        :num_explored: (int) the number of points in the field of view and range of the car
         :return: (float, bool) the reward of the state-action pair, and whether the episode is done
         """
         
@@ -246,6 +260,8 @@ class MeasurementControlEnvironment(Environment):
         obs_reward = self.eval_kd_tree.get_obstacle_cost(car_state)
         # Add the obstacle reward to the trace reward
         reward += obs_reward
+        
+        reward += self.explored_cell_reward * num_explored
         
         # Find whether the episode is done based on the trace
         done = new_cov_trace < self.final_cov_trace
@@ -292,7 +308,7 @@ class MeasurementControlEnvironment(Environment):
         prior_reward = np.zeros([self.N], dtype=np.float32)
         for n, action in enumerate(self.action_space):
             # Pass the car state to the KDTree evaluation to get the reward
-            prior_reward[n] = self.eval_kd_tree.evaluate(action, state[0], norm_point_traces, state[3], self.discount_factor, draw=draw)
+            prior_reward[n] = self.eval_kd_tree.evaluate(action, state[0], norm_point_traces, state[4], self.discount_factor, draw=draw)
             
         avg_reward = np.mean(prior_reward)
         
@@ -345,7 +361,7 @@ class MeasurementControlEnvironment(Environment):
             # Create plot for the UI
             self.ui.single_plot()
     
-    def draw_state(self, state, title=None, plot=True, root_node=None, 
+    def draw_state(self, state, title=None, explore_grid=True, plot=True, root_node=None, 
                    rew=None, q_val=None, qu_val=None, scaling=1, bias=0,
                    max=4, get_fig_ax: bool=False):
         """
@@ -369,6 +385,10 @@ class MeasurementControlEnvironment(Environment):
         
         # Draw the obstacles
         self.eval_kd_tree.draw_obstacles()
+        
+        if explore_grid:
+            # Draw the exploration grid
+            self.explore_grid.draw_grid(state[3])
         
         # Draw the simulated states
         if root_node is not None:

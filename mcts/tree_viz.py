@@ -42,7 +42,7 @@ def render_graph(root, open=True):
 
 def add_nodes_and_edges_pyvis(node, net, action_space, parent_hash=None, show_unsimulated=True):
     node_hash = str(node.__hash__())
-    horizon_step = node.state[3]
+    horizon_step = node.state[4]
     # Check if this is the root node (parent is different type, dummy node)
     if type(node.parent) != type(node):
         label = "Root Node" + "\n" + \
