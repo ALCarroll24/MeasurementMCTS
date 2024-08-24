@@ -210,7 +210,7 @@ class MCTSRLWrapper:
         next_car_state, next_image_state = self.get_nn_state(next_state)
         print(f'Add transition, image state shape: {image_state.shape}')
         # Find the index of this action in the action space using numpy
-        action_index = np.where(np.all(action == self.env.all_actions, axis=1))[0][0]
+        action_index = np.where(np.all(action == self.env.action_space, axis=1))[0][0]
         
         # Convert other components to tensors
         action_index = torch.tensor([action_index], dtype=torch.int64, device=self.device)
@@ -442,6 +442,7 @@ def get_image_based_state(env: MeasurementControlEnvironment, state: tuple, widt
     in_bounds_corners = (-width_meters/2 <= rotated_corners[:, 0]) & (rotated_corners[:, 0] <= width_meters/2) & \
                         (-width_meters/2 <= rotated_corners[:, 1]) & (rotated_corners[:, 1] <= width_meters/2)
 
+    # TODO: This does not account for the radius of the obstacles, it only goes onto the image if the center is in bounds
     in_bounds_obstacles = (-width_meters/2 <= rotated_obstacles[:, 0]) & (rotated_obstacles[:, 0] <= width_meters/2) & \
                           (-width_meters/2 <= rotated_obstacles[:, 1]) & (rotated_obstacles[:, 1] <= width_meters/2)
 

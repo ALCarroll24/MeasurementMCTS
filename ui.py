@@ -6,19 +6,7 @@ import threading
 import webbrowser
 
 class MatPlotLibUI:
-    def __init__(self, notebook=False, update_rate=10, figsize=(8, 8), single_plot=False, title=None):
-        self.notebook = notebook
-        self.figsize = figsize
-        if not self.notebook:
-            # Initialize the Matplotlib figure and axes
-            self.fig, self.ax = plt.subplots(figsize=self.figsize)
-            # self.fig.canvas.mpl_connect('button_press_event', self.on_click)
-            self.fig.canvas.mpl_connect('close_event', self.handle_close)
-            self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
-        
-        # Store the keys being pressed for later retrieval
-        self.keys = []
-
+    def __init__(self, title=None):
         # Store the rectangles (car and tires) for later update
         self.patches = []
         
@@ -28,49 +16,40 @@ class MatPlotLibUI:
         # Flag for stopping the plotting loop and title
         self.shutdown = False
         self.title = title
+
+    def plot(self, get_fig_ax: bool=False, title:str=None, figsize:tuple=(8, 8)):
+        """
+        Refresh the display with new positions and orientations.
+        """
+        fig, ax = plt.subplots(figsize=figsize)
         
-        # If single_plot is True, don't create buttons or setup for looping
-        if not single_plot and not self.notebook:
-            # Create Buttons
-            play_button_ax = self.fig.add_axes([0.3, 0.94, 0.2, 0.03])  # Adjust as necessary
-            self.play_button = Button(play_button_ax, 'Play/Pause', color='lightgoldenrodyellow', hovercolor='0.975')
-            self.play_button.on_clicked(self.on_play_button_click)
-            self.paused = False
+        # Set title
+        if title is not None:
+            ax.set_title(title)
+        
+        # Set the aspect of the plot to be equal
+        ax.set_aspect('equal', adjustable='box')
+        
+        # Set plot limits and labels
+        ax.set_xlim(0, 100)
+        ax.set_ylim(0, 100)
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+
+        # Redraw the rectangles
+        for rect in self.patches:
+            ax.add_patch(rect)
             
-            viz_button_ax = self.fig.add_axes([0.52, 0.94, 0.2, 0.03])  # Adjust as necessary
-            self.viz_button = Button(viz_button_ax, 'Visualize', color='lightgoldenrodyellow', hovercolor='0.975')
-            self.viz_button.on_clicked(self.on_viz_button_click)
-        
-        
-            # Do initial update and show the plot
-            self.update_display()
-            plt.ion() # Turn on interactive mode for asynchronous drawing
-            
-            # Set the update rate and period
-            self.rate = update_rate
-            self.period = 1.0 / update_rate
-        
-    def single_plot(self, get_fig_ax: bool=False):
-        # Update the plot
-        self.update_display()
-        
-        # Create a single plot
-        # plt.show()
+        # Redraw the text (or other artist objects)
+        for artist in self.artists:
+            ax.add_artist(artist)
+                    
+        # Remove patches and artists
+        self.patches = []
+        self.artists = []
         
         if get_fig_ax:
-            return self.fig, self.ax
-            
-    def update(self):
-        # Update the plot
-        self.keys = []          # Reset the keys, for incoming pause command
-        self.update_display()
-        plt.draw()
-        plt.pause(self.period)
-
-    def handle_close(self, event):
-        # Handle what happens when the window is closed
-        print("Matplotlib window closed.")
-        self.shutdown = True  # Set a global flag to stop the main loop
+            return fig, ax
 
     def draw_rectangle(self, center, width, length, angle=0, color='r'):
         """
@@ -156,39 +135,6 @@ class MatPlotLibUI:
         # Create text and add it to the plot
         text = plt.text(position[0], position[1], text, color=color, fontsize=fontsize)
         self.artists.append(text)
-
-    def update_display(self):
-        """
-        Refresh the display with new positions and orientations.
-        """
-        if self.notebook:
-            self.fig, self.ax = plt.subplots(figsize=self.figsize)
-        
-        # Clear the current axes
-        self.ax.clear()
-        
-        # Set title
-        self.ax.set_title(self.title)
-        
-        # Set the aspect of the plot to be equal
-        self.ax.set_aspect('equal', adjustable='box')
-        
-        # Set plot limits and labels
-        self.ax.set_xlim(0, 100)
-        self.ax.set_ylim(0, 100)
-        self.ax.set_xlabel('X')
-        self.ax.set_ylabel('Y')
-
-        # Redraw the rectangles
-        for rect in self.patches:
-            self.ax.add_patch(rect)
-            
-        # Redraw the text (or other artist objects)
-        for artist in self.artists:
-            self.ax.add_artist(artist)
-                    
-        # Remove rectangles from the list
-        self.patches = []
         
     def get_artists(self, clear=True):
         """
@@ -222,38 +168,4 @@ class MatPlotLibUI:
         ax.set_ylabel('Y')
         
         return fig, ax
-
-    def on_play_button_click(self, event):
-        print("play/pause button clicked")
-        self.paused = not self.paused
-        
-    def on_viz_button_click(self, event):
-        print("Visualize button clicked")
-        webbrowser.open('http://127.0.0.1:5000')
-
-    def on_click(self, event):
-        """
-        Handle mouse click events to move the car.
-        """
-        # Handle mouse being clicked not on plot
-        if event.xdata is None or event.ydata is None:
-            return
-        
-        print(f"Mouse clicked at ({event.xdata}, {event.ydata})")
-        
-        self.draw_rectangle((event.xdata, event.ydata), 4, 8, np.radians(45))
-
-    def on_key_press(self, event):
-        keys = []
-        if event.key == 'up':
-            keys.append('up')
-        if event.key == 'down':
-            keys.append('down')
-        if event.key == 'left':
-            keys.append('left')
-        if event.key == 'right':
-            keys.append('right')
-            
-        # print(f"Key pressed: {keys}")
-        self.keys = keys
 

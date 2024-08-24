@@ -40,7 +40,7 @@ def render_graph(root, open=True):
         
     print('Tree rendered in img/tree.gv')
 
-def add_nodes_and_edges_pyvis(node, net, all_actions, parent_hash=None, show_unsimulated=True):
+def add_nodes_and_edges_pyvis(node, net, action_space, parent_hash=None, show_unsimulated=True):
     node_hash = str(node.__hash__())
     horizon_step = node.state[3]
     # Check if this is the root node (parent is different type, dummy node)
@@ -57,7 +57,7 @@ def add_nodes_and_edges_pyvis(node, net, all_actions, parent_hash=None, show_uns
         
         # Get corner covariance diagonals
         corner_covariance = np.diag(node.state[2])
-        label = "Action: " + " " + str(np.around(all_actions[node.action], 2)) + "\n" + \
+        label = "Action: " + " " + str(np.around(action_space[node.action], 2)) + "\n" + \
                 "Position: " + " " + str(np.around(node.state[0][0:2], 2)) + "\n" + \
                 "Yaw: " + " " + str(np.around(np.degrees(node.state[0][3]))) + "\n" + \
                 "Prior: " + " " + str(np.around(node.prior, 2)) + "\n" + \
@@ -83,7 +83,7 @@ def add_nodes_and_edges_pyvis(node, net, all_actions, parent_hash=None, show_uns
         unsimulated_actions = actions[~np.isin(actions, list(node.children.keys()))]
         for i in unsimulated_actions:
             child_hash = f"{node.__hash__()}_unsim_{i}"
-            label = "Action: " + " " + str(np.around(all_actions[i], 2)) + "\n" + \
+            label = "Action: " + " " + str(np.around(action_space[i], 2)) + "\n" + \
                     "Prior: " + " " + str(np.around(node.child_priors[i], 2)) + "\n" + \
                     "Q value: " + " " + str(np.around(node.child_Q()[i], 2)) + "\n" + \
                     "U value: " + " " + str(np.around(node.child_U()[i], 2)) + "\n" + \
@@ -95,7 +95,7 @@ def add_nodes_and_edges_pyvis(node, net, all_actions, parent_hash=None, show_uns
     
     # Add children recursively
     for child in node.children.values():
-        add_nodes_and_edges_pyvis(child, net, all_actions, parent_hash=node_hash, show_unsimulated=show_unsimulated)
+        add_nodes_and_edges_pyvis(child, net, action_space, parent_hash=node_hash, show_unsimulated=show_unsimulated)
     
     # # If this is a random node, make it square
     # if "RandomNode" in str(type(node)):
@@ -142,10 +142,10 @@ def add_nodes_and_edges_pyvis(node, net, all_actions, parent_hash=None, show_uns
     # for child in node.children.values():
     #     add_nodes_and_edges_pyvis(child, net, node_hash)
 
-def render_pyvis(root, all_actions, show_unsimulated=True):
+def render_pyvis(root, action_space, show_unsimulated=True):
     net = Network(height="1200px", width="100%", directed=True)
     net.force_atlas_2based()
-    add_nodes_and_edges_pyvis(root, net, all_actions, show_unsimulated=show_unsimulated)
+    add_nodes_and_edges_pyvis(root, net, action_space, show_unsimulated=show_unsimulated)
     
     ### Both show buttons and setting options don't work together
     # net.show_buttons()

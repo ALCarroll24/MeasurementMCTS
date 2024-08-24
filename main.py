@@ -21,38 +21,23 @@ from matplotlib.animation import FuncAnimation
 from IPython.display import display, HTML
 
 class MeasurementControlEnvironment(Environment):
-    def __init__(self, notebook=False, one_iteration=False, display_evaluation=False, time_evaluation=False, no_flask_server=False, enable_ui=True):
-        # Flag for whether to run one iteration for profiling
-        self.one_iteration = one_iteration
-        if self.one_iteration:
-            print("Running one iteration for profiling")
-            self.draw = False
-        else:
-            self.draw = True
-        
-        self.enable_flask_server = not no_flask_server
-            
-        # Determine update rate
-        self.ui_update_rate = 40.0 # Hz (determines pause time for UI update)
+    def __init__(self):
+        # Time step for simulations
         self.simulation_dt = 0.3 # time step size for forward simulation search
         
         # MCTS search parameters
-        self.num_processes = 1 # number of processes to use for parallel MCTS search (1 for single threaded)
         self.horizon_length = 500 # length of the planning horizon
-        self.learn_iterations = 1000 # number of learning iterations for MCTS (one set of: selection, expansion, evaluation, backpropagation)
-        self.exploration_factor = 0.3  # exploration factor for MCTS
-        self.discount_factor = 1.0  # discount factor for MCTS (1 means no discounting and 0 only considers immediate rewards)
         self.final_cov_trace = 0.03 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
         
         # MCTS Action space parameters
         long_acc_options = np.array([-1., -0.5, 0., 0.5, 1.]) # options for longitudinal acceleration (scaled from [-1, 1] to vehicle [-max_acc, max_acc])
         steering_acc_options = np.array([-1., -0.25, 0., 0.25, 1.]) # options for steering acceleration (scaled from [-1, 1] to vehicle [-max_steering_alpha, max_steering_alpha])
-        self.all_actions = np.array(np.meshgrid(long_acc_options, steering_acc_options)).T.reshape(-1, 2) # Generate all combinations using the Cartesian product of the two action spaces
+        self.action_space = np.array(np.meshgrid(long_acc_options, steering_acc_options)).T.reshape(-1, 2) # Generate all combinations using the Cartesian product of the two action spaces
         
         # Move the zero action to the front of the list (this is the default action)
         zero_action = np.array([0.0, 0.0])
-        zero_action_index = np.where(np.all(self.all_actions == zero_action, axis=1))[0][0]
-        self.all_actions = np.concatenate((self.all_actions[zero_action_index:], self.all_actions[:zero_action_index]))
+        zero_action_index = np.where(np.all(self.action_space == zero_action, axis=1))[0][0]
+        self.action_space = np.concatenate((self.action_space[zero_action_index:], self.action_space[:zero_action_index]))
         
         # Simulated car and attached sensor parameters
         initial_car_state = np.array([30.0, 20.0, 10., np.radians(45), 0.0, 0.0])
@@ -91,15 +76,8 @@ class MeasurementControlEnvironment(Environment):
         ooi_init_covariance = measurement_model(ooi_noisy_corners, np.arange(4), initial_car_state[:2], initial_car_state[3], # Initial Covariance matrix for the OOI
                                                 min_range=self.min_range, min_bearing=self.min_bearing, range_dev=initial_range_std_dev, bearing_dev=initial_bearing_std_dev)
         self.covariance_trace_init = np.trace(ooi_init_covariance)
-        
-        # Create a plotter object unless we are profiling
-        title = f'sim step size={self.simulation_dt}, Explore factor={self.exploration_factor}, Horizon={self.horizon_length}, Learn Iterations={self.learn_iterations}\n' + \
-                f'Evaluation Steps={self.eval_steps}, Evaluation dt={self.eval_dt}, Obstacle rew min={-obs_rew_norm_min}'
-        if enable_ui:
-            self.ui = MatPlotLibUI(notebook=notebook, update_rate=self.ui_update_rate, title=title, single_plot=display_evaluation)
-        else:
-            self.ui = None
-        self.ui_was_paused = False # Flag for whether the UI was paused before the last iteration
+                
+        self.ui = MatPlotLibUI()
         
         # Create a car object
         self.car = Car(initial_car_state, max_bearing=sensor_max_bearing, max_range=sensor_max_range, ui=self.ui)
@@ -132,42 +110,6 @@ class MeasurementControlEnvironment(Environment):
         # self.ooi.soft_collision_points = get_interpolated_polygon_points(self.ooi.soft_collision_polygon, num_points=50)
         # self.soft_ooi_poly = self.ooi.soft_collision_polygon
         
-        # if true time difference between evaluations (KDTree vs Full environment step evaluation)
-        if time_evaluation:
-            start_time = timeit.default_timer()
-            _ = self.evaluate(self.get_state(), draw=False)
-            kd_tree_time_taken = timeit.default_timer() - start_time
-            print(f'KDTree Evaluation Time: {kd_tree_time_taken} seconds')
-            start_time = timeit.default_timer()
-            _ = self.full_evaluate(self.all_actions[0,:], self.get_state(), depth=0, draw=False)
-            full_time_taken = timeit.default_timer() - start_time
-            print(f'Full Evaluation Time: {full_time_taken} seconds')
-            times_faster = full_time_taken / kd_tree_time_taken
-            print(f'KDTree Evaluation is {times_faster} times faster than full evaluation')
-            exit()
-        
-        # If we are just plotting the evaluation, do that and exit
-        if display_evaluation:
-            self.display_evaluation(self.get_state(), draw=True)
-            exit()
-        
-        # Save the last action (mainly used for relative manual control)
-        self.last_action = np.array([0.0, 0.0])
-        
-        # Run flask server which makes web MCTS tree display and communicates clicked nodes
-        if self.one_iteration or not self.enable_flask_server:
-            self.flask_server = None
-        else:
-            self.flask_server = FlaskServer()
-            self.flask_server.run_thread()
-        
-        # Initialize variables for clicked node display
-        self.last_node_clicked = None
-        self.last_node_hash_clicked = None
-        
-        # Flag for whether simulated state is being drawn (Used for pausing UI and clicking nodes to display simulated state)
-        self.drawing_simulated_state = False
-        
         # Flag for whether goal has been reached
         self.done = False
         
@@ -176,136 +118,31 @@ class MeasurementControlEnvironment(Environment):
     @property
     def N(self):
         """ Number of actions in the action space """
-        return len(self.all_actions)
+        return len(self.action_space)
 
     @N.setter
     def N(self, value):
         self.N = value
 
-    def run(self): 
-    # Loop until matplotlib window is closed (handled by the UI class)
-        while(True):
-            
-            # Only update controls if the UI is not paused or if we are doing one iteration
-            if (self.one_iteration is True) or (not self.ui.paused):
-                # Reset the flag for whether the UI was paused before the last iteration
-                self.ui_was_paused = False
-                
-                # Get the observation from the OOI, pass it to the KF for update
-                start_time = timeit.default_timer()
-                observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state(), draw=self.draw)
-                print(f'Observation Time: {timeit.default_timer() - start_time}')
-                
-                # If there are no observable corners, skip the update
-                if len(indeces) > 0:
-                    self.skf.update(observable_corners, indeces, self.car.get_state())
-                
-                # Check if we are done (normalized covariance trace is below threshold)
-                done = self.check_done(self.get_state())
-                if done:
-                    print("Goal Reached")
-                    self.ui.paused = True
-                
-                # Print normalized covariance trace compared to final trace
-                trace_normalized = min_max_normalize(np.trace(self.skf.P_k), 0, self.covariance_trace_init)
-                print(f'Normalized Covariance Trace: {np.round(trace_normalized, 4)} Final: {self.final_cov_trace}')
-                
-                ############################ AUTONOMOUS CONTROL ############################
-                # Create an MCTS object
-                # mcts = MCTS(initial_obs=self.get_state(), env=self, K=self.exploration_factor,
-                #             _hash_action=hash_action, _hash_state=hash_state,
-                #             horizon_length=self.horizon_length, discount_factor=self.discount_factor)                
-                # start_time = time.time()
-                # mcts.learn(self.learn_iterations, progress_bar=False)
-                # print(f'MCTS Time: {time.time() - start_time}')
-                
-                # # Get the best action from the MCTS tree
-                # action_vector = mcts.best_action()
-                # print("MCTS Action: ", action_vector)
-                
-                # Run MCTS search
-                if self.num_processes == 1:
-                    # Single threaded MCTS search
-                    start_time = timeit.default_timer()
-                    action_vector, root_node = mcts_search(self, self.get_state(), self.learn_iterations)
-                    print(f'Single Threaded MCTS Time: {timeit.default_timer() - start_time}')
-                else:
-                    # Parallel MCTS search
-                    start_time = timeit.default_timer()
-                    action_vector, root_node = parallel_mcts_search(self, self.get_state(), self.learn_iterations,
-                                                                   num_processes=self.num_processes)
-                    print(f'Parallel MCTS Time: {timeit.default_timer() - start_time}')
-                
-                # Get the next state by looking through tree based on action    
-                # next_state = list(mcts.root.children[hash_action(action_vector)].children.values())[0].state
-                
-                # Call reward to print useful information about the state from reward function
-                # reward, done = self.get_reward(next_state, action_vector, print_rewards=True)
-                # print(f'Total Reward: {reward}')
-                
-                ############################ MANUAL CONTROL ############################
-                # Get the control inputs from the arrow keys, pass them to the car for update
-                # relative_action_vector = self.car.get_arrow_key_control()
-                # action_vector = self.car.add_input(relative_action_vector, self.last_action)   # This adds the control input rather than directly setting it (easier for keyboard control)
-                
-                # Update the car's state based on the control inputs
-                self.car.update(self.simulation_dt, action_vector)
-                
-                self.drawing_simulated_state = False
-                
-            else:
-                # Only render the MCTS tree if the UI was not paused before the last iteration so that the tree is not rendered multiple times
-                if not self.ui_was_paused:
-                    render_pyvis(root_node, self.all_actions)
-                    self.ui_was_paused = True
-                    
-                # Check if a node has been clicked
-                if self.last_node_hash_clicked != self.flask_server.node_clicked:
-                    clicked_node = mcts.get_node(self.flask_server.node_clicked)
-                    
-                    if clicked_node is None:
-                        print("Node not found")
-                        print("Either refresh (viewing old tree) or click on decision node (not random node)")
-                    else:
-                        self.drawing_simulated_state = True
-                        self.last_node_clicked = clicked_node
-                        self.last_node_hash_clicked = self.flask_server.node_clicked
-                        print("Node clicked: \n", self.last_node_clicked)
-            
-            # Draw either simulated state or current state
-            if self.drawing_simulated_state:
-                # Update displays based on clicked node
-                self.car.draw_state(self.last_node_clicked.state[0])
-                self.skf.draw_state(self.last_node_clicked.state[1], self.last_node_clicked.state[2])
-                self.ooi.draw() # Just draw rectangles same ground truth
-                self.eval_kd_tree.draw_obstacles()
-            else:
-                # Update current state displays
-                self.car.draw()
-                self.ooi.draw()
-                self.skf.draw()
-                self.eval_kd_tree.draw_obstacles()
-                # self.draw_simulated_states(mcts)
-                    
-                # If we are only doing one iteration
-                if self.one_iteration:
-                    # Render the MCTS tree (viewable in browser by opening tree_visualization.html)
-                    render_pyvis(root_node)
-                    
-                    # Create a single plot for the UI
-                    self.ui.single_plot()
-                    
-                    # And exit
-                    exit()
-            
-            # Update the ui to display the new state
-            self.ui.update()
-            
-            # Check for shutdown flag
-            if self.ui.shutdown and self.enable_flask_server:
-                self.flask_server.stop_flask()
-                break
-            
+    def update(self, action):
+        # Update the car's state based on the control inputs
+        self.car.update(self.simulation_dt, action)
+        
+        observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state(), draw=self.draw)
+
+        # If there are no observable corners, skip the update
+        if len(indeces) > 0:
+            self.skf.update(observable_corners, indeces, self.car.get_state())
+        
+        # Check if we are done (normalized covariance trace is below threshold)
+        done = self.check_done(self.get_state())
+        if done:
+            print("Goal Reached")
+        
+        # Print normalized covariance trace compared to final trace
+        trace_normalized = min_max_normalize(np.trace(self.skf.P_k), 0, self.covariance_trace_init)
+        print(f'Normalized Covariance Trace: {np.round(trace_normalized, 4)} Final: {self.final_cov_trace}')
+        
     def reset(self) -> tuple:
         """
         Reset the environment to a random state
@@ -341,8 +178,6 @@ class MeasurementControlEnvironment(Environment):
         # Return the initial state
         return (car_state, corner_means.flatten(), initial_covariance, 0)
         
-        
-            
     def get_state(self, horizon=0) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
         '''
         Returns full state -> Tuple[Car State, Corner Mean, Corner Covariance, Horizon]
@@ -455,7 +290,7 @@ class MeasurementControlEnvironment(Environment):
         
         # Evaluate for each action in action space
         prior_reward = np.zeros([self.N], dtype=np.float32)
-        for n, action in enumerate(self.all_actions):
+        for n, action in enumerate(self.action_space):
             # Pass the car state to the KDTree evaluation to get the reward
             prior_reward[n] = self.eval_kd_tree.evaluate(action, state[0], norm_point_traces, state[3], self.discount_factor, draw=draw)
             
@@ -489,7 +324,7 @@ class MeasurementControlEnvironment(Environment):
         # test_actions = np.array([[-1.0, 0.0], [-1.0, -1.0], [-1.0, 1.0]])
         
         for a in test_actions:
-        # for a in self.all_actions:
+        # for a in self.action_space:
             print()
             print(f'Action: {a}')
             # Run the KDTree evaluation
@@ -510,7 +345,9 @@ class MeasurementControlEnvironment(Environment):
             # Create plot for the UI
             self.ui.single_plot()
     
-    def draw_state(self, state, plot=True, root_node=None, rew=None, q_val=None, qu_val=None, scaling=1, bias=0, max=4, get_fig_ax: bool=False) -> None:
+    def draw_state(self, state, title=None, plot=True, root_node=None, 
+                   rew=None, q_val=None, qu_val=None, scaling=1, bias=0,
+                   max=4, get_fig_ax: bool=False):
         """
         Draw the state on the UI.
         
@@ -538,10 +375,7 @@ class MeasurementControlEnvironment(Environment):
             self.draw_simulated_states(root_node, rew=rew, q_val=q_val, qu_val=qu_val, scaling=scaling, bias=bias, max=max)
         
         if plot:
-            if get_fig_ax:
-                return self.ui.single_plot(get_fig_ax=get_fig_ax)
-            else:
-                self.ui.single_plot(get_fig_ax=get_fig_ax)
+            return self.ui.plot(get_fig_ax=get_fig_ax)
     
     def draw_simulated_states(self, node, rew=False, q_val=False, qu_val=False, scaling=1, bias=0, max=4) -> None:
         """
@@ -616,7 +450,7 @@ class MeasurementControlEnvironment(Environment):
             return ax.patches
         
         # Get the figure and axis from the UI
-        fig, ax = self.ui.get_figure()
+        fig, ax = self.ui.plot(get_fig_ax=True)
         plt.close()
         
         # Track the last index to avoid desyncing from the action set when matplotlib calls the same frame multiple times

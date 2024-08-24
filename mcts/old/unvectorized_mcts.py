@@ -181,7 +181,7 @@ class MCTS:
             eval_reward_total = 0.0 # Track total evaluation reward
             
             # Expand with all actions
-            for a in self.env.all_actions:
+            for a in self.env.action_space:
                 ### EVALUATION PHASE (rollout with action repeated from current state)
                 # KD tree simplified fast evaluation function in the environment class
                 eval_reward = self.env.evaluate(a, decision_node.state, decision_node.get_depth())
@@ -198,7 +198,7 @@ class MCTS:
         decision_node.visits += 1
         
         # Average evaluation rewards and place into the decision node
-        avg_eval_reward = eval_reward_total / len(self.env.all_actions)
+        avg_eval_reward = eval_reward_total / len(self.env.action_space)
         decision_node.avg_eval_reward = avg_eval_reward
         
         # Calculate return for this node (already discounted evaluation reward + discounted reward)

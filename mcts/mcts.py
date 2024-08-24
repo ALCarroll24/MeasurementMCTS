@@ -218,7 +218,7 @@ class MCTSNode:
              
             # If not, Run the simulation and update the child
             else:
-                new_state, reward, done = self.env.step(self.state, self.env.all_actions[action])
+                new_state, reward, done = self.env.step(self.state, self.env.action_space[action])
                 self.children[action] = MCTSNode(self.env, new_state, action, explore_factor=self.explore_factor,
                                                  discount_factor=self.discount_factor, reward=reward, parent=self, 
                                                  done=done, parallel=self.parallel)
@@ -266,7 +266,7 @@ def get_best_action_trajectory(root: MCTSNode, highest_Q=False):
             best_action = np.argmax(current.child_Q())
         else:
             best_action = current.best_child() # this accounts for upper confidence bound
-        trajectory.append(current.env.all_actions[best_action])
+        trajectory.append(current.env.action_space[best_action])
         
         # Break if the best child node does not exist (hasn't been expanded yet)
         if best_action not in current.children:
@@ -313,7 +313,7 @@ def mcts_search(env: Environment, eval, starting_state: np.ndarray, learning_ite
         # eval.optimize_model() # Optimize the model using replay memory which we just added one transition to
 
     # Return the action with the most visits and the root node
-    return env.all_actions[np.argmax(root.child_number_visits)], root
+    return env.action_space[np.argmax(root.child_number_visits)], root
 
 def create_shared_array(shape, dtype=ctypes.c_float):
     """
