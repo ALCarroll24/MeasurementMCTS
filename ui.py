@@ -68,14 +68,14 @@ class MatPlotLibUI:
         
         self.patches.append(rect)
         
-    def draw_circle(self, center, radius, color='r'):
+    def draw_circle(self, center, radius, alpha=1.0, color='r', facecolor='none'):
         """
         Draw a circle on the plot.
         :param center: Tuple (x, y) for the center of the circle.
         :param radius: Radius of the circle.
         """
         # Create a circle and add it to the plot
-        circle = patches.Circle(center, radius, linewidth=1, edgecolor=color, facecolor='none')
+        circle = patches.Circle(center, radius, linewidth=1, alpha=alpha, edgecolor=color, facecolor=facecolor)
 
         self.patches.append(circle)
         
@@ -115,14 +115,14 @@ class MatPlotLibUI:
 
         self.patches.append(arrow)
         
-    def draw_polygon(self, points, color='b', linestyle='--', linewidth=1, closed=True, alpha=1.0):
+    def draw_polygon(self, points, color='b', linestyle='--', linewidth=1, closed=True, alpha=1.0, facecolor='none'):
         """
         Draw a path on the plot.
         :param path: List of tuples [(x1, y1), (x2, y2), ...] for the path.
         """
         # Create a scatter plot and add it to the plot with line markers
         x, y = zip(*points)
-        poly_patch = patches.Polygon(np.column_stack((x, y)), closed=closed, edgecolor=color, facecolor='none', 
+        poly_patch = patches.Polygon(np.column_stack((x, y)), closed=closed, edgecolor=color, facecolor=facecolor, 
                                      linestyle=linestyle, linewidth=linewidth, alpha=alpha)
         self.patches.append(poly_patch)
         

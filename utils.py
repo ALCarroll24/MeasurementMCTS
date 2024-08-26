@@ -120,3 +120,13 @@ def get_pixels_and_values(grid: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     values = grid[pixel_indices[:, 0], pixel_indices[:, 1]] # Values of cells matching the pixel indices
     
     return pixel_indices, values
+
+def get_ellipse_scaling(cov):
+    eigvals, eigvecs = np.linalg.eig(cov)
+
+    # Angle of first eigen column vector
+    eigvec1 = eigvecs[:,0] # First column
+    eigvec1_angle = np.arctan2(eigvec1[1], eigvec1[0])
+    
+    # Return eigenvalues [width, height] and angle of first eigenvector (rotation)
+    return eigvals, eigvec1_angle
