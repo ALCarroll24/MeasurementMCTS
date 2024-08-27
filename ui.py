@@ -104,14 +104,14 @@ class MatPlotLibUI:
 
         self.patches.append(point)
         
-    def draw_arrow(self, start, end, color='b', width=1):
+    def draw_arrow(self, start, end, color='b', width=1, alpha=1.0):
         """
         Draw an arrow on the plot.
         :param start: Tuple (x, y) for the start of the arrow.
         :param end: Tuple (x, y) for the end of the arrow.
         """
         # Create an arrow and add it to the plot
-        arrow = patches.Arrow(start[0], start[1], end[0] - start[0], end[1] - start[1], width=width, color=color)
+        arrow = patches.Arrow(start[0], start[1], end[0] - start[0], end[1] - start[1], width=width, color=color, alpha=alpha)
 
         self.patches.append(arrow)
         
