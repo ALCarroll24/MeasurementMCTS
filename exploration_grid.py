@@ -6,40 +6,31 @@ from scipy.ndimage import zoom
 from utils import wrapped_angle_diff, get_pixels_and_values
 
 class ExplorationGrid:
-    def __init__(self, env, bounds: np.ndarray, padding: np.ndarray=np.array([15,15]),
-                 meters_per_pixel: float=1):
+    def __init__(self, bounds: np.ndarray, meters_per_pixel: float,
+                 car_max_range: float, car_max_bearing: float, ui=None):
         """
         Initialize the exploration grid.
         :param bounds: Numpy array with the bounds of the grid. [[x_min, x_max], [y_min, y_max]]
-        :param padding: Numpy array with the padding to add to the grid for x and y.
         :param meters_per_pixel: Meters per pixel of the grid.
         """
-        # Keep a copy of the environment
-        self.env = env
-        
-        # Make a copy of the mean bounds and add padding
-        bounds = copy(bounds)
-        x_padding_m, y_padding_m = padding # meters of padding to add to the grid on each side
-        bounds[:, 0] -= np.array([x_padding_m, y_padding_m])
-        bounds[:, 1] += np.array([x_padding_m, y_padding_m])
-        
         # Grid origin is the minimum x and y values
         self.grid_origin = bounds[:, 0]
 
         # Get conversion between pixels and meters
         self.meters_per_pixel = meters_per_pixel
-        self.meter_HW = bounds[:, 1] - bounds[:, 0] # This gives height and width in meters
-        pixel_HW = 1/meters_per_pixel * self.meter_HW
+        self.len_meters_xy = bounds[:, 1] - bounds[:, 0] # This gives length and height in meters
+        pixel_HW = 1/meters_per_pixel * self.len_meters_xy
 
         # Create grid using pixel height and width
         self.grid = np.ones((int(pixel_HW[0]), int(pixel_HW[1])))
         self.initial_grid = copy(self.grid)
         
         # Get the car parameters we need
-        self.car_max_range = self.env.car.max_range
-        self.car_max_bearing = env.car.max_bearing
-        self.car_length = env.car.length
+        self.car_max_range = car_max_range
+        self.car_max_bearing = car_max_bearing
         
+        # Store the ui
+        self.ui = ui
         
     def get_state(self):
         """
@@ -61,7 +52,7 @@ class ExplorationGrid:
         for (i, j), value in np.ndenumerate(grid):
             grid_xy = np.array([i, j]) * self.meters_per_pixel
             world_xy = grid_xy + self.grid_origin
-            self.env.ui.patches.append(Rectangle(world_xy, self.meters_per_pixel, self.meters_per_pixel,
+            self.ui.patches.append(Rectangle(world_xy, self.meters_per_pixel, self.meters_per_pixel,
                                              linewidth=1, alpha=0.2, facecolor='g' if value == 1 else 'w'))
             
     def update(self, grid: np.ndarray, car_state: np.ndarray):
@@ -76,23 +67,64 @@ class ExplorationGrid:
         # Get a copy before modifying the given grid
         new_grid = copy(grid)
         
-        # Center of grid in world coordinates
-        grid_center = self.grid_origin + self.meters_per_pixel * np.array([new_grid.shape[0]//2, new_grid.shape[1]//2])
+        # Create a rectangular bounding box for the car sensor range to minimize number of cell checks
+        # Start by creating vectors from the car pointing in the direction of the car's heading and +/- max bearing
+        farthest_range_vectors = np.array([[np.cos(car_state[3]),
+                                            np.sin(car_state[3])],
+                                           [np.cos(car_state[3] + self.car_max_bearing),
+                                            np.sin(car_state[3] + self.car_max_bearing)],
+                                           [np.cos(car_state[3] + self.car_max_bearing/2),
+                                            np.sin(car_state[3] + self.car_max_bearing/2)],
+                                           [np.cos(car_state[3] - self.car_max_bearing),
+                                            np.sin(car_state[3] - self.car_max_bearing)],
+                                           [np.cos(car_state[3] - self.car_max_bearing/2),
+                                            np.sin(car_state[3] - self.car_max_bearing/2)]])
         
-        # Do an initial check to see if there is no overlap between the car max range box and the grid
-        grid_radius_x, grid_radius_y = self.meter_HW / 2
-        if grid_center[0] - grid_radius_x > car_pos[0] + self.car_max_range or \
-           grid_center[0] + grid_radius_x < car_pos[0] - self.car_max_range or \
-           grid_center[1] - grid_radius_y > car_pos[1] + self.car_max_range or \
-           grid_center[1] + grid_radius_y < car_pos[1] - self.car_max_range:
-            # Since there is no overlap, return the grid as is
-            return new_grid
+        # Normalize and multiply by the sensor range to get points at the farthest range
+        norms = np.linalg.norm(farthest_range_vectors, axis=1).reshape(-1, 1)
+        farthest_range_vectors = farthest_range_vectors / norms * self.car_max_range
+        
+        # Stack the car position with the farthest points to get the 4 corners of the sensor range
+        outer_points = np.vstack((car_state[0:2], farthest_range_vectors + car_state[0:2]))
+        print(f'Outer points: {outer_points}')
+        x_min, x_max = np.min(outer_points[:,0]), np.max(outer_points[:,0])
+        y_min, y_max = np.min(outer_points[:,1]), np.max(outer_points[:,1])
+        
+        # Draw the bounding box as a polygon
+        for point in outer_points:
+            self.ui.draw_point(point, color='r')
+        bb_points = np.array([[x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max], [x_min, y_min]])
+        self.ui.draw_polygon(bb_points, 'r')
+        
+        # Check if the bounding box is outside the grid
+        if x_min > self.grid_origin[0] + self.len_meters_xy[0] or x_max < self.grid_origin[0] or \
+           y_min > self.grid_origin[1] + self.len_meters_xy[1] or y_max < self.grid_origin[1]:
+            return new_grid, 0
+        
+        # Now we need to clip the bounding box to the grid
+        x_min = np.clip(x_min, self.grid_origin[0], self.grid_origin[0] + self.len_meters_xy[0])
+        x_max = np.clip(x_max, self.grid_origin[0], self.grid_origin[0] + self.len_meters_xy[0])
+        y_min = np.clip(y_min, self.grid_origin[1], self.grid_origin[1] + self.len_meters_xy[1])
+        y_max = np.clip(y_max, self.grid_origin[1], self.grid_origin[1] + self.len_meters_xy[1])
+        
+        bb_clipped_points = np.array([[x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max], [x_min, y_min]])
+        self.ui.draw_polygon(bb_clipped_points, 'b')
+        
+        # Convert the mins and maxes into pixel indices
+        x_min_pixel = int((x_min - self.grid_origin[0]) / self.meters_per_pixel)
+        x_max_pixel = int((x_max - self.grid_origin[0]) / self.meters_per_pixel)
+        y_min_pixel = int((y_min - self.grid_origin[1]) / self.meters_per_pixel)
+        y_max_pixel = int((y_max - self.grid_origin[1]) / self.meters_per_pixel)
+        
+        # Now we can work with the grid in the bounding box
+        new_grid_bb = new_grid[x_min_pixel:x_max_pixel, y_min_pixel:y_max_pixel]
         
         # Get the pixel indices and values of the grid
-        pixel_indices, values = get_pixels_and_values(new_grid)
+        pixel_indices, values = get_pixels_and_values(new_grid_bb)
         
-        # Convert into world coordinates (vector to bottom left of grid + pixel indices converted to meters)
-        world_coords = self.grid_origin + self.meters_per_pixel * pixel_indices
+        # Convert into world coordinates 
+        # (vector to bottom left of grid + bottom left of bounding box + (pixel indices min pixels of bounding box)
+        world_coords = self.grid_origin + self.meters_per_pixel * (pixel_indices + np.array([x_min_pixel, y_min_pixel]))
         
         # Now find what points are within the car's max range
         in_range = np.linalg.norm(world_coords - car_pos, axis=1) < self.car_max_range
@@ -106,7 +138,10 @@ class ExplorationGrid:
         num_explored = np.sum(in_range_fov & (values == 1))
         
         # Update the grid points that are in range and in the field of view with the value of 0
-        new_grid[pixel_indices[in_range_fov, 0], pixel_indices[in_range_fov, 1]] = 0
+        new_grid_bb[pixel_indices[in_range_fov, 0], pixel_indices[in_range_fov, 1]] = 0
+        
+        # Now insert the updated bounding box grid back into the original grid
+        new_grid[x_min_pixel:x_max_pixel, y_min_pixel:y_max_pixel] = new_grid_bb
         
         return new_grid, num_explored
     

@@ -14,7 +14,7 @@ class Car:
         
         # Save parameters
         self.max_range = max_range # m
-        self.max_bearing = np.radians(max_bearing) # Max sensor fov in radians (converted from degrees)
+        self.max_bearing = max_bearing # Max sensor fov in radians (converted from degrees)
         self.max_velocity = max_velocity # m/s
         self.range_arrow_length = range_arrow_length # Length of the range arrow which shows the sensor fov
         self.ui = ui # UI object for plotting

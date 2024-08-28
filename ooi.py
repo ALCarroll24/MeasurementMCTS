@@ -11,7 +11,7 @@ class OOI:
         self.corners = corner_locations
         self.std_dev = std_dev
         self.max_range = car_max_range # meters
-        self.max_bearing = np.radians(car_max_bearing) # radians from degrees
+        self.max_bearing = car_max_bearing # radians
         self.ui = ui
         
         # Calculate the collision polygon

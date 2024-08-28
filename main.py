@@ -43,7 +43,7 @@ class MeasurementControlEnvironment(Environment):
         self.min_range = 5. # minimum range for sensor model
         sensor_max_range = 40. # meters
         self.min_bearing = 5. # minimum bearing for sensor model
-        sensor_max_bearing = 60. # degrees
+        sensor_max_bearing = np.radians(60) # degrees
         
         # Evaluation parameters based on KDtree to quickly compute distance to corners and obstacles
         self.eval_steps = 3  # number of steps to evaluate the base policy
@@ -79,6 +79,7 @@ class MeasurementControlEnvironment(Environment):
         padding = np.array([15,15]) # padding to add to the grid for x and y
         meters_per_pixel = 1 # meters per pixel of the grid
         self.explored_cell_reward = 0.0015 # reward for exploring a cell
+        explore_grid_bounds = np.array([[5, 95], [5, 95]]) # bounds of the grid
                 
         # Initial random state bounds (when environment is reset)
         #                                 X,           Y,          v_x,         psi,           delta,       delta_dot
@@ -102,7 +103,7 @@ class MeasurementControlEnvironment(Environment):
                                       bearing_dev=bearing_dev, min_bearing=self.min_bearing, ui=self.ui)
         
         # Exploration grid which gives rewards for exploring the environment
-        self.explore_grid = ExplorationGrid(self, self.mean_corners_bounds, padding=padding, meters_per_pixel=meters_per_pixel)
+        self.explore_grid = ExplorationGrid(explore_grid_bounds, meters_per_pixel, sensor_max_range, sensor_max_bearing, ui=self.ui)
         
         # Create a KDTree for evaluation TODO: This should be created in each main loop (one real time step)
         self.eval_kd_tree = KDTreeEvaluation([ooi_noisy_corners], num_steps=self.eval_steps, dt=self.eval_dt, max_range=sensor_max_range, 

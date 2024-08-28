@@ -392,7 +392,7 @@ def get_image_based_state(env: MeasurementControlEnvironment, state: tuple, widt
     obstacle_means, obstacle_radii = env.eval_kd_tree.get_obstacle_points(), env.eval_kd_tree.get_obstacle_radii()
 
     # Pull out the state components
-    car_state, corner_means, corner_covariance, horizon = state
+    car_state, corner_means, corner_covariance, explore_grid, horizon = state
     corner_means = corner_means.reshape(-1, 2) # Reshape to 2D array where each row is a corner point
     
     # Get car collision length, width and car position and yaw

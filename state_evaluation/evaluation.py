@@ -25,7 +25,7 @@ class KDTreeEvaluation:
         
         # Sensor parameters
         self.max_range = max_range # Maximum range of the sensor
-        self.max_bearing = np.radians(max_bearing) # Maximum bearing (FOV) of the sensor
+        self.max_bearing = max_bearing # Maximum bearing (FOV) of the sensor in radians
         
         # Obstacle parameters
         self.obstacle_std_dev = obstacle_std_dev # Standard deviation of the obstacle corners to create radius
