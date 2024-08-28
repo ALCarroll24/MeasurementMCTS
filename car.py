@@ -8,15 +8,16 @@ from shapely import Polygon
 from copy import deepcopy
 
 class Car:
-    def __init__(self, initial_state, max_range=100., max_bearing=45., max_velocity=10., range_arrow_length=10.0, ui=None):
-        # Save initial state
-        self.state = initial_state
-        
+    def __init__(self, max_range: float, max_bearing: float,
+                 init_pos_bounds: np.ndarray, init_yaw_bounds: np.ndarray, 
+                 range_arrow_length: float=10.0, ui=None):        
         # Save parameters
         self.max_range = max_range # m
         self.max_bearing = max_bearing # Max sensor fov in radians (converted from degrees)
-        self.max_velocity = max_velocity # m/s
+        self.max_velocity = 5 # m/s
         self.range_arrow_length = range_arrow_length # Length of the range arrow which shows the sensor fov
+        self.init_pos_bounds = init_pos_bounds # Initial position bounds for random state generation
+        self.init_yaw_bounds = init_yaw_bounds # Initial yaw bounds for random state generation
         self.ui = ui # UI object for plotting
         
         ###### Jeep Grand Cherokee Trailhawk Parameters ######
@@ -52,8 +53,26 @@ class Car:
         self.max_steering_alpha = np.pi / (quarter_rotation_time**2) / steering_ratio  # Maximum steering angular acceleration in rad/s^2
         self.max_steering_angle = max_steering_wheel_turns * np.pi / steering_ratio  # Maximum steering angle from center in radians
         
+        # Generate random initial state
+        self.state = self.reset()
+        
+    def reset(self):
+        """
+        Reset the car to a random state given by the initial position and yaw bounds and return the state
+        """
+        car_pos = np.random.uniform(self.init_pos_bounds[0], self.init_pos_bounds[1], (2,))
+        car_yaw = np.random.uniform(self.init_yaw_bounds[0], self.init_yaw_bounds[1])
+        self.car_state = np.array([car_pos[0], car_pos[1], 0., car_yaw, 0.0, 0.0])
+        
+        return self.car_state
+        
     # Vehicle model Matrices
     def get_A_matrix(self, yaw, dt):
+        """
+        Returns the A matrix for the vehicle model
+        :param yaw: Yaw angle of the vehicle
+        :param dt: Time step
+        """
         # Maps state space to new state (non-linear by function parameters)
         A = np.array([[1, 0, np.cos(yaw) * dt, 0, 0, 0],
                       [0, 1, np.sin(yaw) * dt, 0, 0, 0],
@@ -64,6 +83,10 @@ class Car:
         return A
     
     def get_B_matrix(self, dt):
+        """
+        Returns the B matrix for the vehicle model
+        :param dt: Time step
+        """
         # Maps control inputs (linear acceleration and angular acceleration) to state space
         B = np.array([[0, 0],
                       [0, 0],
@@ -75,6 +98,12 @@ class Car:
     
     # Given action and state compute new state and return
     def car_model(self, action_vec, state_vec, dt):
+        """
+        Compute the new state of the car given the current state and action
+        :param action_vec: Action vector [v_x_dot, delta_dot_dot] (linear acceleration, steering angle acceleration)
+        :param state_vec: State vector [X, Y, v_x, psi, delta, delta_dot] (x pos, y pos, longitudinal velocity, yaw, steering angle, steering angle rate)
+        :param dt: Time step length
+        """
         # State vector: [X, Y, v_x, psi, delta, delta_dot] (x pos, y pos, longitudinal velocity, yaw, steering angle, steering angle rate)
         # Action vector: [v_x_dot, delta_dot_dot] (linear acceleration, steering angle acceleration)
         
@@ -138,7 +167,7 @@ class Car:
         return new_state
     
     # Update the car class or return the new state (when given a starting state) based on the action
-    def update(self, dt, action, starting_state=None):        
+    def update(self, dt, action, starting_state=None):
         # If we are doing forward simulation, we need to pass in the starting state
         # MUY IMPORTANTE - take a copy of the state, otherwise we will be modifying the original state object
         if starting_state is not None:

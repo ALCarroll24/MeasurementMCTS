@@ -23,7 +23,6 @@ class ExplorationGrid:
 
         # Create grid using pixel height and width
         self.grid = np.ones((int(pixel_HW[0]), int(pixel_HW[1])))
-        self.initial_grid = copy(self.grid)
         
         # Get the car parameters we need
         self.car_max_range = car_max_range
@@ -32,12 +31,27 @@ class ExplorationGrid:
         # Store the ui
         self.ui = ui
         
-    def get_state(self):
+    def reset(self):
         """
-        Get the state of the grid.
+        Reset the grid maintained by the class to all ones and return it.
+        """
+        self.grid = np.ones_like(self.grid)
+        
+        return self.grid
+        
+    def get_grid(self):
+        """
+        Get the grid maintained by the class.
         :return: Tuple of the grid and the number of points in range and field of view.
         """
         return self.grid
+    
+    def set_grid(self, grid: np.ndarray):
+        """
+        Set the grid maintained by the class.
+        :param grid: Grid to set.
+        """
+        self.grid = grid
         
     def draw_grid(self, grid: np.ndarray, color: str='g'):
         """
@@ -86,15 +100,8 @@ class ExplorationGrid:
         
         # Stack the car position with the farthest points to get the 4 corners of the sensor range
         outer_points = np.vstack((car_state[0:2], farthest_range_vectors + car_state[0:2]))
-        print(f'Outer points: {outer_points}')
         x_min, x_max = np.min(outer_points[:,0]), np.max(outer_points[:,0])
         y_min, y_max = np.min(outer_points[:,1]), np.max(outer_points[:,1])
-        
-        # Draw the bounding box as a polygon
-        for point in outer_points:
-            self.ui.draw_point(point, color='r')
-        bb_points = np.array([[x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max], [x_min, y_min]])
-        self.ui.draw_polygon(bb_points, 'r')
         
         # Check if the bounding box is outside the grid
         if x_min > self.grid_origin[0] + self.len_meters_xy[0] or x_max < self.grid_origin[0] or \
@@ -106,9 +113,6 @@ class ExplorationGrid:
         x_max = np.clip(x_max, self.grid_origin[0], self.grid_origin[0] + self.len_meters_xy[0])
         y_min = np.clip(y_min, self.grid_origin[1], self.grid_origin[1] + self.len_meters_xy[1])
         y_max = np.clip(y_max, self.grid_origin[1], self.grid_origin[1] + self.len_meters_xy[1])
-        
-        bb_clipped_points = np.array([[x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max], [x_min, y_min]])
-        self.ui.draw_polygon(bb_clipped_points, 'b')
         
         # Convert the mins and maxes into pixel indices
         x_min_pixel = int((x_min - self.grid_origin[0]) / self.meters_per_pixel)
@@ -145,17 +149,4 @@ class ExplorationGrid:
         
         return new_grid, num_explored
     
-    def get_upscaled_pixels_and_values(self, grid: np.ndarray, meters_per_pixel: float=1) -> Tuple[np.ndarray, np.ndarray, float]:
-        """
-        Upscale if resolution is lower than input and return pixel indices corresponding values and new resolution.
-        :param grid: Grid to convert.
-        :return: Tuple of pixel indices and corresponding values.
-        """
-        meters_per_pixel = np.clip(meters_per_pixel, self.meters_per_pixel, None) # Clip to be at least the current resolution
-        upscale_factor = meters_per_pixel / self.meters_per_pixel
-        upscaled_grid = zoom(grid, upscale_factor, order=0) # Nearest neighbor interpolation
-        
-        pixel_indices, meters_per_pixel = get_pixels_and_values(upscaled_grid)
-        
-        return pixel_indices, meters_per_pixel, meters_per_pixel
         
