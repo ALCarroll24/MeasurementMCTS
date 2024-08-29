@@ -43,6 +43,10 @@ class StaticKalmanFilter:
         # Pull out car position and yaw
         car_pos = car_state[0:2]
         car_yaw = car_state[3]
+        
+        # Take copies of the mean and covariance to be safe (avoid changing the original)
+        mean = mean.copy()
+        cov = cov.copy()
 
         # Get the measurement matrix R
         R = measurement_model(z, car_pos, car_yaw, min_range=self.min_range, range_dev=self.range_dev,

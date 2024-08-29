@@ -13,6 +13,9 @@ class MatPlotLibUI:
         # Text is an artist which we can also save for later update
         self.artists = []
         
+        # Store the background image (if any)
+        self.background_image = None
+        
         # Flag for stopping the plotting loop and title
         self.shutdown = False
         self.title = title
@@ -36,6 +39,11 @@ class MatPlotLibUI:
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
 
+        # Draw the background image
+        if self.background_image is not None:
+            image, extent, alpha = self.background_image
+            ax.imshow(image, extent=extent, alpha=alpha)
+
         # Redraw the rectangles
         for rect in self.patches:
             ax.add_patch(rect)
@@ -44,12 +52,22 @@ class MatPlotLibUI:
         for artist in self.artists:
             ax.add_artist(artist)
                     
-        # Remove patches and artists
+        # Remove patches, artists and background image
         self.patches = []
         self.artists = []
+        self.background_image = None
+        
         
         if get_fig_ax:
             return fig, ax
+
+    def draw_background_image(self, image, extent, alpha=1.0):
+        """
+        Draw a background image on the plot.
+        :param image: Image to draw.
+        :param extent: Extent of the image.
+        """
+        self.background_image = (image, extent, alpha)
 
     def draw_rectangle(self, center, width, length, angle=0, color='r'):
         """

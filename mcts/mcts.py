@@ -258,7 +258,7 @@ def get_best_action_trajectory(root: MCTSNode, highest_Q=False):
     :param highest_Q: whether to take the highest Q value action or the highest UCB action
     """
     current = root
-    trajectory = []
+    action_trajectory = []
     
     # Iterate through the best actions until the best action node does not exist
     while True:
@@ -266,7 +266,7 @@ def get_best_action_trajectory(root: MCTSNode, highest_Q=False):
             best_action = np.argmax(current.child_Q())
         else:
             best_action = current.best_child() # this accounts for upper confidence bound
-        trajectory.append(current.env.action_space[best_action])
+        action_trajectory.append(current.env.action_space[best_action])
         
         # Break if the best child node does not exist (hasn't been expanded yet)
         if best_action not in current.children:
@@ -275,7 +275,7 @@ def get_best_action_trajectory(root: MCTSNode, highest_Q=False):
         # Continue traversal
         current = current.children[best_action]
         
-    return trajectory
+    return action_trajectory
 
 class DummyNode(object):
     """

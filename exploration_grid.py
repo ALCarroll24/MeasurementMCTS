@@ -1,13 +1,12 @@
 import numpy as np
 from copy import deepcopy as copy
 from typing import List, Tuple
-from matplotlib.patches import Rectangle
-from scipy.ndimage import zoom
+from matplotlib.colors import ListedColormap
 from utils import wrapped_angle_diff, get_pixels_and_values
 
 class ExplorationGrid:
     def __init__(self, bounds: np.ndarray, meters_per_pixel: float,
-                 car_max_range: float, car_max_bearing: float, ui=None):
+                 car_max_range: float, car_max_bearing: float, grid=None, ui=None):
         """
         Initialize the exploration grid.
         :param bounds: Numpy array with the bounds of the grid. [[x_min, x_max], [y_min, y_max]]
@@ -19,14 +18,14 @@ class ExplorationGrid:
         # Get conversion between pixels and meters
         self.meters_per_pixel = meters_per_pixel
         self.len_meters_xy = bounds[:, 1] - bounds[:, 0] # This gives length and height in meters
-        pixel_HW = 1/meters_per_pixel * self.len_meters_xy
+        self.len_pixels_xy = 1/meters_per_pixel * self.len_meters_xy
 
-        # Create grid using pixel height and width
-        self.grid = np.ones((int(pixel_HW[0]), int(pixel_HW[1])))
-        
         # Get the car parameters we need
         self.car_max_range = car_max_range
         self.car_max_bearing = car_max_bearing
+        
+        # Use the given grid, if it is none raise an error in functions using grid
+        self.grid = grid
         
         # Store the ui
         self.ui = ui
@@ -35,9 +34,10 @@ class ExplorationGrid:
         """
         Reset the grid maintained by the class to all ones and return it.
         """
-        self.grid = np.ones_like(self.grid)
+        # Create grid using pixel height and width
+        grid = np.ones((int(self.len_pixels_xy[0]), int(self.len_pixels_xy[1])))
         
-        return self.grid
+        return grid
         
     def get_grid(self):
         """
@@ -52,22 +52,34 @@ class ExplorationGrid:
         :param grid: Grid to set.
         """
         self.grid = grid
-        
-    def draw_grid(self, grid: np.ndarray, color: str='g'):
+
+    def draw_grid(self, grid: np.ndarray):
         """
-        Draw a state on the grid.
-        :param state: Tuple (x, y) for the state.
-        :param color: Color of the state.
+        Draw grid in the background of the plot using imshow.
+        :param grid: 2D numpy array representing the occupancy grid.
+        :param color: Color to represent occupied cells in the grid.
         """
-        # Pull out the elements of the state
-        # car_state, corner_means, corner_covs, explore_grid, horizon = state
+        if self.ui is None:
+            raise ValueError("UI is not set.")
+        if self.grid is None:
+            raise ValueError("Grid is not set, call reset().")
         
-        # Plot the grid
-        for (i, j), value in np.ndenumerate(grid):
-            grid_xy = np.array([i, j]) * self.meters_per_pixel
-            world_xy = grid_xy + self.grid_origin
-            self.ui.patches.append(Rectangle(world_xy, self.meters_per_pixel, self.meters_per_pixel,
-                                             linewidth=1, alpha=0.2, facecolor='g' if value == 1 else 'w'))
+        # Create a color map based on the input color
+        cmap = ListedColormap(['white', '#98FB98'])
+        
+        # Take the transpose of the grid to match the image coordinates
+        grid_transpose = grid.T
+        
+        # Convert the grid to an image
+        grid_image = cmap(grid_transpose)  # This converts the grid to an RGBA image
+        
+        # Plot the grid using imshow
+        extent=(self.grid_origin[0], 
+                self.grid_origin[0] + grid.shape[1] * self.meters_per_pixel,
+                self.grid_origin[1] + grid.shape[0] * self.meters_per_pixel, 
+                self.grid_origin[1])
+        self.ui.draw_background_image(grid_image, extent, alpha=0.4)
+
             
     def update(self, grid: np.ndarray, car_state: np.ndarray):
         """
@@ -75,6 +87,8 @@ class ExplorationGrid:
         :param state: Tuple (x, y) for the state.
         :return Tuple of updated grid and number of points which were explored.
         """
+        if self.grid is None:
+            raise ValueError("Grid is not set, call reset().")
         # Pull out the elements of the car state
         car_pos, car_yaw = car_state[:2], car_state[3]
         

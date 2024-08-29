@@ -14,6 +14,8 @@ class ObjectTuple(NamedTuple):
     points: np.ndarray=None  # [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
     covariances: List[np.ndarray]=None # [cov1, cov2, cov3, cov4]
     radius: float=None
+    observed: np.ndarray=np.zeros(4, dtype=bool) # [obs1, obs2, obs3, obs4]
+    in_collision: bool=False
 
 class ObjectManager:
     def __init__(self, num_obstacles: int, num_occlusion: int, num_oois: int, car_collision_radius: float,
@@ -35,14 +37,20 @@ class ObjectManager:
         self.car_max_bearing = car_max_bearing
         self.ui = ui
         
-        # Start with no objects if 'df' not set and raise an error if they are not generated
+        # Start with no objects if 'df' not set and raise an error in functions if they are not generated
         self.df = df
-        
+
     def get_df(self):
         """
         This function returns the dataframe of objects maintained by the class
         """
         return self.df
+    
+    def set_df(self, df):
+        """
+        This function sets the dataframe of objects maintained by the class
+        """
+        self.df = df
     
     def reset(self, car_state):
         """
@@ -104,20 +112,26 @@ class ObjectManager:
                     oois.append(new_obj)
                     break
         
-        self.df = pd.DataFrame(obstacles + occlusions + oois)
+        df = pd.DataFrame(obstacles + occlusions + oois)
         
-    def draw_objects(self, car_state, df=None):
+        return df
+        
+    def draw_objects(self, car_state, df=None, observation_arrows=True):
         if self.df is None and df is None:
             raise ValueError('Objects have not been generated yet and no dataframe was passed')
         
         # Use the passed dataframe if it is not None
         if df is None:
-            df = self.df
+            df = self.df    
         
         # Iterate through the rows of the dataframe
         for tuple in df.itertuples(index=True, name='ObjectTuple'):
-            # Draw the car collision radius
-            self.ui.draw_circle(car_state[0:2], self.car_collision_radius, color='r', facecolor='none', alpha=0.1)
+            # Draw the car collision radius and fill in if the object is in a collision
+            if tuple.in_collision:
+                facecolor='orange'
+            else:
+                facecolor='none'
+            self.ui.draw_circle(car_state[0:2], self.car_collision_radius, color='r', facecolor=facecolor, alpha=0.1)
             
             if tuple.object_type == 'obstacle':
                 if tuple.shape == '4polygon':
@@ -145,15 +159,19 @@ class ObjectManager:
                 self.ui.draw_polygon(tuple.points, color='b', facecolor='None', linestyle='--', alpha=1.0)
                 
                 # Draw the points
-                for point in tuple.points:
+                for point, observed in zip(tuple.points, tuple.observed):
                     self.ui.draw_point(point, color='cyan')
+                    if observed:
+                        self.ui.draw_circle(point, 0.5, color='g', facecolor='none', alpha=1.0)
+                        if observation_arrows:
+                            self.ui.draw_arrow(car_state[0:2], point, color='g', alpha=0.1)
                     
                 # Draw the covariance ellipses
                 for pt, cov in zip(tuple.points, tuple.covariances):
                     scalings, angle = get_ellipse_scaling(cov)
                     self.ui.draw_ellipse(pt, scalings[0], scalings[1], angle=angle, color='b', alpha=0.25, linestyle='-')
                     
-    def check_collision(self, car_state, draw=True):
+    def check_collision(self, car_state):
         if self.df is None:
             raise ValueError('Objects have not been generated yet')
         
@@ -202,10 +220,9 @@ class ObjectManager:
         # Return the rows of the input dataframe that are offending
         offending_rows = self.df.loc[offending_indices]
         
-        # If draw is enabled then fill in the car collision radius to show it is in a collision
-        if draw:
-            if not offending_rows.empty:
-                self.ui.draw_circle(car_state[0:2], self.car_collision_radius, color='r', facecolor='orange', alpha=0.3)
+        # Update the in_collision column of the offending rows with true and all others to false
+        self.df['in_collision'] = False
+        self.df.loc[offending_indices, 'in_collision'] = True
             
         return offending_rows
     
@@ -219,6 +236,9 @@ class ObjectManager:
         """
         if self.df is None:
             raise ValueError('Objects have not been generated yet')
+        
+        # Initialize the 'observed' column with a new array of shape (4,) filled with False for each row
+        self.df['observed'] = self.df.apply(lambda x: np.zeros(4, dtype=bool), axis=1)
     
         # Create a rectangular bounding box for the car sensor range to filter out by mean
         # Start by creating vectors from the car pointing in the direction of the car's heading and +/- max bearing
@@ -311,7 +331,11 @@ class ObjectManager:
                 # If there is any non-occluded points, store the observation
                 if np.any(non_occluded):
                     # Store the observation of non-occluded points with key of ooi_id
-                    observations[tuple.ooi_id] = non_ooi_occluded_indices[non_occluded]
+                    observable_indeces = non_ooi_occluded_indices[non_occluded]
+                    observations[tuple.ooi_id] = observable_indeces
+                    
+                    # Also place observable points into observed column of the dataframe
+                    self.df.at[tuple.Index, 'observed'][observable_indeces] = True
                     
                 # Add this OOI as an occlusion for future iterations
                 occluded_bearings = np.vstack((occluded_bearings, np.array([np.min(bearings), np.max(bearings)]))) # Find the min and max bearing of the object
@@ -328,15 +352,5 @@ class ObjectManager:
                 bearing = np.arctan2(tuple.mean[1] - car_state[1], tuple.mean[0] - car_state[0]) - car_state[3]
                 mean_to_edge_angle = np.arcsin(tuple.radius / (tuple.range + tuple.radius)) # Adding back radius which was removed before for sorting
                 occluded_bearings = np.vstack((occluded_bearings, np.array([bearing - mean_to_edge_angle, bearing + mean_to_edge_angle])))
-        
-        if draw:
-            # Draw the observations
-            for ooi_id, indices in observations.items():
-                points = df_ooi[df_ooi['ooi_id'] == ooi_id]['points'].values[0][indices]
-                
-                # Draw the points
-                for point in points:
-                    self.ui.draw_arrow(car_state[0:2], point, color='g', alpha=0.1)
-                    self.ui.draw_circle(point, 0.5, color='g', facecolor='none', alpha=0.7)
                     
         return observations

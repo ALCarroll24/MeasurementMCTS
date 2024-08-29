@@ -41,7 +41,7 @@ class MeasurementControlEnvironment(Environment):
         self.ui = MatPlotLibUI()
                 
         # Create a car model with the initial state bounds
-        init_pos_bounds = np.array([[10., 90.], [10., 90.]])
+        init_pos_bounds = np.array([10., 90.])
         init_yaw_bounds = np.array([-np.pi, np.pi])
         self.car = Car(max_range=sensor_max_range, max_bearing=sensor_max_bearing,
                        init_pos_bounds=init_pos_bounds, init_yaw_bounds=init_yaw_bounds, ui=self.ui)
@@ -74,7 +74,7 @@ class MeasurementControlEnvironment(Environment):
         # Flag for whether goal has been reached
         self.done = False
         
-        # Do initial reset to get the initial state
+        # Do initial reset to set the initial state of each subcomponent at random within bounds
         self.reset()
         
         print("Toy Measurement Control Initialized")
@@ -108,13 +108,13 @@ class MeasurementControlEnvironment(Environment):
     #     trace_normalized = min_max_normalize(np.trace(self.skf.P_k), 0, self.covariance_trace_init)
     #     print(f'Normalized Covariance Trace: {np.round(trace_normalized, 4)} Final: {self.final_cov_trace}')
         
-    def reset(self) -> Tuple[np.ndarray, pd.DataFrame, np.ndarray, int]:
+    def reset(self, first_update=True) -> Tuple[np.ndarray, pd.DataFrame, np.ndarray, int]:
         """
         Reset the environment to a random state
         
         returns (Tuple[Car, objects_dataframe, explore_grid]) the initial state of the environment
         """
-        # Reset the car to a random state
+        # Reset the car to a random state (only random position and yaw), velocities and steering angle are set to 0
         car_state = self.car.reset()
         
         # Reset the object manager to generate a new set of objects
@@ -123,14 +123,44 @@ class MeasurementControlEnvironment(Environment):
         # Reset the exploration grid
         explore_grid = self.explore_grid.reset()
         
+        # Place state into tuple format with horizon set to 0
+        state = (car_state, object_df, explore_grid, 0)
+        
+        # Set the state of the subclasses to this new random initial state
+        self.set_state(state)
+        
+        # If we are doing the first update, then update grid and KF with the initial step
+        # This is done to remove reward gotten for the initial state (which is not a real action)
+        if first_update:
+            # Use the first action (no acceleration) in the action space to get the first state
+            state, reward, done = self.step(state, self.action_space[0])
+            
+            # Unpack state and update subclass states
+            self.set_state(state)
+        
         # Return the initial state
-        return (car_state, object_df, explore_grid, 0)
+        return state
         
     def get_state(self, horizon=0) -> Tuple[np.ndarray, pd.DataFrame, np.ndarray, int]:
         '''
-        Returns full state -> Tuple[Car State, Corner Mean, Corner Covariance, Horizon]
+        Returns full state -> Tuple[Car state, Object Manager DF, Exploration Grid, horizon]
         '''
         return self.car.get_state(), self.object_manager.get_df(), self.explore_grid.get_grid(), horizon
+    
+    def set_state(self, state) -> None:
+        """
+        Set the state of the environment to a specific state.
+        
+        :param state: (np.ndarray) the state tuple (Car state, Object Manager DF, Exploration Grid, horizon)
+        """
+        # Set the car state
+        self.car.set_state(state[0])
+        
+        # Set the object manager state
+        self.object_manager.set_df(state[1])
+        
+        # Set the exploration grid state
+        self.explore_grid.set_grid(state[2])
     
     def step(self, state, action, dt=None) -> Tuple[tuple, float, bool]:
         """
@@ -161,27 +191,28 @@ class MeasurementControlEnvironment(Environment):
         observation_dict = self.object_manager.get_observation(new_car_state, draw=False)
         
         # Get the ooi observed and the indeces of the corners observed
-        trace_delta_sum = 0 # Sum of the difference in trace made in this update
-        new_object_df = deepcopy(object_df) # Copy the object dataframe to update
+        trace_delta_sum = 0. # Sum of the difference in trace made in this update
+        new_object_df = object_df.copy() # Copy the object dataframe to ensure the original is not modified
         for ooi_id, observed_indices in observation_dict.items():
             # Get the row corresponding to this ooi and the means and covariances of the OOI corners
-            ooi_row = object_df.loc[object_df['ooi_id'] == ooi_id]
-            means = ooi_row['points']     # 4x2 numpy array of corner means
-            covs = ooi_row['covariances'] # List of 4 2x2 numpy covariance matrices
+            ooi_index = new_object_df.loc[new_object_df['ooi_id'] == ooi_id].index[0] # Index of the OOI in the object dataframe
+            means = deepcopy(new_object_df.loc[ooi_index, 'points']) # 4x2 numpy array of corner means
+            covs = deepcopy(new_object_df.loc[ooi_index, 'covariances']) # List of 4 2x2 numpy covariance matrices
             
             # Go through the indeces of the OOI points that were observed
             for i in observed_indices:
                 # KF update with the observed corner using the previous mean for now
-                print(f'Means: {means[i,:]}')
-                print(f'Covs: {covs[i]}')
                 prev_trace = np.trace(covs[i]) # Get the trace of the covariance matrix pre-update
                 new_mean, new_cov = self.skf.update(means[i,:], covs[i], means[i,:], new_car_state)
                 trace_delta_sum += prev_trace - np.trace(new_cov) # Add the difference in trace to the sum
                 
-                # Place the new mean and covariance back into the object dataframe
-                new_object_df.loc[new_object_df['ooi_id'] == ooi_id, 'points'][observed_indices, :] = new_mean
-                new_object_df.loc[new_object_df['ooi_id'] == ooi_id, 'covariances'][observed_indices] = new_cov
+                # Place the new mean and covariance into the copied means and covs
+                means[i,:] = new_mean # The numpy arrays are mutable so this will update the original object_df
+                covs[i] = new_cov
                 
+            # Now place the updated means and covs back into the object dataframe
+            new_object_df.at[ooi_index, 'points'] = means
+            new_object_df.at[ooi_index, 'covariances'] = covs
         
         # Update the exploration grid based on the new car state
         new_grid, num_explored = self.explore_grid.update(explore_grid, new_car_state)
@@ -193,8 +224,8 @@ class MeasurementControlEnvironment(Environment):
         reward = obstacle_reward + trace_delta_reward + explore_reward # Total reward is sum of all rewards
         
         # Check if the episode is done
-        ooi_df = object_df[object_df['object_type'] == 'ooi']
-        total_trace = ooi_df['covariances'].apply(lambda matrices: np.sum([np.trace(matrix) for matrix in matrices])).sum()
+        new_ooi_df = new_object_df[new_object_df['object_type'] == 'ooi']
+        total_trace = new_ooi_df['covariances'].apply(lambda matrices: np.sum([np.trace(matrix) for matrix in matrices])).sum()
         done = total_trace < self.final_cov_trace
         
         # Combine the updated car state, mean, covariance and horizon into a new state
@@ -352,7 +383,7 @@ class MeasurementControlEnvironment(Environment):
         car_state, object_df, explore_grid, horizon = state
         
         # Draw the car state
-        self.car.draw_state(car_state)
+        self.car.draw_car_state(car_state)
         
         # Draw the objects in the dataframe
         self.object_manager.draw_objects(car_state, df=object_df)
@@ -405,37 +436,42 @@ class MeasurementControlEnvironment(Environment):
             self.draw_simulated_states(child, rew=rew, q_val=q_val, qu_val=qu_val, scaling=scaling, bias=bias, max=max)
 
     
-    def draw_action_set(self, state, action_set):
+    def draw_action_set(self, root, action_set):
         """
         Use matplotlib animate to create a video with the normal state display over time with actions
-        params: state - initial state of the environment
+        params: root - the root node of the MCTS tree with starting state
                 action_set - list of actions to take in the environment
         """
         # Function called by matplotlib animate to get a frame of the video
         def animate(i):
             # Use the state and axis from the parent function
+            nonlocal current_node
             nonlocal state
             nonlocal ax
             nonlocal last_index
-            
+                        
             # Clear all existing patches from the axis
             for patch in ax.patches:
                 patch.remove()
             
-            # Get the action
-            action = action_set[i]
+            # Get the index of this action using the action space
+            action_idx = np.where(np.all(self.action_space == action_set[i], axis=1))[0][0]
             
             # Draw the state create artists in UI class
             self.draw_state(state, plot=False)
             
-            artists = self.ui.get_artists()
-            
-            for artist in artists:
+            # Add artists to the axis
+            for artist in self.ui.get_artists():
                 ax.add_patch(artist)
+                
+            # Add background image if it exists
+            if self.ui.background_image is not None:
+                ax.imshow(self.ui.background_image[0], extent=self.ui.background_image[1], alpha=self.ui.background_image[2])
             
             # Update state for next iteration if it hasn't already been called
             if last_index != i:
-                state, reward, done = self.step(state, action)
+                state = current_node.state
+                current_node = current_node.children[action_idx]
             last_index = i
             
             return ax.patches
@@ -447,7 +483,10 @@ class MeasurementControlEnvironment(Environment):
         # Track the last index to avoid desyncing from the action set when matplotlib calls the same frame multiple times
         last_index = -1
         
-        ani = FuncAnimation(fig, animate, frames=len(action_set), interval=200, blit=False)
+        # Start traversal at the root node
+        current_node = root
+        state = root.state
+        ani = FuncAnimation(fig, animate, frames=len(action_set)-1, interval=200, blit=False)
             
         # Display the animation in the notebook
         display(HTML(ani.to_jshtml()))
