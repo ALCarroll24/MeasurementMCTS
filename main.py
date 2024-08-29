@@ -18,7 +18,7 @@ class MeasurementControlEnvironment(Environment):
     def __init__(self, init_reset=True):
         # General important parameters
         self.final_cov_trace = 0.03 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
-        self.simulation_dt = 0.3 # time step size for forward simulation search
+        self.simulation_dt = 1.0 # time step size for forward simulation search
         self.obstacle_punishment = -10. # reward for colliding with an obstacle
         self.init_covariance_diag = 8. # Initial diagonal value for all diagonals of (2x2) point covariance matrix
         self.explored_cell_reward = 0.0001 # reward for exploring a cell

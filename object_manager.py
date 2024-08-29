@@ -277,7 +277,7 @@ class ObjectManager:
         # If there is no OOIs in range, which we are doing the occlusion check for, return an empty dictionary of observations
         df_ooi = df_in_bounding_box[df_in_bounding_box['object_type'] == 'ooi']
         if df_ooi.empty:
-            return {}
+            return {}, df
         
         # Now create the range column to later sort the observable objects by minimum range
         car_to_obj_means = np.vstack(df_in_bounding_box['mean']) - car_state[0:2]
