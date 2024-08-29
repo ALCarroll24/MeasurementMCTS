@@ -15,13 +15,13 @@ from matplotlib.animation import FuncAnimation
 from IPython.display import display, HTML
 
 class MeasurementControlEnvironment(Environment):
-    def __init__(self):
+    def __init__(self, init_reset=True):
         # General important parameters
         self.final_cov_trace = 0.03 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
         self.simulation_dt = 0.3 # time step size for forward simulation search
         self.obstacle_punishment = -10. # reward for colliding with an obstacle
         self.init_covariance_diag = 8. # Initial diagonal value for all diagonals of (2x2) point covariance matrix
-        self.explored_cell_reward = 0.0015 # reward for exploring a cell
+        self.explored_cell_reward = 0.0001 # reward for exploring a cell
         
         # Sensor parameters used in Object Manager for observation simulation and minimums for the measurement model
         sensor_min_range = 5. # minimum range for sensor model
@@ -51,7 +51,7 @@ class MeasurementControlEnvironment(Environment):
         num_obstacles = 5   # Random obstacles to generate on reset
         num_occlusions = 5  # Random occlusions to generate on reset
         num_oois = 4        # Random OOI's to generate on reset
-        self.init_covariance_trace = 4 * num_oois * self.init_covariance_diag # Initial trace of all covariance matrices
+        self.init_covariance_trace = 4 * self.init_covariance_diag # Initial trace for one OOI (this defines a reward of 1 for reducing the trace of an OOI to 0)
         car_collision_radius = 3.0 # Collision radius of the car
         object_bounds = np.array([15, 85]) # Bounds for random object generation
         object_size_bounds = np.array([1, 10]) # Bounds for random object size generation
@@ -75,7 +75,8 @@ class MeasurementControlEnvironment(Environment):
         self.done = False
         
         # Do initial reset to set the initial state of each subcomponent at random within bounds
-        self.reset()
+        if init_reset:
+            self.reset()
         
         print("Toy Measurement Control Initialized")
 
@@ -108,7 +109,7 @@ class MeasurementControlEnvironment(Environment):
     #     trace_normalized = min_max_normalize(np.trace(self.skf.P_k), 0, self.covariance_trace_init)
     #     print(f'Normalized Covariance Trace: {np.round(trace_normalized, 4)} Final: {self.final_cov_trace}')
         
-    def reset(self, first_update=True) -> Tuple[np.ndarray, pd.DataFrame, np.ndarray, int]:
+    def reset(self, first_update=True, print_rewards=False) -> Tuple[np.ndarray, pd.DataFrame, np.ndarray, int]:
         """
         Reset the environment to a random state
         
@@ -133,7 +134,7 @@ class MeasurementControlEnvironment(Environment):
         # This is done to remove reward gotten for the initial state (which is not a real action)
         if first_update:
             # Use the first action (no acceleration) in the action space to get the first state
-            state, reward, done = self.step(state, self.action_space[0])
+            state, reward, done = self.step(state, self.action_space[0], print_rewards=print_rewards)
             
             # Unpack state and update subclass states
             self.set_state(state)
@@ -162,7 +163,7 @@ class MeasurementControlEnvironment(Environment):
         # Set the exploration grid state
         self.explore_grid.set_grid(state[2])
     
-    def step(self, state, action, dt=None) -> Tuple[tuple, float, bool]:
+    def step(self, state, action, dt=None, print_rewards=False) -> Tuple[tuple, float, bool]:
         """
         Step the environment by one time step. The action is applied to the car, and the state is observed by the OOI.
         The observation is then passed to the KF for update.
@@ -188,11 +189,10 @@ class MeasurementControlEnvironment(Environment):
         objects_in_collision_df = self.object_manager.check_collision(new_car_state)
         
         # Get an observation from the object manager at this new car state
-        observation_dict = self.object_manager.get_observation(new_car_state, draw=False)
+        observation_dict, new_object_df = self.object_manager.get_observation(new_car_state, df=object_df)
         
         # Get the ooi observed and the indeces of the corners observed
         trace_delta_sum = 0. # Sum of the difference in trace made in this update
-        new_object_df = object_df.copy() # Copy the object dataframe to ensure the original is not modified
         for ooi_id, observed_indices in observation_dict.items():
             # Get the row corresponding to this ooi and the means and covariances of the OOI corners
             ooi_index = new_object_df.loc[new_object_df['ooi_id'] == ooi_id].index[0] # Index of the OOI in the object dataframe
@@ -223,6 +223,13 @@ class MeasurementControlEnvironment(Environment):
         explore_reward = self.explored_cell_reward * num_explored # Reward for exploring unexplored cells
         reward = obstacle_reward + trace_delta_reward + explore_reward # Total reward is sum of all rewards
         
+        # Print rewards if enabled
+        if print_rewards:
+            print(f'Obstacle Reward: {obstacle_reward}')
+            print(f'Trace Delta Reward: {trace_delta_reward}')
+            print(f'Explore Reward: {explore_reward}')
+            print(f'Total Reward: {reward}')
+        
         # Check if the episode is done
         new_ooi_df = new_object_df[new_object_df['object_type'] == 'ooi']
         total_trace = new_ooi_df['covariances'].apply(lambda matrices: np.sum([np.trace(matrix) for matrix in matrices])).sum()
@@ -233,46 +240,6 @@ class MeasurementControlEnvironment(Environment):
         
         # Return the reward and the new state
         return new_state, reward, done
-    
-    
-    # def get_reward(self, cov, new_cov, car_state, num_explored, print_rewards=False) -> Tuple[float, bool]:
-    #     """
-    #     Get the reward of the new state-action pair.
-        
-    #     :cov: (np.ndarray) the covariance matrix of the corners
-    #     :new_cov: (np.ndarray) the new covariance matrix of the corners
-    #     :car_state: (np.ndarray) the state of the car
-    #     :num_explored: (int) the number of points in the field of view and range of the car
-    #     :return: (float, bool) the reward of the state-action pair, and whether the episode is done
-    #     """
-        
-    #     # Normalize the traces between 0 and 1 using the final trace as the min and initial trace as the max
-    #     cov_trace = min_max_normalize(np.trace(cov), self.final_cov_trace, self.covariance_trace_init)
-    #     new_cov_trace = min_max_normalize(np.trace(new_cov), self.final_cov_trace, self.covariance_trace_init)
-        
-        
-    #     # Reward is how much the trace has decreased (higher is better)
-    #     reward = cov_trace - new_cov_trace
-        
-    #     # Print trace for debugging
-    #     if print_rewards:
-    #         print(f'Trace Reward: {reward}')    
-        
-    #     # Get obstacle reward from KDTree evaluation (will be [-obs_rew_norm_min, 0])
-    #     # obs_reward = self.eval_kd_tree.get_obstacle_cost(car_state)
-    #     # Add the obstacle reward to the trace reward
-    #     reward += obs_reward
-        
-    #     reward += self.explored_cell_reward * num_explored
-        
-    #     # Find whether the episode is done based on the trace
-    #     done = new_cov_trace < self.final_cov_trace
-        
-    #     # If done then add a 1 reward to the final state
-    #     if done:
-    #         reward += 1
-        
-    #     return reward, done
         
     def check_done(self, state) -> bool:
         """

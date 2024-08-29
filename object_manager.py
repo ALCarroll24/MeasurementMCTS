@@ -226,7 +226,7 @@ class ObjectManager:
             
         return offending_rows
     
-    def get_observation(self, car_state, draw=True):
+    def get_observation(self, car_state, df=None):
         """
         This is a fast implementation for getting corner observations while considering occlusions.
         It first filters out objects by mean that are outside the sensor range or bearing with a buffer and exits if there are no OOIs in the list.
@@ -234,11 +234,17 @@ class ObjectManager:
         The widest part of the object is found and the bearing interval of the object is masked off.
         Finally OOI points are checked to see if they are occluded by the object itself or any other occlusions and observations are returned.
         """
-        if self.df is None:
+        if self.df is None and df is None:
             raise ValueError('Objects have not been generated yet')
         
-        # Initialize the 'observed' column with a new array of shape (4,) filled with False for each row
-        self.df['observed'] = self.df.apply(lambda x: np.zeros(4, dtype=bool), axis=1)
+        # Either use a copy of the class state or the passed dataframe
+        if df is not None:
+            df = df.copy()
+        else:
+            df = self.df.copy()
+        
+        # Re-initialize the 'observed' column with a new array of shape (4,) filled with False for every element
+        df['observed'] = df.apply(lambda x: np.zeros(4, dtype=bool), axis=1)
     
         # Create a rectangular bounding box for the car sensor range to filter out by mean
         # Start by creating vectors from the car pointing in the direction of the car's heading and +/- max bearing
@@ -258,13 +264,8 @@ class ObjectManager:
         x_min, x_max = np.min(outer_points[:,0]) - self.bounding_box_buffer, np.max(outer_points[:,0]) + self.bounding_box_buffer
         y_min, y_max = np.min(outer_points[:,1]) - self.bounding_box_buffer, np.max(outer_points[:,1]) + self.bounding_box_buffer
         
-        # if draw:
-        #     # Draw the bounding box
-        #     bounding_box_points = np.array([[x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max]])
-        #     self.ui.draw_polygon(bounding_box_points, color='g', facecolor='none', alpha=0.4)
-        
         # Go ahead and remove non-occlusions (obstacles) from the dataframe to reduce computation
-        occlusion_df = self.df[(self.df['object_type'] == 'occlusion') | (self.df['object_type'] == 'ooi')]
+        occlusion_df = df[(df['object_type'] == 'occlusion') | (df['object_type'] == 'ooi')]
         
         # Now use the maxes and mins with buffer to see if the object means are in the bounding box
         obj_means = np.vstack(occlusion_df['mean'])
@@ -335,7 +336,7 @@ class ObjectManager:
                     observations[tuple.ooi_id] = observable_indeces
                     
                     # Also place observable points into observed column of the dataframe
-                    self.df.at[tuple.Index, 'observed'][observable_indeces] = True
+                    df.at[tuple.Index, 'observed'][observable_indeces] = True
                     
                 # Add this OOI as an occlusion for future iterations
                 occluded_bearings = np.vstack((occluded_bearings, np.array([np.min(bearings), np.max(bearings)]))) # Find the min and max bearing of the object
@@ -353,4 +354,4 @@ class ObjectManager:
                 mean_to_edge_angle = np.arcsin(tuple.radius / (tuple.range + tuple.radius)) # Adding back radius which was removed before for sorting
                 occluded_bearings = np.vstack((occluded_bearings, np.array([bearing - mean_to_edge_angle, bearing + mean_to_edge_angle])))
                     
-        return observations
+        return observations, df
