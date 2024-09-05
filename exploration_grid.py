@@ -2,6 +2,7 @@ import numpy as np
 from copy import deepcopy as copy
 from typing import List, Tuple
 from matplotlib.colors import ListedColormap
+import pandas as pd
 from utils import wrapped_angle_diff, get_pixels_and_values
 
 class ExplorationGrid:
@@ -30,12 +31,18 @@ class ExplorationGrid:
         # Store the ui
         self.ui = ui
         
-    def reset(self):
+    def reset(self, object_df: pd.DataFrame=None):
         """
         Reset the grid maintained by the class to all ones and return it.
+        
+        params:
+        object_df: Dataframe with the objects to calculate occlusions for if desired
         """
         # Create grid using pixel height and width
         grid = np.ones((int(self.len_pixels_xy[0]), int(self.len_pixels_xy[1])))
+        
+        if object_df is not None:
+            grid = self.clear_object_cells(grid, object_df)
         
         return grid
         
@@ -52,7 +59,31 @@ class ExplorationGrid:
         :param grid: Grid to set.
         """
         self.grid = grid
-
+        
+    def clear_object_cells(self, grid: np.ndarray, object_df: pd.DataFrame):
+        # Take a copy of the grid to avoid modifying the original
+        grid = copy(grid)
+        
+        # Get the pixel indices and values of the grid
+        pixel_indices, values = get_pixels_and_values(grid)
+        
+        # Convert into world coordinates 
+        # (vector to bottom left of grid + bottom left of bounding box + (pixel indices min pixels of bounding box)
+        world_coords = self.grid_origin + self.meters_per_pixel * pixel_indices
+        
+        # Iterate through each object (row of dataframe)
+        for i, row in object_df.iterrows():
+            # Find the distance between the object and all the points
+            distances = np.linalg.norm(world_coords - row['mean'], axis=1)
+            
+            # Find the points that are within the radius of the object
+            in_range = distances < row['radius']
+            
+            # Update the grid points that are in range with the value of 0 since there is no need to explore them
+            grid[pixel_indices[in_range, 0], pixel_indices[in_range, 1]] = 0
+            
+        return grid
+    
     def draw_grid(self, grid: np.ndarray):
         """
         Draw grid in the background of the plot using imshow.
@@ -81,10 +112,12 @@ class ExplorationGrid:
         self.ui.draw_background_image(grid_image, extent, alpha=0.4)
 
             
-    def update(self, grid: np.ndarray, car_state: np.ndarray):
+    def update(self, grid: np.ndarray, car_state: np.ndarray, object_df: pd.DataFrame=None, return_occlusions=False):
         """
         Update the grid with the state.
+        :param grid: 2D numpy array representing the occupancy grid.
         :param state: Tuple (x, y) for the state.
+        :param object_df: Dataframe with the objects to calculate occlusions for
         :return Tuple of updated grid and number of points which were explored.
         """
         if self.grid is None:
@@ -97,16 +130,16 @@ class ExplorationGrid:
         
         # Create a rectangular bounding box for the car sensor range to minimize number of cell checks
         # Start by creating vectors from the car pointing in the direction of the car's heading and +/- max bearing
-        farthest_range_vectors = np.array([[np.cos(car_state[3]),
-                                            np.sin(car_state[3])],
-                                           [np.cos(car_state[3] + self.car_max_bearing),
-                                            np.sin(car_state[3] + self.car_max_bearing)],
-                                           [np.cos(car_state[3] + self.car_max_bearing/2),
-                                            np.sin(car_state[3] + self.car_max_bearing/2)],
-                                           [np.cos(car_state[3] - self.car_max_bearing),
-                                            np.sin(car_state[3] - self.car_max_bearing)],
-                                           [np.cos(car_state[3] - self.car_max_bearing/2),
-                                            np.sin(car_state[3] - self.car_max_bearing/2)]])
+        farthest_range_vectors = np.array([[np.cos(car_yaw),
+                                            np.sin(car_yaw)],
+                                           [np.cos(car_yaw + self.car_max_bearing),
+                                            np.sin(car_yaw + self.car_max_bearing)],
+                                           [np.cos(car_yaw + self.car_max_bearing/2),
+                                            np.sin(car_yaw + self.car_max_bearing/2)],
+                                           [np.cos(car_yaw - self.car_max_bearing),
+                                            np.sin(car_yaw - self.car_max_bearing)],
+                                           [np.cos(car_yaw - self.car_max_bearing/2),
+                                            np.sin(car_yaw - self.car_max_bearing/2)]])
         
         # Normalize and multiply by the sensor range to get points at the farthest range
         norms = np.linalg.norm(farthest_range_vectors, axis=1).reshape(-1, 1)
@@ -150,16 +183,87 @@ class ExplorationGrid:
         in_fov = abs_relative_bearings < self.car_max_bearing
         
         # Find the indeces that are in range and in the field of view
-        in_range_fov = in_range & in_fov
+        is_observable = in_range & in_fov
+        
+        # If object dataframe is given, account for occlusions when updating the grid
+        occluded_bearings = np.empty((0,2)) # Maintained to add occluded bearing intervals for each occlusion
+        if object_df is not None:
+            # First get occlusions from objects
+            occlusion_df = object_df[(object_df['object_type'] == 'occlusion') | (object_df['object_type'] == 'ooi')].copy()
+            
+            # # Remove objects that are not in the bounding box
+            # occlusion_df = occlusion_df[(occlusion_df['mean'].apply(lambda x: x[0]) > x_min) & 
+            #                             (occlusion_df['mean'].apply(lambda x: x[0]) < x_max) &
+            #                             (occlusion_df['mean'].apply(lambda x: x[1]) > y_min) & 
+            #                             (occlusion_df['mean'].apply(lambda x: x[1]) < y_max)
+            #                             ].copy()
+            
+            # Get all the object data we need
+            object_means = np.vstack(occlusion_df['mean'])
+            object_ranges = np.linalg.norm(object_means - car_pos, axis=1)
+            object_radii = occlusion_df['radius']
+            
+            # Remove objects that are not in the bounding box and sort by range
+            in_bounds = (object_means[:,0] > x_min) & (object_means[:,0] < x_max) & (object_means[:,1] > y_min) & (object_means[:,1] < y_max)
+            object_means = object_means[in_bounds]
+            object_ranges = object_ranges[in_bounds]
+            object_radii = object_radii[in_bounds]
+            range_sort = np.argsort(object_ranges)
+            object_means = object_means[range_sort]
+            object_ranges = object_ranges[range_sort]
+            object_radii = object_radii[range_sort]
+            
+            # If there are no rows in the dataframe, continue without accounting for occlusions
+            if not len(occlusion_df) == 0:
+                # Calculate range and sort occlusions by range
+                car_to_obj_means = np.vstack(occlusion_df['mean']) - car_pos
+                occlusion_df.loc[:, 'range'] = np.linalg.norm(car_to_obj_means, axis=1)
+                occlusion_df = occlusion_df.sort_values(by='range')
+                
+                # Get world coordinates of observable cells sorted by range
+                observable_coords = world_coords[is_observable]
+                observable_ranges = np.linalg.norm(observable_coords - car_pos, axis=1)
+                observable_idx = np.argsort(observable_ranges) # Index of observable points sub array sorted by range
+                all_pt_idx = np.where(is_observable)[0][observable_idx] # Index of all points sorted by range
+                
+                # Iterate through cells by range and account for occlusions as they are within range
+                # occluded_bearings = np.empty((0,2)) # Maintained to add occluded bearing intervals for each occlusion
+                is_not_occluded = np.zeros_like(is_observable) # Maintained to save if a cell is not occluded
+                for obs_idx, all_idx in zip(observable_idx, all_pt_idx):
+                    # Get range and bearing for this cell
+                    range = observable_ranges[obs_idx]
+                    bearing = np.arctan2(observable_coords[obs_idx][1] - car_pos[1], observable_coords[obs_idx][0] - car_pos[0]) - car_yaw
+                    
+                    # If we still have occlusions to account for check if we need to account for the next one
+                    if len(occlusion_df) > 0:
+                        # If we are within range of the next occlusion
+                        if range >= occlusion_df.iloc[0]['range']:
+                            object_row = occlusion_df.iloc[0]
+                            # Find the angle to the edge of the circle from the bearing and add to the occluded bearing intervals
+                            circle_mean_bearing = np.arctan2(object_row['mean'][1] - car_pos[1], object_row['mean'][0] - car_pos[0]) - car_yaw
+                            mean_to_edge_angle = np.arcsin(object_row['radius'] / (object_row['range'] + object_row['radius'])) # Adding back radius which was removed before for sorting
+                            occluded_bearings = np.vstack((occluded_bearings, np.array([circle_mean_bearing - mean_to_edge_angle, circle_mean_bearing + mean_to_edge_angle])))
+                            
+                            # Remove the occlusion from the dataframe now that we have accounted for it
+                            occlusion_df = occlusion_df.iloc[1:]
+                        
+                    # Check if the cell is occluded
+                    is_not_occluded[all_idx] = ~(np.any((occluded_bearings[:,0] < bearing) & (bearing < occluded_bearings[:,1])))
+                    
+                # Update the observable cells with occlusions accounted for
+                is_observable = is_not_occluded
         
         # Find how many points were prviosuly unexplored and are now explored
-        num_explored = np.sum(in_range_fov & (values == 1))
+        num_explored = np.sum(is_observable & (values == 1))
         
         # Update the grid points that are in range and in the field of view with the value of 0
-        new_grid_bb[pixel_indices[in_range_fov, 0], pixel_indices[in_range_fov, 1]] = 0
+        new_grid_bb[pixel_indices[is_observable, 0], pixel_indices[is_observable, 1]] = 0
         
         # Now insert the updated bounding box grid back into the original grid
         new_grid[x_min_pixel:x_max_pixel, y_min_pixel:y_max_pixel] = new_grid_bb
+        
+        if return_occlusions:
+            return new_grid, num_explored, occluded_bearings
         
         return new_grid, num_explored
     

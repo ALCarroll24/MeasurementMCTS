@@ -121,8 +121,8 @@ class MeasurementControlEnvironment(Environment):
         # Reset the object manager to generate a new set of objects
         object_df = self.object_manager.reset(car_state)
         
-        # Reset the exploration grid
-        explore_grid = self.explore_grid.reset()
+        # Reset the exploration grid (all ones) and zero cells inside of objects
+        explore_grid = self.explore_grid.reset(object_df=object_df)
         
         # Place state into tuple format with horizon set to 0
         state = (car_state, object_df, explore_grid, 0)
@@ -214,9 +214,9 @@ class MeasurementControlEnvironment(Environment):
             new_object_df.at[ooi_index, 'points'] = means
             new_object_df.at[ooi_index, 'covariances'] = covs
         
-        # Update the exploration grid based on the new car state
+        # Update the exploration grid based on the new car state accounting for occlusions
+        # new_grid, num_explored = self.explore_grid.update(explore_grid, new_car_state, new_object_df)
         new_grid, num_explored = self.explore_grid.update(explore_grid, new_car_state)
-        
         # Calculate rewards
         obstacle_reward = objects_in_collision_df.shape[0] * self.obstacle_punishment  # Reward for colliding with obstacles
         trace_delta_reward = min_max_normalize(trace_delta_sum, 0, self.init_covariance_trace) # Reward for reducing covariance trace
