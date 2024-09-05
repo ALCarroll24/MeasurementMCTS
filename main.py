@@ -215,8 +215,8 @@ class MeasurementControlEnvironment(Environment):
             new_object_df.at[ooi_index, 'covariances'] = covs
         
         # Update the exploration grid based on the new car state accounting for occlusions
-        # new_grid, num_explored = self.explore_grid.update(explore_grid, new_car_state, new_object_df)
-        new_grid, num_explored = self.explore_grid.update(explore_grid, new_car_state)
+        new_grid, num_explored = self.explore_grid.update(explore_grid, new_car_state, new_object_df)
+
         # Calculate rewards
         obstacle_reward = objects_in_collision_df.shape[0] * self.obstacle_punishment  # Reward for colliding with obstacles
         trace_delta_reward = min_max_normalize(trace_delta_sum, 0, self.init_covariance_trace) # Reward for reducing covariance trace
