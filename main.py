@@ -402,6 +402,37 @@ class MeasurementControlEnvironment(Environment):
         for child in node.children.values():
             self.draw_simulated_states(child, rew=rew, q_val=q_val, qu_val=qu_val, scaling=scaling, bias=bias, max=max)
 
+    def draw_state_set(self, state_set):
+        """
+        Use matplotlib animate to create a video with the normal state display over time
+        params: state_set - list of states to display
+        """
+        def animate(i):
+            # Clear all existing patches from the axis
+            for patch in ax.patches:
+                patch.remove()
+            
+            # Draw the state create artists in UI class
+            self.draw_state(state_set[i], plot=False)
+            
+            # Add artists to the axis
+            for artist in self.ui.get_artists():
+                ax.add_patch(artist)
+                
+            # Add background image if it exists
+            if self.ui.background_image is not None:
+                ax.imshow(self.ui.background_image[0], extent=self.ui.background_image[1], alpha=self.ui.background_image[2])
+            
+            return ax.patches
+        
+        # Get the figure and axis from the UI
+        fig, ax = self.ui.plot(get_fig_ax=True)
+        plt.close()
+        
+        ani = FuncAnimation(fig, animate, frames=len(state_set)-1, interval=200, blit=False)
+            
+        # Display the animation in the notebook
+        display(HTML(ani.to_jshtml()))
     
     def draw_action_set(self, root, action_set):
         """

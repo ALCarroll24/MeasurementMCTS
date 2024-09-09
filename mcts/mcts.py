@@ -251,17 +251,21 @@ class MCTSNode:
             # current.total_value += backup_cumulative_rewards + 1 # Add the 1 value back we subtracted in select_leaf
             current = current.parent # Move to the parent node
             
-def get_best_action_trajectory(root: MCTSNode, highest_Q=False):
+def get_best_trajectory(root: MCTSNode, highest_Q=False):
     """
     Get the best action trajectory from the root node
     :param root: the root node of the MCTS tree
     :param highest_Q: whether to take the highest Q value action or the highest UCB action
+    :returns action_trajectory: the best action trajectory from the root node
+    :returns state_trajectory: the state trajectory of the best action trajectory
     """
     current = root
     action_trajectory = []
+    state_trajectory = []
     
     # Iterate through the best actions until the best action node does not exist
     while True:
+        state_trajectory.append(current.state)
         if highest_Q:
             best_action = np.argmax(current.child_Q())
         else:
@@ -275,7 +279,7 @@ def get_best_action_trajectory(root: MCTSNode, highest_Q=False):
         # Continue traversal
         current = current.children[best_action]
         
-    return action_trajectory
+    return action_trajectory, state_trajectory
 
 class DummyNode(object):
     """
