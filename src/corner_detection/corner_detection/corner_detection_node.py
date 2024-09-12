@@ -46,11 +46,11 @@ class CornerDetectionNode(Node):
                 corner_marker.type = Marker.SPHERE_LIST
                 corner_marker.action = Marker.ADD
                 corner_marker.id = i
-                corner_marker.scale.x = 0.1  # Sphere radius
-                corner_marker.scale.y = 0.1
-                corner_marker.scale.z = 0.1
-                corner_marker.color.r = 0.0  # Red color
-                corner_marker.color.g = 0.0
+                corner_marker.scale.x = 0.2  # Sphere radius
+                corner_marker.scale.y = 0.2
+                corner_marker.scale.z = 0.2
+                corner_marker.color.r = 0.0
+                corner_marker.color.g = 1.0
                 corner_marker.color.b = 1.0
                 corner_marker.color.a = 1.0  # Fully opaque
                 corner_marker.pose.orientation.w = 1.0

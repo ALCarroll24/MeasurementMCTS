@@ -114,7 +114,7 @@ private:
             // Create a Marker to represent the polygon
             visualization_msgs::msg::Marker marker;
             marker.header.frame_id = msg->header.frame_id;
-            marker.header.stamp = this->get_clock()->now();
+            marker.header.stamp = msg->header.stamp;
             marker.ns = "polygons";
             marker.id = cluster_id++;
             marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
