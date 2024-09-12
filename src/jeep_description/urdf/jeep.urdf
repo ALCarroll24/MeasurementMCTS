@@ -9,7 +9,7 @@
     <visual>
       <origin rpy="0 0 0" xyz="-0.06 0 0.1"/>
       <geometry>
-        <mesh filename="file:///home/austin/unity_ws/install/jeep_description/share/jeep_description/meshes/jeep_18/body.dae" scale="1 0.96 1"/>
+        <mesh filename="package://jeep_description/meshes/body.dae" scale="1 0.96 1"/>
       </geometry>
     </visual>
     <collision>
