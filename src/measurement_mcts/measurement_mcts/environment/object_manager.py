@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from typing import NamedTuple, List, Tuple
-from utils import get_ellipse_scaling
+from measurement_mcts.utils.utils import get_ellipse_scaling
 
 class ObjectTuple(NamedTuple):
     """

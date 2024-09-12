@@ -2,17 +2,17 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from typing import Tuple
-from ui import MatPlotLibUI
-from car import Car
-from object_manager import ObjectManager
-from static_kf_2d import StaticKalmanFilter, measurement_model
-from utils import min_max_normalize
-from mcts.mcts import Environment
-from exploration_grid import ExplorationGrid
 from copy import deepcopy
 import timeit
 from matplotlib.animation import FuncAnimation
 from IPython.display import display, HTML
+from measurement_mcts.utils.ui import MatPlotLibUI
+from measurement_mcts.environment.car import Car
+from measurement_mcts.environment.object_manager import ObjectManager
+from measurement_mcts.environment.static_kf_2d import StaticKalmanFilter, measurement_model
+from measurement_mcts.utils.utils import min_max_normalize
+from measurement_mcts.mcts.mcts import Environment
+from measurement_mcts.environment.exploration_grid import ExplorationGrid
 
 class MeasurementControlEnvironment(Environment):
     def __init__(self, init_reset=True):

@@ -3,7 +3,7 @@ from copy import deepcopy as copy
 from typing import List, Tuple
 from matplotlib.colors import ListedColormap
 import pandas as pd
-from utils import wrapped_angle_diff, get_pixels_and_values
+from measurement_mcts.utils.utils import wrapped_angle_diff, get_pixels_and_values
 
 class ExplorationGrid:
     def __init__(self, bounds: np.ndarray, meters_per_pixel: float,

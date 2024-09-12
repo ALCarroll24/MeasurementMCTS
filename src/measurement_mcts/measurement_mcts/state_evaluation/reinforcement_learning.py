@@ -1,9 +1,7 @@
-import math
 import random
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import namedtuple, deque
-import sys
 import timeit
 from typing import List, Tuple
 
@@ -14,9 +12,8 @@ import torch.nn.functional as F
 from torch.amp import GradScaler, autocast
 
 # MCTS code imports
-sys.path.append("..")  # Adds higher directory to python modules path.
-from main import MeasurementControlEnvironment
-from utils import rotate_about_point, get_pixels_and_values
+from measurement_mcts.environment.measurement_control_env import MeasurementControlEnvironment
+from measurement_mcts.utils.utils import rotate_about_point, get_pixels_and_values
 
 # Only fully connected layers (untested but not good for image based state)
 # class PolicyValueNetwork(nn.Module):

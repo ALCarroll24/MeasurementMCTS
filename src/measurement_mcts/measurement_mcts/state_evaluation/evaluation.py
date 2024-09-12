@@ -1,9 +1,9 @@
 import numpy as np
 from scipy.spatial import KDTree
 from copy import deepcopy
-from car import Car
-from utils import min_max_normalize, wrapped_angle_diff
-from ui import MatPlotLibUI
+from measurement_mcts.environment.car import Car
+from measurement_mcts.utils.utils import min_max_normalize, wrapped_angle_diff
+from measurement_mcts.utils.ui import MatPlotLibUI
 
 # Class utilized for a speedier evalution of the MCTS state
 # Mean point of obstacles / OOI corners are used to create a KDTree

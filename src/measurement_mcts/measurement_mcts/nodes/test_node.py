@@ -1,4 +1,5 @@
 import rclpy
+from measurement_mcts.environment.measurement_control_env import MeasurementControlEnvironment
 
 def main():
     # Initialize the ROS node
@@ -8,6 +9,8 @@ def main():
     node = rclpy.create_node('your_node_name')
 
     # Add your code here
+    # For example, print a message
+    node.get_logger().info('Hello, world!')
 
     # Spin the node
     rclpy.spin(node)

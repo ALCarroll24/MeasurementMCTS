@@ -20,7 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            
+            'test_node = measurement_mcts.nodes.test_node:main'
         ],
     },
 )
