@@ -1,0 +1,42 @@
+services:
+  container:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mcts-container
+    image: mcts-humble:latest
+    user: user
+    environment:
+      # Linux
+      - DISPLAY=${DISPLAY}
+      - XAUTHORITY=${XAUTHORITY} # not sure if this is actually needed
+
+      # Windows 10/11 with vcxsrv (installed with chocolatey)
+      # - DISPLAY=192.168.4.21:0.0  # Ip address of vEthernet (WSL) interface when doing "ipconfig" in cmd
+
+      # ROS pieces
+      # - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      # - ROS_LOCALHOST_ONLY=1
+    volumes:
+      - ./:/home/user/MeasurementMCTS/
+      # - /home/$USER/.ros/:/home/user/.ros/
+      - /home/$USER/bags/:/home/user/bags/
+      # - ./docker/.bashrc:/home/user/.bashrc
+    working_dir: /home/user/MeasurementMCTS/
+    privileged: true
+    group_add:
+      - dialout
+    #   - ${SHARED_GROUP:-1004}
+    devices:
+    - /dev/bus/usb/001/008:/dev/bus/usb/001/008
+    - /dev/ttyUSB0:/dev/ttyUSB0
+    network_mode: host
+    ipc: host
+    # deploy: # uncomment this if you want to use GPU (only needed for cuda/neural nets)
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    command: ["bash"]
