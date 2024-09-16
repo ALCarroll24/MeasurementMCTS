@@ -47,16 +47,17 @@ def generate_launch_description():
         )
     
     # Launch RVIZ with profile from config folder
-    # rviz_node = Node(
-    #     package='rviz2',
-    #     executable='rviz2',
-    #     name='rviz2',
-    #     output='screen',
-    #     arguments=['-d', os.path.join(get_package_share_directory('ur3_description'), 'rviz', 'ur3.rviz')]
-    # )
+    rviz_node = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        output='screen',
+        # arguments=['-d', os.path.join(get_package_share_directory('ur3_description'), 'rviz', 'ur3.rviz')]
+        parameters=[{'use_sim_time': use_sim_time}],
+    )
 
     return LaunchDescription([
         robot_state_publisher_node,
         joint_state_publisher_gui__node,
-        # rviz_node,
+        rviz_node,
     ])

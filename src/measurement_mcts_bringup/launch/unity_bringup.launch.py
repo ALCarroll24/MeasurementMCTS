@@ -13,6 +13,15 @@ def generate_launch_description():
     # Use sim time if the parameter is set to true
     use_sim_time = LaunchConfiguration('use_sim_time', default='True')
     
+    # Run the Unity to ROS TCP Endpoint
+    unity_tcp_endpoint = Node(
+        package='ros_tcp_endpoint',
+        executable='default_server_endpoint',
+        name='unity_tcp_endpoint',
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}],
+    )
+    
     # Run the Unity Jeep pose to TF node
     unity_pose_to_tf_node = Node(
         package='measurement_mcts',
@@ -31,7 +40,7 @@ def generate_launch_description():
         parameters=[{'use_sim_time': use_sim_time}],
     )
     
-    # # Publish a static transform for the lidar
+    # Publish a static transform for the lidar
     lidar_static_transform_publisher_node = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
@@ -41,20 +50,10 @@ def generate_launch_description():
         output='screen',
         parameters=[{'use_sim_time': use_sim_time}],
     )
-    
-    # Launch RVIZ with profile from config folder
-    rviz_node = Node(
-        package='rviz2',
-        executable='rviz2',
-        name='rviz2',
-        output='screen',
-        # arguments=['-d', os.path.join(get_package_share_directory('ur3_description'), 'rviz', 'ur3.rviz')]
-        parameters=[{'use_sim_time': use_sim_time}],
-    )
 
     return LaunchDescription([
+        unity_tcp_endpoint,
         unity_pose_to_tf_node,
         twist_action_to_unity_node,
         lidar_static_transform_publisher_node,
-        rviz_node,
     ])

@@ -50,7 +50,7 @@ class TwistActionToUnity(Node):
         # Call the car model to compute the new pose
         self.state = self.car_model.update(self.timestep_length, self.action_vec, starting_state=self.state)
         
-        self.get_logger().info(f'State: {np.round(self.state, 2)}', throttle_duration_sec=0.5)
+        # self.get_logger().info(f'State: {np.round(self.state, 2)}', throttle_duration_sec=0.5)
 
         # Publish the new pose
         new_pose_msg = PoseStamped()

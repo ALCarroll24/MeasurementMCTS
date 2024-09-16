@@ -45,13 +45,13 @@ private:
         pcl::fromROSMsg(*msg, *cloud);
 
         // Apply height filter
-        std::cout << "Before filtering: " << cloud->size() << " points" << std::endl;
+        // std::cout << "Before filtering: " << cloud->size() << " points" << std::endl;
         pcl::PassThrough<pcl::PointXYZ> pass;
         pass.setInputCloud(cloud);
         pass.setFilterFieldName("z");
         pass.setFilterLimits(height_threshold, std::numeric_limits<float>::max());
         pass.filter(*cloud);
-        std::cout << "After filtering: " << cloud->size() << " points" << std::endl;
+        // std::cout << "After filtering: " << cloud->size() << " points" << std::endl;
 
         // Publish the filtered cloud
         sensor_msgs::msg::PointCloud2 filtered_cloud_msg;
@@ -64,7 +64,7 @@ private:
         sor.setInputCloud(cloud);
         sor.setLeafSize(0.1f, 0.1f, 0.1f);  // Adjust leaf size based on your data
         sor.filter(*cloud);
-        std::cout << "After downsampling: " << cloud->size() << " points" << std::endl;
+        // std::cout << "After downsampling: " << cloud->size() << " points" << std::endl;
 
         // Publish the downsampled cloud
         sensor_msgs::msg::PointCloud2 downsampled_cloud_msg;
@@ -84,7 +84,7 @@ private:
         ec.setSearchMethod(tree);
         ec.setInputCloud(cloud);
         ec.extract(cluster_indices);
-        std::cout << "Number of clusters: " << cluster_indices.size() << std::endl;
+        // std::cout << "Number of clusters: " << cluster_indices.size() << std::endl;
 
         // Create markers for each cluster
         visualization_msgs::msg::MarkerArray marker_array;
@@ -97,10 +97,16 @@ private:
         
         for (const auto& indices : cluster_indices)
         {
+            // Extract the cluster points and max height
+            float max_height = std::numeric_limits<float>::lowest();
             pcl::PointCloud<pcl::PointXYZ>::Ptr cluster(new pcl::PointCloud<pcl::PointXYZ>());
             for (const auto& index : indices.indices)
             {
                 cluster->points.push_back(cloud->points[index]);
+                if (cloud->points[index].z > max_height)
+                {
+                    max_height = cloud->points[index].z;
+                }
             }
 
             // Compute convex hull for the cluster
@@ -133,7 +139,7 @@ private:
                 geometry_msgs::msg::Point p;
                 p.x = point.x;
                 p.y = point.y;
-                p.z = point.z;
+                p.z = max_height;  // Set the height to the max height of the cluster
                 marker.points.push_back(p);
             }
 
@@ -142,12 +148,12 @@ private:
             {
                 marker.points.push_back(marker.points.front());
             }
-            std::cout << "Cluster " << cluster_id << " has " << marker.points.size() << " points" << std::endl;
+            // std::cout << "Cluster " << cluster_id << " has " << marker.points.size() << " points" << std::endl;
             marker_array.markers.push_back(marker);
         }
 
         // Publish the MarkerArray
-        std::cout << "Publishing " << marker_array.markers.size() << " markers" << std::endl;
+        // std::cout << "Publishing " << marker_array.markers.size() << " markers" << std::endl;
         marker_pub_->publish(marker_array);
     }
 

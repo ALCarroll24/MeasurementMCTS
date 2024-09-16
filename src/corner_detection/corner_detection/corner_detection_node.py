@@ -1,14 +1,21 @@
 import rclpy
 from rclpy.node import Node
 from visualization_msgs.msg import MarkerArray, Marker
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, PointStamped
 import numpy as np
 from shapely.geometry import MultiPoint
 from sklearn.decomposition import PCA
+import tf2_ros
+from geometry_msgs.msg import TransformStamped
+from tf2_geometry_msgs import do_transform_point
 
 class CornerDetectionNode(Node):
     def __init__(self):
         super().__init__('corner_detection_node')
+
+        # TF2 buffer and listener
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
         # Subscriber to the polygon_marker_array topic
         self.subscription = self.create_subscription(
@@ -30,41 +37,63 @@ class CornerDetectionNode(Node):
         clear_marker = Marker()
         clear_marker.action = Marker.DELETEALL
         corner_marker_array.markers.append(clear_marker)
-
+        
         # Loop over each marker in the received MarkerArray
         for i, marker in enumerate(msg.markers):
             if marker.type == Marker.LINE_STRIP:
+                # Remove the leading slash in the frame id from unity (causes tf2 to fail)
+                if marker.header.frame_id[0] == '/':
+                    marker.header.frame_id = marker.header.frame_id[1:]
+                
                 # Extract points from the marker
                 points = [(p.x, p.y) for p in marker.points]
+                
+                # Extract max height (all points are at max height)
+                max_height = marker.points[0].z
 
                 # Perform convex hull and corner extraction
                 corners = self.extract_corners(points)
 
-                # Create a new marker for the detected corners
-                corner_marker = Marker()
-                corner_marker.header.frame_id = marker.header.frame_id
-                corner_marker.type = Marker.SPHERE_LIST
-                corner_marker.action = Marker.ADD
-                corner_marker.id = i
-                corner_marker.scale.x = 0.2  # Sphere radius
-                corner_marker.scale.y = 0.2
-                corner_marker.scale.z = 0.2
-                corner_marker.color.r = 0.0
-                corner_marker.color.g = 1.0
-                corner_marker.color.b = 1.0
-                corner_marker.color.a = 1.0  # Fully opaque
-                corner_marker.pose.orientation.w = 1.0
+                # Try to get the transformation from marker's frame to the map frame
+                try:
+                    transform = self.tf_buffer.lookup_transform(
+                        'map',  # Target frame
+                        marker.header.frame_id,  # Source frame
+                        rclpy.time.Time())  # Get the latest transform available
 
-                # Add the corner points as spheres
-                for corner in corners:
-                    corner_point = Point()
-                    corner_point.x = corner[0]
-                    corner_point.y = corner[1]
-                    corner_point.z = 0.0  # Assuming 2D, z can be set to 0 or the height of the object
-                    corner_marker.points.append(corner_point)
+                    # Create a new marker for the detected corners
+                    corner_marker = Marker()
+                    corner_marker.header.frame_id = 'map'  # Set frame_id to 'map'
+                    corner_marker.type = Marker.SPHERE_LIST
+                    corner_marker.action = Marker.ADD
+                    corner_marker.id = i
+                    corner_marker.scale.x = 0.2  # Sphere radius
+                    corner_marker.scale.y = 0.2
+                    corner_marker.scale.z = 0.2
+                    corner_marker.color.r = 0.0
+                    corner_marker.color.g = 1.0
+                    corner_marker.color.b = 1.0
+                    corner_marker.color.a = 1.0  # Fully opaque
+                    corner_marker.pose.orientation.w = 1.0
 
-                # Add the corner marker to the marker array
-                corner_marker_array.markers.append(corner_marker)
+                    # Add the corner points as spheres (transformed to the map frame)
+                    for corner in corners:
+                        corner_point = PointStamped()
+                        corner_point.point.x = corner[0]
+                        corner_point.point.y = corner[1]
+                        corner_point.point.z = max_height
+                        
+                        # Transform the corner point to the 'map' frame
+                        transformed_point = do_transform_point(corner_point, transform)
+
+                        # Append the transformed corner point
+                        corner_marker.points.append(transformed_point.point)
+
+                    # Add the corner marker to the marker array
+                    corner_marker_array.markers.append(corner_marker)
+
+                except Exception as e:
+                    self.get_logger().warn(f'Failed to transform to map frame: {str(e)}')
 
         # Publish the detected corners
         self.publisher.publish(corner_marker_array)
