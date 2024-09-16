@@ -20,7 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'test_node = measurement_mcts.nodes.test_node:main',
+            'mcts_node = measurement_mcts.nodes.mcts_node:main',
             'unity_pose_to_tf = measurement_mcts.nodes.unity_pose_to_tf:main',
             'twist_action_to_unity = measurement_mcts.nodes.twist_action_to_unity:main',
         ],

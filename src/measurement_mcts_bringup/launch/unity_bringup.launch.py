@@ -8,10 +8,12 @@ from ament_index_python.packages import get_package_share_directory
 from launch_ros.substitutions import FindPackageShare
 from launch.actions import DeclareLaunchArgument
 from launch_ros.parameter_descriptions import ParameterValue
+from launch.conditions import IfCondition, UnlessCondition
 
 def generate_launch_description():
     # Use sim time if the parameter is set to true
     use_sim_time = LaunchConfiguration('use_sim_time', default='True')
+    manual_control = LaunchConfiguration('manual_control', default='False')
     
     # Run the Unity to ROS TCP Endpoint
     unity_tcp_endpoint = Node(
@@ -31,8 +33,19 @@ def generate_launch_description():
         parameters=[{'use_sim_time': use_sim_time}],
     )
     
-    # Run the Twist action to Unity node
+    # Run the MCTS node for autonomous control
+    mcts_node = Node(
+        condition=UnlessCondition(manual_control),
+        package='measurement_mcts',
+        executable='mcts_node',
+        name='mcts_node',
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}],
+    )
+    
+    # Run the Twist action to Unity node for manual control from controller or rqt robot steering
     twist_action_to_unity_node = Node(
+        condition=IfCondition(manual_control),
         package='measurement_mcts',
         executable='twist_action_to_unity',
         name='twist_action_to_unity',
@@ -54,6 +67,7 @@ def generate_launch_description():
     return LaunchDescription([
         unity_tcp_endpoint,
         unity_pose_to_tf_node,
+        # mcts_node,
         twist_action_to_unity_node,
         lidar_static_transform_publisher_node,
     ])

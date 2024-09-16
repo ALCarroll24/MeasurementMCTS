@@ -52,6 +52,40 @@ class ObjectManager:
         """
         self.df = df
     
+    def add_ooi(self, points: np.ndarray, df: pd.DataFrame=None):
+        """
+        Add an OOI to the dataframe maintained by the class or a passed dataframe
+        """
+        if df is None and self.df is None:
+            raise ValueError('Objects have not been generated yet and no dataframe was passed')
+        
+        # Use the passed dataframe if it is not None
+        if df is None:
+            df = self.df  
+        
+        # Get the number of OOIs to find next id
+        if len(df) == 0:
+            ooi_id = 0
+        else:
+            ooi_ids = df[df['object_type'] == 'ooi']['ooi_id'].values
+            max_ooi_id = np.max(ooi_ids)
+            ooi_id = max_ooi_id + 1
+        
+        # Create initial covariances for the points
+        covariances = [np.diag([self.init_covariance_diag, self.init_covariance_diag]) for _ in range(4)]
+        
+        # Create the object tuple within a dataframe
+        object_row_df = pd.DataFrame([ObjectTuple(object_type='ooi',
+                                                  shape='4polygon',
+                                                  ooi_id=ooi_id,
+                                                  mean=np.mean(points, axis=0),
+                                                  covariances=covariances,
+                                                  points=points)])
+        # Add to the dataframe
+        df = pd.concat([df, object_row_df])
+        
+        return df
+    
     def reset(self, car_state):
         """
         This function generates obstacles, occlusions and OOIs and stores them in a dataframe of the class.
@@ -174,6 +208,7 @@ class ObjectManager:
     def check_collision(self, car_state):
         if self.df is None:
             raise ValueError('Objects have not been generated yet')
+        print("DF", self.df)
         
         # First filter out any objects whose mean is farther than the car collision radius plus a buffer
         mean_in_range = np.linalg.norm(np.vstack(self.df['mean']) - car_state[0:2], axis=1) < self.car_collision_radius + 10.0
