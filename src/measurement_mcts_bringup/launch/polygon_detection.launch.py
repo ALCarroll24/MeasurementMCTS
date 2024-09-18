@@ -19,7 +19,12 @@ def generate_launch_description():
         executable='pointcloud_clustering_node',
         name='pointcloud_to_polygons_node',
         output='screen',
-        parameters=[{'use_sim_time': use_sim_time}],
+        parameters=[{'use_sim_time': use_sim_time,
+                     'vehicle_footprint_x_pos': 1.2,
+                     'vehicle_footprint_x_neg': -1.2,
+                     'vehicle_footprint_y_pos': 2.2,
+                     'vehicle_footprint_y_neg': -2.8,
+                    }],
     )
     
     # Run the Polygons to Corner Points node

@@ -120,8 +120,6 @@ class ExplorationGrid:
         :param object_df: Dataframe with the objects to calculate occlusions for
         :return Tuple of updated grid and number of points which were explored.
         """
-        if self.grid is None:
-            raise ValueError("Grid is not set, call reset().")
         # Pull out the elements of the car state
         car_pos, car_yaw = car_state[:2], car_state[3]
         
@@ -188,58 +186,59 @@ class ExplorationGrid:
         # If object dataframe is given, account for occlusions when updating the grid
         occluded_bearings = np.empty((0,2)) # Maintained to add occluded bearing intervals for each occlusion
         if object_df is not None:
-            # First get occlusions from objects
-            occlusion_df = object_df[(object_df['object_type'] == 'occlusion') | (object_df['object_type'] == 'ooi')].copy()
-            
-            # Get all the object data we need
-            object_means = np.vstack(occlusion_df['mean'])
-            object_ranges = np.linalg.norm(object_means - car_pos, axis=1)
-            object_radii = np.hstack(occlusion_df['radius'])
-            
-            # Remove objects that are not in the bounding box and sort by range
-            in_bounds = (object_means[:,0] > x_min) & (object_means[:,0] < x_max) & (object_means[:,1] > y_min) & (object_means[:,1] < y_max)
-            object_means = object_means[in_bounds]
-            object_ranges = object_ranges[in_bounds]
-            object_radii = object_radii[in_bounds]
-            range_sort = np.argsort(object_ranges)
-            object_means = object_means[range_sort]
-            object_ranges = object_ranges[range_sort]
-            object_radii = object_radii[range_sort]
-            
-            # If there are no objects after bounding box filter, continue without accounting for occlusions
-            if not len(object_means) == 0:
-                # Get world coordinates of observable cells sorted by range
-                observable_coords = world_coords[is_observable]
-                observable_ranges = np.linalg.norm(observable_coords - car_pos, axis=1)
-                observable_idx = np.argsort(observable_ranges) # Index of observable points sub array sorted by range
-                all_pt_idx = np.where(is_observable)[0][observable_idx] # Index of all points sorted by range
+            if not object_df.empty:
+                # First get occlusions from objects
+                occlusion_df = object_df[(object_df['object_type'] == 'occlusion') | (object_df['object_type'] == 'ooi')].copy()
                 
-                # Iterate through cells by range and account for occlusions as they are within range
-                # occluded_bearings = np.empty((0,2)) # Maintained to add occluded bearing intervals for each occlusion
-                is_not_occluded = np.zeros_like(is_observable) # Maintained to save if a cell is not occluded
-                object_index = 0 # Index of the current object we are checking for occlusions
-                for obs_idx, all_idx in zip(observable_idx, all_pt_idx):
-                    # Get range and bearing for this cell
-                    range = observable_ranges[obs_idx]
-                    bearing = np.arctan2(observable_coords[obs_idx][1] - car_pos[1], observable_coords[obs_idx][0] - car_pos[0]) - car_yaw
+                # Get all the object data we need
+                object_means = np.vstack(occlusion_df['mean'])
+                object_ranges = np.linalg.norm(object_means - car_pos, axis=1)
+                object_radii = np.hstack(occlusion_df['radius'])
+                
+                # Remove objects that are not in the bounding box and sort by range
+                in_bounds = (object_means[:,0] > x_min) & (object_means[:,0] < x_max) & (object_means[:,1] > y_min) & (object_means[:,1] < y_max)
+                object_means = object_means[in_bounds]
+                object_ranges = object_ranges[in_bounds]
+                object_radii = object_radii[in_bounds]
+                range_sort = np.argsort(object_ranges)
+                object_means = object_means[range_sort]
+                object_ranges = object_ranges[range_sort]
+                object_radii = object_radii[range_sort]
+                
+                # If there are no objects after bounding box filter, continue without accounting for occlusions
+                if not len(object_means) == 0:
+                    # Get world coordinates of observable cells sorted by range
+                    observable_coords = world_coords[is_observable]
+                    observable_ranges = np.linalg.norm(observable_coords - car_pos, axis=1)
+                    observable_idx = np.argsort(observable_ranges) # Index of observable points sub array sorted by range
+                    all_pt_idx = np.where(is_observable)[0][observable_idx] # Index of all points sorted by range
                     
-                    # If we still have occlusions to account for check if we need to account for the next one
-                    if object_index < len(object_means):
-                        # If we are within range of the next occlusion
-                        if range >= object_ranges[object_index]:
-                            # Find the angle to the edge of the circle from the bearing and add to the occluded bearing intervals
-                            circle_mean_bearing = np.arctan2(object_means[object_index][1] - car_pos[1], object_means[object_index][0] - car_pos[0]) - car_yaw
-                            mean_to_edge_angle = np.arcsin(object_radii[object_index] / (object_ranges[object_index] + object_radii[object_index])) # Adding back radius which was removed before for sorting
-                            occluded_bearings = np.vstack((occluded_bearings, np.array([circle_mean_bearing - mean_to_edge_angle, circle_mean_bearing + mean_to_edge_angle])))
-                            
-                            # Add one to the object index to check the next object
-                            object_index += 1
+                    # Iterate through cells by range and account for occlusions as they are within range
+                    # occluded_bearings = np.empty((0,2)) # Maintained to add occluded bearing intervals for each occlusion
+                    is_not_occluded = np.zeros_like(is_observable) # Maintained to save if a cell is not occluded
+                    object_index = 0 # Index of the current object we are checking for occlusions
+                    for obs_idx, all_idx in zip(observable_idx, all_pt_idx):
+                        # Get range and bearing for this cell
+                        range = observable_ranges[obs_idx]
+                        bearing = np.arctan2(observable_coords[obs_idx][1] - car_pos[1], observable_coords[obs_idx][0] - car_pos[0]) - car_yaw
                         
-                    # Check if the cell is occluded
-                    is_not_occluded[all_idx] = ~(np.any((occluded_bearings[:,0] < bearing) & (bearing < occluded_bearings[:,1])))
-                    
-                # Update the observable cells with occlusions accounted for
-                is_observable = is_not_occluded
+                        # If we still have occlusions to account for check if we need to account for the next one
+                        if object_index < len(object_means):
+                            # If we are within range of the next occlusion
+                            if range >= object_ranges[object_index]:
+                                # Find the angle to the edge of the circle from the bearing and add to the occluded bearing intervals
+                                circle_mean_bearing = np.arctan2(object_means[object_index][1] - car_pos[1], object_means[object_index][0] - car_pos[0]) - car_yaw
+                                mean_to_edge_angle = np.arcsin(object_radii[object_index] / (object_ranges[object_index] + object_radii[object_index])) # Adding back radius which was removed before for sorting
+                                occluded_bearings = np.vstack((occluded_bearings, np.array([circle_mean_bearing - mean_to_edge_angle, circle_mean_bearing + mean_to_edge_angle])))
+                                
+                                # Add one to the object index to check the next object
+                                object_index += 1
+                            
+                        # Check if the cell is occluded
+                        is_not_occluded[all_idx] = ~(np.any((occluded_bearings[:,0] < bearing) & (bearing < occluded_bearings[:,1])))
+                        
+                    # Update the observable cells with occlusions accounted for
+                    is_observable = is_not_occluded
         
         # Find how many points were prviosuly unexplored and are now explored
         num_explored = np.sum(is_observable & (values == 1))

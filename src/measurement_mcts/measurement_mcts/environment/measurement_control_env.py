@@ -90,26 +90,6 @@ class MeasurementControlEnvironment(Environment):
     @N.setter
     def N(self, value):
         self.N = value
-
-    # Not using or worrying about yet
-    # def update(self, action):
-    #     # Update the car's state based on the control inputs
-    #     self.car.update(self.simulation_dt, action)
-        
-    #     observable_corners, indeces = self.ooi.get_noisy_observation(self.car.get_state(), draw=self.draw)
-
-    #     # If there are no observable corners, skip the update
-    #     if len(indeces) > 0:
-    #         self.skf.update(observable_corners, indeces, self.car.get_state())
-        
-    #     # Check if we are done (normalized covariance trace is below threshold)
-    #     done = self.check_done(self.get_state())
-    #     if done:
-    #         print("Goal Reached")
-        
-    #     # Print normalized covariance trace compared to final trace
-    #     trace_normalized = min_max_normalize(np.trace(self.skf.P_k), 0, self.covariance_trace_init)
-    #     print(f'Normalized Covariance Trace: {np.round(trace_normalized, 4)} Final: {self.final_cov_trace}')
         
     def reset(self, first_update=True, print_rewards=False) -> Tuple[np.ndarray, pd.DataFrame, np.ndarray, int]:
         """
@@ -165,27 +145,28 @@ class MeasurementControlEnvironment(Environment):
         # Set the exploration grid state
         self.explore_grid.set_grid(state[2])
     
-    def corner_data_association(self, obs_rects: np.ndarray, object_df: pd.DataFrame) -> dict:
+    def corner_data_association(self, obs_polys: np.ndarray, object_df: pd.DataFrame) -> Tuple[dict, pd.DataFrame, np.ndarray]:
         # Create output observation dictionary which holds ooi_id's as keys and the associated corner indeces as values
         obs_dict = {}
         
-        # Create a corner dictionary which holds ooi_id's as keys and the associated corner points as values
-        # corner_dict = {}
-        
         # If there are no objects maintained, add all sets of corners as new objects
         if object_df.empty:
-            added_obj_ids = [] # Maintain a list of the object id's that were added so that a duplicate update is not done
-            for i, obs_rect in enumerate(obs_rects):
-                object_df = self.object_manager.add_ooi(obs_rect, object_df)
-                added_obj_ids.append(i)
+            for i, poly in enumerate(obs_polys):
+                # Add the new polygon to the object manager
+                object_df = self.object_manager.add_ooi(poly, object_df)
+                
+            # Remove all objects from the observation polygons since they have all been applied
+            obs_polys = np.zeros((0, 4, 2))
+            
+            return obs_dict, object_df, obs_polys
                 
         # Pull out corner points from the object dataframe where the object type is 'ooi'
         ooi_df = object_df[object_df['object_type'] == 'ooi']
-        rects = np.array(ooi_df['points'].values) # Get the corner points of the OOI's
-        ooi_ids = np.array(ooi_df['ooi_id'].values) # Get the OOI id's
+        rects = np.stack(ooi_df['points'].values) # Get the corner points of the OOI's
+        ooi_ids = np.stack(ooi_df['ooi_id'].values) # Get the OOI id's
         
-        # First calculate centroids of the rectangles
-        obs_centroids = np.mean(obs_rects, axis=1)
+        # First calculate centroids of the polygons
+        obs_centroids = np.mean(obs_polys, axis=1)
         centroids = np.mean(rects, axis=1)
         
         # Calculate distance between all pairs of centroids
@@ -194,17 +175,18 @@ class MeasurementControlEnvironment(Environment):
         # Solve the assignment problem to find the best match using scipy
         row_ind, col_ind = linear_sum_assignment(distances)
         
-        # Organize the rectangles based on the assignment 
+        # Organize the polygons based on the assignment 
         assigned_rects = rects[col_ind]
         
         # Now with objects associated, perform point to point data association
-        for i, (obs_rect, maint_rect) in enumerate(zip(obs_rects, assigned_rects)):
+        for i, (obs_rect, maint_rect) in enumerate(zip(obs_polys, assigned_rects)):
             distances = cdist(obs_rect, maint_rect)
             row_idx, col_idx = linear_sum_assignment(distances)
             obs_dict[ooi_ids[i]] = col_idx
-            # corner_dict[ooi_ids[i]] = obs_rect
+            
+        # TODO: Add non-associated objects to the object manager as new objects
 
-        return obs_dict, object_df
+        return obs_dict, object_df, obs_polys
     
     def apply_observation(self, observation_dict: dict, object_df: pd.DataFrame, car_state: np.ndarray, real_observation: np.ndarray=None) -> Tuple[pd.DataFrame, float]:
         # Take a copy of the object dataframe to update before modifying
@@ -212,30 +194,30 @@ class MeasurementControlEnvironment(Environment):
         
         # Apply the KF update to the observed corners
         trace_delta_sum = 0. # Sum of the difference in trace made in this update
-        for ooi_id, observed_indices in observation_dict.items():
+        for i, (ooi_id, observed_indices) in enumerate(observation_dict.items()):
             # Get the row corresponding to this ooi and the means and covariances of the OOI corners
             ooi_index = object_df.loc[object_df['ooi_id'] == ooi_id].index[0] # Index of the OOI in the object dataframe
             cur_means = deepcopy(object_df.loc[ooi_index, 'points']) # 4x2 numpy array of corner means
             cur_covs = deepcopy(object_df.loc[ooi_index, 'covariances']) # List of 4 2x2 numpy covariance matrices
             
             # Go through the indeces of the OOI points that were observed
-            for i in observed_indices:
+            for j in observed_indices:
                 # KF update with the observed corner using the previous mean for now
-                prev_trace = np.trace(cur_covs[i]) # Get the trace of the covariance matrix pre-update
+                prev_trace = np.trace(cur_covs[j]) # Get the trace of the covariance matrix pre-update
                 
                 # If we are doing a simulated update using the previous means
                 if real_observation is None:
-                    new_mean, new_cov = self.skf.update(cur_means[i,:], cur_covs[i], cur_means[i,:])
+                    new_mean, new_cov = self.skf.update(cur_means[j,:], cur_covs[j], cur_means[j,:], car_state)
                     
                 # Otherwise use the real observation dictionary to update the KF
                 else:
-                    new_mean, new_cov = self.skf.update(cur_means[i,:], cur_covs[i], real_observation[ooi_id][i], car_state)
+                    new_mean, new_cov = self.skf.update(cur_means[j,:], cur_covs[j], real_observation[i][j], car_state)
                     
                 trace_delta_sum += prev_trace - np.trace(new_cov) # Add the difference in trace to the sum
                 
                 # Place the new mean and covariance into the copied means and covs
-                cur_means[i,:] = new_mean
-                cur_covs[i] = new_cov
+                cur_means[j,:] = new_mean
+                cur_covs[j] = new_cov
                 
             # Now place the updated means and covs back into the object dataframe
             object_df.at[ooi_index, 'points'] = cur_means

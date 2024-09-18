@@ -16,6 +16,20 @@ class ObjectTuple(NamedTuple):
     radius: float=None
     observed: np.ndarray=np.zeros(4, dtype=bool) # [obs1, obs2, obs3, obs4]
     in_collision: bool=False
+    
+def get_empty_df():
+    """
+    This function returns an empty dataframe with the columns of the ObjectTuple
+    """
+    return pd.DataFrame({'object_type' : pd.Series(dtype='str'),
+                         'shape' : pd.Series(dtype='str'),
+                         'mean' : pd.Series(dtype='object'),
+                         'ooi_id' : pd.Series(dtype='int'),
+                         'points' : pd.Series(dtype='object'),
+                         'covariances' : pd.Series(dtype='object'),
+                         'radius' : pd.Series(dtype='float'),
+                         'observed' : pd.Series(dtype='object'),
+                         'in_collision' : pd.Series(dtype='bool')})
 
 class ObjectManager:
     def __init__(self, num_obstacles: int, num_occlusion: int, num_oois: int, car_collision_radius: float,
@@ -82,7 +96,8 @@ class ObjectManager:
                                                   covariances=covariances,
                                                   points=points)])
         # Add to the dataframe
-        df = pd.concat([df, object_row_df])
+        df = pd.concat([df, object_row_df], ignore_index=True)
+        print(f'Adding OOI with id {ooi_id}')
         
         return df
     
@@ -208,7 +223,6 @@ class ObjectManager:
     def check_collision(self, car_state):
         if self.df is None:
             raise ValueError('Objects have not been generated yet')
-        print("DF", self.df)
         
         # First filter out any objects whose mean is farther than the car collision radius plus a buffer
         mean_in_range = np.linalg.norm(np.vstack(self.df['mean']) - car_state[0:2], axis=1) < self.car_collision_radius + 10.0
@@ -320,7 +334,8 @@ class ObjectManager:
         df_in_bounding_box.loc[:, 'range'] = ranges
         
         # Remove the radius from the range for circles, to better sort by range for occlusions
-        df_in_bounding_box.loc[df_in_bounding_box['shape'] == 'circle', 'range'] -= df_in_bounding_box['radius']
+        if not df_in_bounding_box[df_in_bounding_box['shape'] == 'circle'].empty:
+            df_in_bounding_box.loc[df_in_bounding_box['shape'] == 'circle', 'range'] -= df_in_bounding_box['radius']
         df_range_sorted = df_in_bounding_box.sort_values(by='range')
         
         # Now iterate through objects in order of increasing range
