@@ -130,3 +130,155 @@ def get_ellipse_scaling(cov):
     
     # Return eigenvalues [width, height] and angle of first eigenvector (rotation)
     return eigvals, eigvec1_angle
+
+# def find_least_rectangular_point(points, return_debug=False):
+#     """
+#     Finds the point in a set of four 2D points that forms the internal angle
+#     farthest from 90 degrees.
+
+#     Parameters:
+#     - points: A (4, 2) NumPy array where each row represents a point (x, y).
+#     - return_debug: If True, return the index of the least rectangular point, the angle at that point, and all internal angles.
+
+#     Returns:
+#     - index: The index of the least rectangular point.
+#     """
+#     if points.shape != (4, 2):
+#         raise ValueError("Input must be a 4x2 NumPy array.")
+
+#     angles = []
+    
+#     for i in range(4):
+#         # Current point
+#         Pi = points[i]
+        
+#         # Previous and next points (with wrap-around)
+#         P_prev = points[i - 1]
+#         P_next = points[(i + 1) % 4]
+        
+#         # Vectors
+#         v1 = P_prev - Pi
+#         v2 = P_next - Pi
+        
+#         # Compute the angle between v1 and v2
+#         dot_prod = np.dot(v1, v2)
+#         norm_v1 = np.linalg.norm(v1)
+#         norm_v2 = np.linalg.norm(v2)
+        
+#         # Avoid division by zero
+#         if norm_v1 == 0 or norm_v2 == 0:
+#             angle = 0
+#         else:
+#             # Clamp the cosine value to the valid range [-1, 1] to avoid numerical issues
+#             cos_theta = np.clip(dot_prod / (norm_v1 * norm_v2), -1.0, 1.0)
+#             angle_rad = np.arccos(cos_theta)
+#             angle = np.degrees(angle_rad)
+        
+#         angles.append(angle)
+#         # print(f"Point {i}: Angle = {angle:.2f} degrees")
+
+#     angles = np.array(angles)
+    
+#     # Compute absolute difference from 90 degrees
+#     diff = np.abs(angles - 90)
+    
+#     # Find the index with the maximum difference
+#     least_rect_idx = np.argmax(diff)
+#     least_rect_angle = angles[least_rect_idx]
+    
+#     # print(f"\nLeast rectangular point is at index {least_rect_idx} with an angle of {least_rect_angle:.2f} degrees.\n")
+    
+#     if return_debug:
+#         return least_rect_idx, least_rect_angle, angles
+    
+#     return least_rect_idx
+
+def calculate_internal_angles(points):
+    """
+    Calculates the internal angles at each point of a quadrilateral.
+
+    Parameters:
+    - points: A (4, 2) NumPy array where each row represents a point (x, y).
+
+    Returns:
+    - angles: A NumPy array containing internal angles at each point in degrees.
+    """
+    if points.shape != (4, 2):
+        raise ValueError("Input must be a 4x2 NumPy array.")
+
+    angles = []
+
+    for i in range(4):
+        # Current point
+        Pi = points[i]
+
+        # Previous and next points (with wrap-around)
+        P_prev = points[i - 1]
+        P_next = points[(i + 1) % 4]
+
+        # Vectors
+        v1 = P_prev - Pi
+        v2 = P_next - Pi
+
+        # Compute the angle between v1 and v2
+        dot_prod = np.dot(v1, v2)
+        norm_v1 = np.linalg.norm(v1)
+        norm_v2 = np.linalg.norm(v2)
+
+        # Avoid division by zero
+        if norm_v1 == 0 or norm_v2 == 0:
+            angle = 0
+        else:
+            # Clamp the cosine value to the valid range [-1, 1] to avoid numerical issues
+            cos_theta = np.clip(dot_prod / (norm_v1 * norm_v2), -1.0, 1.0)
+            angle_rad = np.arccos(cos_theta)
+            angle = np.degrees(angle_rad)
+
+        angles.append(angle)
+        # print(f"Point {i}: Angle = {angle:.2f} degrees")
+
+    return np.array(angles)
+
+def find_least_rectangular_point(points, return_debug=False):
+    """
+    Identifies the point in a set of four 2D points that makes the shape more like a triangle.
+
+    Parameters:
+    - points: A (4, 2) NumPy array where each row represents a point (x, y).
+    - return_debug: If True, return the index of the least rectangular point, the angle at that point, and all internal angles.
+
+    Returns:
+    - least_rect_idx: The index of the least rectangular point.
+    """
+    angles = calculate_internal_angles(points)
+
+    # Compute absolute difference from 180 degrees
+    diff_from_180 = np.abs(angles - 180)
+
+    # Find the index with the smallest difference
+    least_rect_idx = np.argmin(diff_from_180)
+    least_rect_angle = angles[least_rect_idx]
+
+    # print(f"\nLeast rectangular point is at index {least_rect_idx} with an angle of {least_rect_angle:.2f} degrees.\n")
+
+    if return_debug:
+        return least_rect_idx, least_rect_angle, angles
+    
+    return least_rect_idx
+
+def find_farthest_point(points, position):
+    """
+    Finds the point in a set of 2D points that is farthest from a given position.
+    
+    Parameters:
+    - points: A (N, 2) NumPy array where each row represents a point (x, y).
+    - position: A 2-element NumPy array representing the position (x, y).
+    
+    Returns:
+    - farthest_idx: The index of the farthest point.
+    """
+    distances = np.linalg.norm(points - position, axis=1)
+    farthest_idx = np.argmax(distances)
+    
+    return farthest_idx
+    

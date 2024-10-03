@@ -39,7 +39,17 @@ class StaticKalmanFilter:
         self.H = np.eye(self.s_dim)
     
     # Update step of KF, get posterior distribution, function of measurement and sensor
-    def update(self, mean, cov, z, car_state):        
+    def update(self, mean, cov, z, car_state, range_dev=None, bearing_dev=None):
+        # Update noise values if provided
+        if range_dev is not None:
+            range_dev = range_dev
+        else:
+            range_dev = self.range_dev
+        if bearing_dev is not None:
+            bearing_dev = bearing_dev
+        else:
+            bearing_dev = self.bearing_dev
+                
         # Pull out car position and yaw
         car_pos = car_state[0:2]
         car_yaw = car_state[3]
@@ -49,8 +59,8 @@ class StaticKalmanFilter:
         cov = cov.copy()
 
         # Get the measurement matrix R
-        R = measurement_model(z, car_pos, car_yaw, min_range=self.min_range, range_dev=self.range_dev,
-                              min_bearing=self.min_bearing, bearing_dev=self.bearing_dev)
+        R = measurement_model(z, car_pos, car_yaw, min_range=self.min_range, range_dev=range_dev,
+                              min_bearing=self.min_bearing, bearing_dev=bearing_dev)
         I = np.eye(self.s_dim)
 
         # Kalman gain

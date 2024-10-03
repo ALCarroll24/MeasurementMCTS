@@ -12,7 +12,7 @@ from measurement_mcts.utils.ui import MatPlotLibUI
 from measurement_mcts.environment.car import Car
 from measurement_mcts.environment.object_manager import ObjectManager
 from measurement_mcts.environment.static_kf_2d import StaticKalmanFilter, measurement_model
-from measurement_mcts.utils.utils import min_max_normalize
+from measurement_mcts.utils.utils import min_max_normalize, find_least_rectangular_point, find_farthest_point
 from measurement_mcts.mcts.mcts import Environment
 from measurement_mcts.environment.exploration_grid import ExplorationGrid
 
@@ -137,13 +137,13 @@ class MeasurementControlEnvironment(Environment):
         :param state: (np.ndarray) the state tuple (Car state, Object Manager DF, Exploration Grid, horizon)
         """
         # Set the car state
-        self.car.set_state(state[0])
+        self.car.set_state(deepcopy(state[0]))
         
         # Set the object manager state
-        self.object_manager.set_df(state[1])
+        self.object_manager.set_df(deepcopy(state[1]))
         
         # Set the exploration grid state
-        self.explore_grid.set_grid(state[2])
+        self.explore_grid.set_grid(deepcopy(state[2]))
     
     def corner_data_association(self, obs_polys: np.ndarray, object_df: pd.DataFrame) -> Tuple[dict, pd.DataFrame, np.ndarray]:
         # Create output observation dictionary which holds ooi_id's as keys and the associated corner indeces as values
@@ -200,6 +200,10 @@ class MeasurementControlEnvironment(Environment):
             cur_means = deepcopy(object_df.loc[ooi_index, 'points']) # 4x2 numpy array of corner means
             cur_covs = deepcopy(object_df.loc[ooi_index, 'covariances']) # List of 4 2x2 numpy covariance matrices
             
+            # If doing real observation, find farthest point and inflate noise for that point
+            if real_observation is not None:
+                least_rect_idx = find_farthest_point(cur_means, car_state[:2])
+            
             # Go through the indeces of the OOI points that were observed
             for j in observed_indices:
                 # KF update with the observed corner using the previous mean for now
@@ -211,7 +215,11 @@ class MeasurementControlEnvironment(Environment):
                     
                 # Otherwise use the real observation dictionary to update the KF
                 else:
-                    new_mean, new_cov = self.skf.update(cur_means[j,:], cur_covs[j], real_observation[i][j], car_state)
+                    # If this is the least rectangular point, inflate the noise
+                    if j == least_rect_idx:
+                        new_mean, new_cov = self.skf.update(cur_means[j,:], cur_covs[j], real_observation[i][j], car_state, range_dev=10.0, bearing_dev=5.0)
+                    else:
+                        new_mean, new_cov = self.skf.update(cur_means[j,:], cur_covs[j], real_observation[i][j], car_state)
                     
                 trace_delta_sum += prev_trace - np.trace(new_cov) # Add the difference in trace to the sum
                 

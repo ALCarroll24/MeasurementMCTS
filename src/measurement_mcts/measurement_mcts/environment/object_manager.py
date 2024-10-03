@@ -88,13 +88,18 @@ class ObjectManager:
         # Create initial covariances for the points
         covariances = [np.diag([self.init_covariance_diag, self.init_covariance_diag]) for _ in range(4)]
         
+        # Find max radius of the points from the mean
+        mean = np.mean(points, axis=0)
+        max_radius = np.max(np.linalg.norm(points - mean, axis=1))
+        
         # Create the object tuple within a dataframe
         object_row_df = pd.DataFrame([ObjectTuple(object_type='ooi',
                                                   shape='4polygon',
                                                   ooi_id=ooi_id,
-                                                  mean=np.mean(points, axis=0),
+                                                  mean=mean,
                                                   covariances=covariances,
-                                                  points=points)])
+                                                  points=points,
+                                                  radius=max_radius)])
         # Add to the dataframe
         df = pd.concat([df, object_row_df], ignore_index=True)
         print(f'Adding OOI with id {ooi_id}')
@@ -224,6 +229,10 @@ class ObjectManager:
         if self.df is None:
             raise ValueError('Objects have not been generated yet')
         
+        # If there are no objects, return an empty dataframe
+        if self.df.empty:
+            return get_empty_df()
+        
         # First filter out any objects whose mean is farther than the car collision radius plus a buffer
         mean_in_range = np.linalg.norm(np.vstack(self.df['mean']) - car_state[0:2], axis=1) < self.car_collision_radius + 10.0
         df_close = self.df[mean_in_range]
@@ -291,6 +300,10 @@ class ObjectManager:
             df = df.copy()
         else:
             df = self.df.copy()
+            
+        # If there are no objects, return an empty dictionary of observations and the dataframe
+        if df.empty:
+            return {}, df
         
         # Re-initialize the 'observed' column with a new array of shape (4,) filled with False for every element
         df['observed'] = df.apply(lambda x: np.zeros(4, dtype=bool), axis=1)

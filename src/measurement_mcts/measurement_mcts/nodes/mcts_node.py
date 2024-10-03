@@ -1,5 +1,7 @@
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
+from threading import Lock
 import numpy as np
 import pandas as pd
 import timeit
@@ -60,9 +62,12 @@ class MCTSNode(Node):
         
         # Maintain the exploration grid for the environment
         self.grid = self.env.explore_grid.reset()
+        
+        # Initialize a lock for thread-safe operations
+        self.lock = Lock()
 
         # Create a timer to run the control loop at the desired rate
-        self.create_timer(self.timestep_length, self.control_loop)
+        # self.create_timer(self.timestep_length, self.control_loop)
         
     def mcts_search_action(self) -> np.ndarray:
         """Run the MCTS search and get the next action to take"""
@@ -70,7 +75,8 @@ class MCTSNode(Node):
         # Run the MCTS search
         best_action, root = mcts_search(self.env, None, self.env.get_state(), learning_iterations=self.learning_iterations,
                                     explore_factor=0.3, discount_factor=1.0)
-        print(f'MCTS search took {timeit.default_timer() - start_time} seconds.')
+        print(f'MCTS search took {timeit.default_timer() - start_time} seconds, action: {best_action}.')
+        
         # Return the best action
         return best_action
     
@@ -82,13 +88,15 @@ class MCTSNode(Node):
             return
         
         # Set the environment's state to the newest maintained by this class (real world state)
-        self.env.set_state([self.car_state, self.object_df, self.grid])
+        with self.lock:
+            self.env.set_state([self.car_state, self.object_df, self.grid])
         
         # Run MCTS search to get the next action
         action = self.mcts_search_action()
         
         # Update the car state with the new action
-        self.car_state = self.env.car.update(self.timestep_length, action, starting_state=self.car_state)
+        with self.lock:
+            self.car_state = self.env.car.update(self.timestep_length, action, starting_state=self.car_state)
         
         # Publish the new pose
         new_pose_msg = PoseStamped()
@@ -96,11 +104,13 @@ class MCTSNode(Node):
         new_pose_msg.header.frame_id = 'map'
 
         # Set the new position
-        new_pose_msg.pose.position.x = self.car_state[0]
-        new_pose_msg.pose.position.y = self.car_state[1]
+        with self.lock:
+            new_pose_msg.pose.position.x = self.car_state[0]
+            new_pose_msg.pose.position.y = self.car_state[1]
         
         # Set the new orientation
-        quaternion = quaternion_from_euler(0, 0, self.car_state[3])
+        with self.lock:
+            quaternion = quaternion_from_euler(0, 0, self.car_state[3])
         new_pose_msg.pose.orientation.x = quaternion[0]
         new_pose_msg.pose.orientation.y = quaternion[1]
         new_pose_msg.pose.orientation.z = quaternion[2]
@@ -131,17 +141,22 @@ class MCTSNode(Node):
             # Save the points to the corners for this OOI
             corner_list.append(np.array(points))
         
+        # If no corners were found, return
+        if len(corner_list) == 0:
+            return
+        
         # Stack the corner list to get the corners in the correct format
         corners = np.stack(corner_list)
         
-        # Use the corner locations and apply data association to get observation dictionary (new objects are added to df and removed from corners)
-        obs_dict, new_object_df, new_corners = self.env.corner_data_association(corners, self.object_df)
+        with self.lock:
+            # Use the corner locations and apply data association to get observation dictionary (new objects are added to df and removed from corners)
+            obs_dict, new_object_df, new_corners = self.env.corner_data_association(corners, self.object_df)
         
-        # Apply the observations to the environment and maintain new object state dataframe
-        new_df, trace_delta_sum = self.env.apply_observation(obs_dict, new_object_df, self.car_state, new_corners)
+            # Apply the observations to the environment and maintain new object state dataframe
+            new_df, trace_delta_sum = self.env.apply_observation(obs_dict, new_object_df, self.car_state, new_corners)
         
-        # Save the new object dataframe
-        self.object_df = new_df
+            # Save the new object dataframe
+            self.object_df = new_df
         
         # Publish the marker visualization of the new object locations
         self.publish_object_markers(self.object_df)
@@ -219,7 +234,8 @@ class MCTSNode(Node):
         self.car_state[[0, 1, 3]] = np.array([position[0], position[1], yaw])
         
         # Update the grid state with the car state
-        self.grid, num_explored = self.env.explore_grid.update(self.grid, self.car_state, object_df=self.object_df)
+        with self.lock:
+            self.grid, num_explored = self.env.explore_grid.update(self.grid, self.car_state, object_df=self.object_df)
         
         # If this is the first time we have received the pose, set the car's state within the environment to initialize it
         if not self.got_initial_pose:
@@ -228,9 +244,19 @@ class MCTSNode(Node):
             
 def main(args=None):
     rclpy.init(args=args)
-
     mcts_node = MCTSNode()
 
+    # Create a MultiThreadedExecutor with the desired number of threads
+    # executor = MultiThreadedExecutor(num_threads=4)  # Adjust the number of threads as needed
+    # executor.add_node(mcts_node)
+
+    # try:
+    #     executor.spin()
+    # finally:
+    #     mcts_node.destroy_node()
+    #     rclpy.shutdown()
+
+    # Single threaded version
     rclpy.spin(mcts_node)
 
     mcts_node.destroy_node()
