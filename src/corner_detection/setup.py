@@ -20,7 +20,9 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'corner_detection_node = corner_detection.corner_detection_node:main'
+            'pca_node = corner_detection.pca_node:main',
+            'ransac_node = corner_detection.ransac_node:main',
+            'ransac_3d_node = corner_detection.ransac_3d_node:main',
         ],
     },
 )
