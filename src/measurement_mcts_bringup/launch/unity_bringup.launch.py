@@ -58,7 +58,7 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='lidar_static_transform_publisher',
-        # Arguments: x, y, z, yaw, pitch, roll, parent_frame, child_frame (copied from unity)
+        # Arguments: x, y, z, yaw, pitch, roll, parent_frame, child_frame (numbers copied from unity)
         arguments=['1.754', '0', '1.589', '-1.57', '0', '0', 'base_footprint', 'velodyne_link'],
         output='screen',
         parameters=[{'use_sim_time': use_sim_time}],
@@ -67,7 +67,7 @@ def generate_launch_description():
     return LaunchDescription([
         unity_tcp_endpoint,
         unity_pose_to_tf_node,
-        # mcts_node,
+        mcts_node,
         twist_action_to_unity_node,
         lidar_static_transform_publisher_node,
     ])

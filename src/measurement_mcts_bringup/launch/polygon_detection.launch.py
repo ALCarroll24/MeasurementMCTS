@@ -16,8 +16,8 @@ def generate_launch_description():
     # Run PointCloud to Polygons node
     pointcloud_to_polygons_node = Node(
         package='pointcloud_to_polygons',
-        executable='pointcloud_clustering_node',
-        name='pointcloud_to_polygons_node',
+        executable='pointcloud_segmentation_node',
+        name='pointcloud_segmentation_node',
         output='screen',
         parameters=[{'use_sim_time': use_sim_time,
                      'vehicle_footprint_x_pos': 1.2,
@@ -27,10 +27,10 @@ def generate_launch_description():
                     }],
     )
     
-    # Run the Polygons to Corner Points node
+    # Run the segmented polygon to corner points node
     polygons_to_corner_points_node = Node(
         package='corner_detection',
-        executable='corner_detection_node',
+        executable='ransac_3d_node',
         name='corner_detection_node',
         output='screen',
         parameters=[{'use_sim_time': use_sim_time}],

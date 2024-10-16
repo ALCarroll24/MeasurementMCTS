@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import timeit
 from geometry_msgs.msg import PoseStamped
+import rclpy.time
 from visualization_msgs.msg import MarkerArray, Marker
 from tf_transformations import quaternion_from_euler, euler_from_quaternion
 from measurement_mcts.mcts.mcts import mcts_search, get_best_trajectory
@@ -43,7 +44,7 @@ class MCTSNode(Node):
         # Subscribe to the detected corner locations
         self.create_subscription(
             MarkerArray,
-            '/corner_marker_array',
+            '/object_edges',
             self.corner_callback,
             10)
             
@@ -130,8 +131,8 @@ class MCTSNode(Node):
             if msg.markers[i].action != 0:
                 continue
             
-            # Warn if the marker does not have 4 corners and skip it
-            if len(msg.markers[i].points) != 4:
+            # Warn if the marker does not have 2 or 3 corners and skip it
+            if not (len(msg.markers[i].points) == 2 or len(msg.markers[i].points) == 3):
                 self.get_logger().warn(f'OOI {i} does not have 4 corners. Skipping.', throttle_duration_sec=1)
                 continue
             
@@ -176,10 +177,15 @@ class MCTSNode(Node):
             cov = tuple.covariances
             
             # Iterate over each corner for the object
-            for i in range(4):
+            for i in range(len(points)):
+                # Subtract a small amount of time to prevent errors from tf needing to extrapolate into the future
+                # Unity pose updates which provide tf frames are slightly in the past
+                current_time = self.get_clock().now()
+                slight_past_time = (current_time - rclpy.time.Duration(seconds=0.1)).to_msg()
+                
                 center_marker = Marker()
                 center_marker.header.frame_id = 'map'
-                center_marker.header.stamp = self.get_clock().now().to_msg()
+                center_marker.header.stamp = slight_past_time
                 center_marker.id = tuple.ooi_id * 8 + 2*i
                 center_marker.type = Marker.SPHERE
                 center_marker.action = Marker.ADD
@@ -197,7 +203,7 @@ class MCTSNode(Node):
                 
                 cov_marker = Marker()
                 cov_marker.header.frame_id = 'map'
-                cov_marker.header.stamp = self.get_clock().now().to_msg()
+                cov_marker.header.stamp = slight_past_time
                 cov_marker.id = tuple.ooi_id * 8 + 2*i + 1
                 cov_marker.type = Marker.SPHERE
                 eigvals, eigvec1_angle = get_ellipse_scaling(cov[i])

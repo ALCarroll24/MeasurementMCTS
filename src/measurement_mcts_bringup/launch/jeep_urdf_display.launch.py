@@ -22,18 +22,6 @@ def generate_launch_description():
     with open(urdf, 'r') as infp:
         robot_desc = infp.read()
     
-    # Joint state publisher, used to publish the default locations of the wheels (otherwise they are stuck at 0)
-    joint_state_publisher_gui__node = Node(
-        package='joint_state_publisher',
-        executable='joint_state_publisher',
-        name='joint_state_publisher',
-        output='screen',
-        parameters=[{
-            'rate': 30,
-            'use_sim_time': use_sim_time,
-        }],
-    )
-    
     # Places URDF on the robot_description parameter, so that it is viewable in rviz
     robot_state_publisher_node = Node(
             package='robot_state_publisher',
@@ -45,6 +33,18 @@ def generate_launch_description():
             }],
             output='both'
         )
+    
+    # Joint state publisher, used to publish the default locations of the wheels (otherwise they are stuck at 0)
+    joint_state_publisher_node = Node(
+        package='joint_state_publisher',
+        executable='joint_state_publisher',
+        name='joint_state_publisher',
+        output='screen',
+        parameters=[{
+            'rate': 30,
+            'use_sim_time': use_sim_time,
+        }],
+    )
     
     # Launch RVIZ with profile from config folder
     rviz_node = Node(
@@ -58,6 +58,6 @@ def generate_launch_description():
 
     return LaunchDescription([
         robot_state_publisher_node,
-        joint_state_publisher_gui__node,
+        joint_state_publisher_node,
         rviz_node,
     ])
