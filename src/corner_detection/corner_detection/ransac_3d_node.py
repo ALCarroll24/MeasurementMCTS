@@ -1,9 +1,11 @@
 import rclpy
 from rclpy.node import Node
+import tf2_ros
+from tf2_geometry_msgs import do_transform_point
 from visualization_msgs.msg import MarkerArray, Marker
 from pointcloud_array_msgs.msg import PointCloud2Array
 from sensor_msgs_py import point_cloud2
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, PointStamped
 import open3d as o3d
 import numpy as np
 import pyransac3d as pyrsc
@@ -16,11 +18,15 @@ class ObjectPointsSubscriber(Node):
     def __init__(self):
         super().__init__('object_points_subscriber')
         
+        # TF2 buffer and listener
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        
         # Create a subscriber to /object_points_array topic
         self.subscription = self.create_subscription(
             PointCloud2Array,
             '/object_clouds',
-            self.listener_callback,
+            self.pointclouds_callback,
             10  # QoS history depth
         )
 
@@ -32,7 +38,7 @@ class ObjectPointsSubscriber(Node):
         self.save_directory = os.path.join(package_share_directory, 'data')  # 'data' directory inside the package
         os.makedirs(self.save_directory, exist_ok=True)
 
-    def listener_callback(self, msg: PointCloud2Array):
+    def pointclouds_callback(self, msg: PointCloud2Array):
         # Create output marker array
         edge_marker_array = MarkerArray()
         
@@ -56,9 +62,16 @@ class ObjectPointsSubscriber(Node):
             # Find the corner points
             corner_points = self.find_corner_points(edge_points, thresh=0.2, min_points=100, max_iter=100, plot=False, plot_planes=False)
             
-            # Publish a line marker for the detected corner points
+            # Remove the leading slash in the frame id from unity (causes tf2 to fail)
+            if cloud.header.frame_id[0] == '/':
+                input_frame = cloud.header.frame_id[1:]
+            else:
+                input_frame = cloud.header.frame_id
+                
+            # Create a line marker for the detected corner points
             edge_marker = Marker()
-            edge_marker.header = cloud.header
+            edge_marker.header.stamp = cloud.header.stamp
+            edge_marker.header.frame_id = 'map'
             edge_marker.type = Marker.LINE_STRIP
             edge_marker.action = Marker.ADD
             edge_marker.id = i
@@ -66,16 +79,33 @@ class ObjectPointsSubscriber(Node):
             edge_marker.scale.x = 0.2
             edge_marker.color.r = 1.0
             edge_marker.color.a = 1.0
-            if len(corner_points) == 3:
-                edge_marker.points.append(Point(x=float(corner_points[1,0]), y=float(corner_points[1,1]), z=float(corner_points[1,2])))
-                edge_marker.points.append(Point(x=float(corner_points[0,0]), y=float(corner_points[0,1]), z=float(corner_points[0,2])))
-                edge_marker.points.append(Point(x=float(corner_points[2,0]), y=float(corner_points[2,1]), z=float(corner_points[2,2])))
-            elif len(corner_points) == 2:
-                edge_marker.points.append(Point(x=float(corner_points[1,0]), y=float(corner_points[1,1]), z=float(corner_points[1,2])))
-                edge_marker.points.append(Point(x=float(corner_points[0,0]), y=float(corner_points[0,1]), z=float(corner_points[0,2])))
-            
+    
+            # Try to get the transformation from marker's frame to the map frame
+            try:
+                transform = self.tf_buffer.lookup_transform(
+                        'map',  # Target frame
+                        input_frame,  # Source frame
+                        rclpy.time.Time())  # Get the latest transform available
+                
+                # Transform corner points into map frame
+                for corner in corner_points:
+                    corner_point_stamped = PointStamped()
+                    corner_point_stamped.header = cloud.header
+                    corner_point_stamped.header.frame_id = input_frame
+                    corner_point_stamped.point = Point(x=float(corner[0]), y=float(corner[1]), z=float(corner[2]))
+                    
+                    # Transform the point to the map frame
+                    transformed_point = do_transform_point(corner_point_stamped, transform)
+                
+                    # Add the transformed point to the marker
+                    edge_marker.points.append(transformed_point.point)
+            except Exception as e:
+                self.get_logger().warn(f'Failed to transform to map frame: {str(e)}')
+                
+            # Append marker for this object to the marker array
             edge_marker_array.markers.append(edge_marker)
             
+        # Publish the marker array of all objects
         self.edge_publisher.publish(edge_marker_array)
 
     def remove_top_plane(self, points, percent=80, draw=False):
@@ -150,7 +180,7 @@ class ObjectPointsSubscriber(Node):
             edge_point1 = self.get_edge_corner_point(points[best_inliers1], best_eq1, corner_point, z_value)
             edge_point2 = self.get_edge_corner_point(outliers[best_inliers2], best_eq2, corner_point, z_value)
             
-            corner_points = np.vstack((corner_point, edge_point1, edge_point2))
+            corner_points = np.vstack((edge_point1, corner_point, edge_point2))
             if plot:
                 self.plot_segmented_points(points, best_inliers1, best_inliers2, corner_points)
                 
