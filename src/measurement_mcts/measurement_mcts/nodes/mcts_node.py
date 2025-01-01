@@ -133,7 +133,8 @@ class MCTSNode(Node):
             
             # Warn if the marker does not have 2 or 3 corners and skip it
             if not (len(msg.markers[i].points) == 2 or len(msg.markers[i].points) == 3):
-                self.get_logger().warn(f'OOI {i} does not have 4 corners. Skipping.', throttle_duration_sec=1)
+                self.get_logger().warn(f'OOI {i} real observation does not have 2 or 3 corners. Skipping.')
+                self.get_logger().warn(f'Corners: {msg.markers[i].points}')
                 continue
             
             # Extract the points from the marker
@@ -146,15 +147,12 @@ class MCTSNode(Node):
         if len(corner_list) == 0:
             return
         
-        # Stack the corner list to get the corners in the correct format
-        corners = np.stack(corner_list)
-        
         with self.lock:
             # Use the corner locations and apply data association to get observation dictionary (new objects are added to df and removed from corners)
-            obs_dict, new_object_df, new_corners = self.env.corner_data_association(corners, self.object_df)
+            obs_dict, new_object_df, new_corners, estimated_indices = self.env.corner_data_association(corner_list, self.object_df, self.car_state, self)
         
             # Apply the observations to the environment and maintain new object state dataframe
-            new_df, trace_delta_sum = self.env.apply_observation(obs_dict, new_object_df, self.car_state, new_corners)
+            new_df, trace_delta_sum = self.env.apply_observation(obs_dict, new_object_df, self.car_state, new_corners, estimated_indices)
         
             # Save the new object dataframe
             self.object_df = new_df

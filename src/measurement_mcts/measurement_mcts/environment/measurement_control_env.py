@@ -12,7 +12,7 @@ from measurement_mcts.utils.ui import MatPlotLibUI
 from measurement_mcts.environment.car import Car
 from measurement_mcts.environment.object_manager import ObjectManager
 from measurement_mcts.environment.static_kf_2d import StaticKalmanFilter, measurement_model
-from measurement_mcts.utils.utils import min_max_normalize, find_least_rectangular_point, find_farthest_point
+from measurement_mcts.utils.utils import min_max_normalize, find_farthest_point, rotate
 from measurement_mcts.mcts.mcts import Environment
 from measurement_mcts.environment.exploration_grid import ExplorationGrid
 
@@ -145,10 +145,64 @@ class MeasurementControlEnvironment(Environment):
         # Set the exploration grid state
         self.explore_grid.set_grid(deepcopy(state[2]))
     
-    def corner_data_association(self, obs_polys: np.ndarray, object_df: pd.DataFrame) -> Tuple[dict, pd.DataFrame, np.ndarray]:
+    def estimate_remaining_points(self, points, car_state):
+        """
+        Take 2 or 3 points from the observation and estimate the remaining points of the object
+        
+        :param points: (np.ndarray) the observed points of the object
+        :param car_state: (np.ndarray) the state of the car (x, y, yaw)
+        :return: (np.ndarray) the original points of the object with estimated points added
+        :return: (np.ndarray) the indices of the new estimated points
+        """
+        # Extract the car position from the car state
+        car_position = car_state[:2]
+        
+        # If there are 3 points, we can estimate the fourth point by adding the two vectors from the intersection point to edges
+        if points.shape[0] == 3:
+            # Point 1 is the intersection point, point 0 and point 2 are the points at the ends of the plane
+            final_point = (points[0]-points[1]) + (points[2] - points[1]) + points[1]
+            
+            # Return the original points and the index of the new point
+            return np.vstack([points, final_point]), np.array([0, 0, 0, 1])
+        
+        # For two points, we can assume that the object is a square and add the two points that are missing
+        elif points.shape[0] == 2:
+            # First take the vector between the two points
+            between_points = points[1] - points[0]
+            
+            # Rotate the vector by +-90 degrees
+            bp_plus, bp_minus = rotate(between_points, np.pi/2), rotate(between_points, -np.pi/2)
+            
+            # Find the vector from the vehicle to the first point, giving us the general direction of the object
+            to_first_point = points[0] - car_position
+            
+            # Calculate the dot product between the object direction and the two vectors after normalizing
+            dot_plus = to_first_point/np.linalg.norm(to_first_point) @ bp_plus/np.linalg.norm(bp_plus)
+            dot_minus = to_first_point/np.linalg.norm(to_first_point) @ bp_minus/np.linalg.norm(bp_minus)
+            
+            # Take the vector with the larger dot product which is the vector with the a similar direction as the object
+            square_vector = bp_plus if dot_plus > dot_minus else bp_minus
+            
+            # Add the square vector to the two points to get the final points
+            final_points = np.vstack([points, points[0] + square_vector, points[1] + square_vector])
+            
+            # Return the original points and the indices of the new points
+            return final_points, np.array([0, 0, 1, 1])
+        
+        else:
+            raise ValueError("Points must be of length 2 or 3")
+    
+    def corner_data_association(self, obs_list: list, object_df: pd.DataFrame, 
+                                car_state: np.ndarray, node=None) -> Tuple[dict, pd.DataFrame, np.ndarray]:
         # Create output observation dictionary which holds ooi_id's as keys and the associated corner indeces as values
         obs_dict = {}
         
+        # First estimate the remaining points of the objects based on the observed points
+        obs_polys = np.zeros((len(obs_list), 4, 2))
+        estimated_indices = np.zeros((len(obs_list), 4))
+        for i, poly in enumerate(obs_list):
+            obs_polys[i], estimated_indices[i] = self.estimate_remaining_points(poly, car_state)
+            
         # If there are no objects maintained, add all sets of corners as new objects
         if object_df.empty:
             for i, poly in enumerate(obs_polys):
@@ -158,8 +212,8 @@ class MeasurementControlEnvironment(Environment):
             # Remove all objects from the observation polygons since they have all been applied
             obs_polys = np.zeros((0, 4, 2))
             
-            return obs_dict, object_df, obs_polys
-                
+            return obs_dict, object_df, obs_polys, estimated_indices
+
         # Pull out corner points from the object dataframe where the object type is 'ooi'
         ooi_df = object_df[object_df['object_type'] == 'ooi']
         rects = np.stack(ooi_df['points'].values) # Get the corner points of the OOI's
@@ -174,6 +228,9 @@ class MeasurementControlEnvironment(Environment):
         
         # Solve the assignment problem to find the best match using scipy
         row_ind, col_ind = linear_sum_assignment(distances)
+        node.get_logger().info(f'Object Assignment:')
+        node.get_logger().info(f'Row Index: {row_ind}')
+        node.get_logger().info(f'Col Index: {col_ind}')
         
         # Organize the polygons based on the assignment 
         assigned_rects = rects[col_ind]
@@ -182,13 +239,21 @@ class MeasurementControlEnvironment(Environment):
         for i, (obs_rect, maint_rect) in enumerate(zip(obs_polys, assigned_rects)):
             distances = cdist(obs_rect, maint_rect)
             row_idx, col_idx = linear_sum_assignment(distances)
+            node.get_logger().info(f'Object {i} Point Assignment:')
+            node.get_logger().info(f'Row Index: {row_idx}')
+            node.get_logger().info(f'Col Index: {col_idx}')
             obs_dict[ooi_ids[i]] = col_idx
             
+        # Also organize the observation polygons based on the assignment
+        obs_polys = obs_polys[col_ind]
+            
         # TODO: Add non-associated objects to the object manager as new objects
+        node.get_logger().info(f'obs_dict: {obs_dict}')
 
-        return obs_dict, object_df, obs_polys
+        return obs_dict, object_df, obs_polys, estimated_indices
     
-    def apply_observation(self, observation_dict: dict, object_df: pd.DataFrame, car_state: np.ndarray, real_observation: np.ndarray=None) -> Tuple[pd.DataFrame, float]:
+    def apply_observation(self, observation_dict: dict, object_df: pd.DataFrame, car_state: np.ndarray, 
+                          real_observation: np.ndarray=None, estimated_indices: np.ndarray=None) -> Tuple[pd.DataFrame, float]:
         # Take a copy of the object dataframe to update before modifying
         object_df = deepcopy(object_df)
         
@@ -199,10 +264,6 @@ class MeasurementControlEnvironment(Environment):
             ooi_index = object_df.loc[object_df['ooi_id'] == ooi_id].index[0] # Index of the OOI in the object dataframe
             cur_means = deepcopy(object_df.loc[ooi_index, 'points']) # 4x2 numpy array of corner means
             cur_covs = deepcopy(object_df.loc[ooi_index, 'covariances']) # List of 4 2x2 numpy covariance matrices
-            
-            # If doing real observation, find farthest point and inflate noise for that point
-            if real_observation is not None:
-                least_rect_idx = find_farthest_point(cur_means, car_state[:2])
             
             # Go through the indeces of the OOI points that were observed
             for j in observed_indices:
@@ -215,8 +276,8 @@ class MeasurementControlEnvironment(Environment):
                     
                 # Otherwise use the real observation dictionary to update the KF
                 else:
-                    # If this is the least rectangular point, inflate the noise
-                    if j == least_rect_idx:
+                    # If this is an estimated point, inflate the noise
+                    if estimated_indices[i][j] == 1:
                         new_mean, new_cov = self.skf.update(cur_means[j,:], cur_covs[j], real_observation[i][j], car_state, range_dev=10.0, bearing_dev=5.0)
                     else:
                         new_mean, new_cov = self.skf.update(cur_means[j,:], cur_covs[j], real_observation[i][j], car_state)
