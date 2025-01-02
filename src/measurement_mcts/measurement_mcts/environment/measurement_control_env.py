@@ -6,6 +6,7 @@ from scipy.optimize import linear_sum_assignment
 from typing import Tuple
 from copy import deepcopy
 import timeit
+import pickle
 from matplotlib.animation import FuncAnimation
 from IPython.display import display, HTML
 from measurement_mcts.utils.ui import MatPlotLibUI
@@ -144,6 +145,32 @@ class MeasurementControlEnvironment(Environment):
         
         # Set the exploration grid state
         self.explore_grid.set_grid(deepcopy(state[2]))
+        
+    def save_state(self, path, name) -> None:
+        """
+        Save the state of the environment to a file.
+        
+        :param state: (np.ndarray) the state tuple (Car state, Object Manager DF, Exploration Grid, horizon)
+        :param name: (str) the name of the file to save the state to
+        """
+        # Save the state to a file
+        # np.save(f'{path}/{name}', (self.car.get_state(), self.object_manager.get_df(), self.explore_grid.get_grid(), 0))
+        with open(f'{path}/{name}.pkl', 'wb') as file:
+            pickle.dump((self.car.get_state(), self.object_manager.get_df(), self.explore_grid.get_grid(), 0), file)
+        
+    def load_state(self, path, name) -> None:
+        """
+        Load the state of the environment from a file.
+        
+        :param name: (str) the name of the file to load the state from
+        """
+        # Load the state from a file
+        # state = np.load(f'{path}/{name}', allow_pickle=True)
+        with open(f'{path}/{name}.pkl', 'rb') as file:
+            state = pickle.load(file)
+        
+        # Set the state of the environment
+        self.set_state(state)
     
     def estimate_remaining_points(self, points, car_state):
         """

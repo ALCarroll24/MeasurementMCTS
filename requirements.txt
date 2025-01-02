@@ -1,0 +1,9 @@
+numpy==1.24.4
+pandas
+graphviz
+pyvis
+matplotlib
+torch
+torchvision
+torchaudio
+shapely
