@@ -40,14 +40,19 @@ def render_graph(root, open=True):
         
     print('Tree rendered in img/tree.gv')
 
-def add_nodes_and_edges_pyvis(node, net, action_space, parent_hash=None, show_unsimulated=True):
+def add_nodes_and_edges_pyvis(node, net, action_space, parent_hash=None, show_unsimulated=True, show_unexpanded=True):
     node_hash = str(node.__hash__())
     horizon_step = node.state[3]
     # Check if this is the root node (parent is different type, dummy node)
     if type(node.parent) != type(node):
         label = "Root Node" + "\n" + \
                 "Position: " + " " + str(np.around(node.state[0][0:2], 2)) + "\n" + \
-                "Yaw: " + " " + str(np.around(np.degrees(node.state[0][3]), 2)) + "\n"
+                "Yaw: " + " " + str(np.around(np.degrees(node.state[0][3]), 2)) + "\n" \
+                "Reward: " + " " + str(np.around(node.reward, 2)) + "\n" + \
+                "is_expanded: " + " " + str(node.is_expanded) + "\n" + \
+                "Total Value: " + " " + str(np.around(node.total_value, 2)) + "\n" + \
+                "Visit count: " + " " + str(np.around(node.number_visits, 2)) + "\n" + \
+                "Depth: " + " " + str(horizon_step)
                 
         # Add the root node to the network
         net.add_node(node_hash, label=label, level=horizon_step)
@@ -64,16 +69,24 @@ def add_nodes_and_edges_pyvis(node, net, action_space, parent_hash=None, show_un
                 "Reward: " + " " + str(np.around(node.reward, 2)) + "\n" + \
                 "Q value: " + " " + str(np.around(node.parent.child_Q()[node.action], 2)) + "\n" + \
                 "U value: " + " " + str(np.around(node.parent.child_U()[node.action], 2)) + "\n" + \
+                "is_expanded: " + " " + str(node.is_expanded) + "\n" + \
                 "Total Value: " + " " + str(np.around(node.total_value, 2)) + "\n" + \
                 "Visit count: " + " " + str(np.around(node.number_visits, 2)) + "\n" + \
                 "Depth: " + " " + str(horizon_step)
 
         # Add the node to the network
-        net.add_node(node_hash, label=label, level=horizon_step)
+        if (not node.is_expanded) and show_unexpanded:
+            net.add_node(node_hash, label=label, level=horizon_step, color='red')
+            # Add an edge from the parent to this node
+            if parent_hash is not None:
+                net.add_edge(parent_hash, node_hash)
+                
+        if node.is_expanded:
+            net.add_node(node_hash, label=label, level=horizon_step)
+            # Add an edge from the parent to this node
+            if parent_hash is not None:
+                net.add_edge(parent_hash, node_hash)
         
-        # Add an edge from the parent to this node
-        if parent_hash is not None:
-            net.add_edge(parent_hash, node_hash)
         
     # Add the unsimulated nodes which are the actions not in the children keys
     if show_unsimulated:
@@ -95,7 +108,7 @@ def add_nodes_and_edges_pyvis(node, net, action_space, parent_hash=None, show_un
     
     # Add children recursively
     for child in node.children.values():
-        add_nodes_and_edges_pyvis(child, net, action_space, parent_hash=node_hash, show_unsimulated=show_unsimulated)
+        add_nodes_and_edges_pyvis(child, net, action_space, parent_hash=node_hash, show_unsimulated=show_unsimulated, show_unexpanded=show_unexpanded)
     
     # # If this is a random node, make it square
     # if "RandomNode" in str(type(node)):
@@ -142,10 +155,10 @@ def add_nodes_and_edges_pyvis(node, net, action_space, parent_hash=None, show_un
     # for child in node.children.values():
     #     add_nodes_and_edges_pyvis(child, net, node_hash)
 
-def render_pyvis(root, action_space, show_unsimulated=True):
+def render_pyvis(root, action_space, show_unsimulated=True, show_unexpanded=True):
     net = Network(height="1200px", width="100%", directed=True)
     net.force_atlas_2based()
-    add_nodes_and_edges_pyvis(root, net, action_space, show_unsimulated=show_unsimulated)
+    add_nodes_and_edges_pyvis(root, net, action_space, show_unsimulated=show_unsimulated, show_unexpanded=show_unexpanded)
     
     ### Both show buttons and setting options don't work together
     # net.show_buttons()

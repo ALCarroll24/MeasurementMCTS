@@ -18,13 +18,14 @@ from measurement_mcts.mcts.mcts import Environment
 from measurement_mcts.environment.exploration_grid import ExplorationGrid
 
 class MeasurementControlEnvironment(Environment):
-    def __init__(self, init_reset=True):
+    def __init__(self, init_reset=True, interactive=False):
         # General important parameters
         self.final_cov_trace = 0.03 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
         self.simulation_dt = 0.6 # time step size for forward simulation search
         self.obstacle_punishment = -10. # reward for colliding with an obstacle
         self.init_covariance_diag = 8. # Initial diagonal value for all diagonals of (2x2) point covariance matrix
-        self.explored_cell_reward = 0.0001 # reward for exploring a cell
+        self.explored_cell_reward = 0.00001 # reward for exploring a cell
+        self.horizon_length = 6 # length of the horizon for the environment
         
         # Sensor parameters used in Object Manager for observation simulation and minimums for the measurement model
         sensor_min_range = 5. # minimum range for sensor model
@@ -41,7 +42,7 @@ class MeasurementControlEnvironment(Environment):
         self.action_space = np.concatenate((action_space[zero_action_index:], action_space[:zero_action_index]))
                 
         # Create a UI object to pass to different classes for easy plotting
-        self.ui = MatPlotLibUI()
+        self.ui = MatPlotLibUI(interactive=interactive)
                 
         # Create a car model with the initial state bounds
         init_pos_bounds = np.array([10., 90.])
@@ -51,17 +52,18 @@ class MeasurementControlEnvironment(Environment):
         
         # Create the object manager which manages collision, and getting observations accounting for occlusions
         # Parameters are mainly for generating random objects
-        num_obstacles = 5   # Random obstacles to generate on reset
-        num_occlusions = 5  # Random occlusions to generate on reset
-        num_oois = 4        # Random OOI's to generate on reset
-        self.init_covariance_trace = 4 * self.init_covariance_diag # Initial trace for one OOI (this defines a reward of 1 for reducing the trace of an OOI to 0)
-        car_collision_radius = 3.0 # Collision radius of the car
+        self.num_obstacles = 5   # Random obstacles to generate on reset
+        self.num_occlusions = 5  # Random occlusions to generate on reset
+        self.num_oois = 4        # Random OOI's to generate on reset
+        self.init_covariance_trace = self.num_oois * 4 * 2 * self.init_covariance_diag # Total trace available, makes trace based rewards normalized to [0, 1]
+        car_collision_radius = 3.5 # Collision radius of the car
         object_bounds = np.array([15, 85]) # Bounds for random object generation
-        object_size_bounds = np.array([1, 10]) # Bounds for random object size generation
-        self.object_manager = ObjectManager(num_obstacles, num_occlusions, num_oois, car_collision_radius, 
+        object_size_bounds = np.array([2, 7]) # Bounds for random object size generation
+        ooi_size_bounds = np.array([3, 12]) # Bounds for random OOI size generation
+        self.object_manager = ObjectManager(self.num_obstacles, self.num_occlusions, self.num_oois, car_collision_radius, 
                                             sensor_max_range, sensor_max_bearing, object_bounds=object_bounds,
-                                            size_bounds=object_size_bounds, init_covariance_diag=self.init_covariance_diag,
-                                            ui=self.ui)
+                                            size_bounds=object_size_bounds, ooi_size_bounds=ooi_size_bounds,
+                                            init_covariance_diag=self.init_covariance_diag, ui=self.ui)
         
         # Create a Static 2d Kalman Filter object
         range_dev = 1. # standard deviation for the range scaling of measurement model
@@ -373,24 +375,14 @@ class MeasurementControlEnvironment(Environment):
         total_trace = new_ooi_df['covariances'].apply(lambda matrices: np.sum([np.trace(matrix) for matrix in matrices])).sum()
         done = total_trace < self.final_cov_trace
         
+        # Also done if horizon is equal to the maximum horizon length
+        done = done or horizon >= self.horizon_length
+        
         # Combine the updated car state, mean, covariance and horizon into a new state
         new_state = (new_car_state, new_object_df, new_grid, horizon)
         
         # Return the reward and the new state
         return new_state, reward, done
-        
-    def check_done(self, state) -> bool:
-        """
-        Check if the episode is done based on the state.
-        
-        :param state: (np.ndarray) the state of the car and OOI (position(0:2), corner means(2:10), corner covariances(10:74))
-        :return: (bool) whether the episode is done
-        """
-        # Normalize the trace between 0 and 1 (in this case this just divides by initial variance times the dimensions)
-        trace_normalized = min_max_normalize(np.trace(state[2]), 0, self.covariance_trace_init)
-                                             
-        # Check if the trace of the covariance matrix is below the final threshold
-        return trace_normalized < self.final_cov_trace
     
     # Get normlized covariance trace for each point in the corners
     def get_normalized_cov_pt_traces(self, state) -> np.ndarray:
@@ -540,7 +532,7 @@ class MeasurementControlEnvironment(Environment):
         for child in node.children.values():
             self.draw_simulated_states(child, rew=rew, q_val=q_val, qu_val=qu_val, scaling=scaling, bias=bias, max=max)
 
-    def draw_state_set(self, state_set):
+    def draw_state_set(self, state_set, title_perm=None, rewards=None):
         """
         Use matplotlib animate to create a video with the normal state display over time
         params: state_set - list of states to display
@@ -560,6 +552,12 @@ class MeasurementControlEnvironment(Environment):
             # Add background image if it exists
             if self.ui.background_image is not None:
                 ax.imshow(self.ui.background_image[0], extent=self.ui.background_image[1], alpha=self.ui.background_image[2])
+                
+            # Add title
+            if title_perm is not None and rewards is None:
+                ax.set_title(title_perm)
+            if title_perm is not None and rewards is not None:
+                ax.set_title(f'{title_perm}\nstate {i}, {round(state_set[i][0][2], 2)} m/s, reward: {round(rewards[i-1], 2)}, cumulative reward: {round(np.sum(rewards[:i]), 2)}')
             
             return ax.patches
         
@@ -567,7 +565,7 @@ class MeasurementControlEnvironment(Environment):
         fig, ax = self.ui.plot(get_fig_ax=True)
         plt.close()
         
-        ani = FuncAnimation(fig, animate, frames=len(state_set)-1, interval=200, blit=False)
+        ani = FuncAnimation(fig, animate, frames=len(state_set), interval=200, blit=False)
             
         # Display the animation in the notebook
         display(HTML(ani.to_jshtml()))

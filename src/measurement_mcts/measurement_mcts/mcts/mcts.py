@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from typing import Tuple, Any
 import multiprocessing as mp
 from multiprocessing.sharedctypes import Array as mpArray
+from functools import partial
 import ctypes
 import timeit
 import time
@@ -177,10 +178,16 @@ class MCTSNode:
         """Get child Q values based on the stored total value and number of visits"""
         return self.child_total_value / (1 + self.child_number_visits)
 
+    # UCB1 style of UCB
     def child_U(self):
         """Get child U values (upper confidence bounds)"""
-        return self.explore_factor * math.sqrt(self.number_visits) * (
-            self.child_priors / (1 + self.child_number_visits))
+        return self.explore_factor * np.sqrt(np.log(self.number_visits) / (1 + self.child_number_visits))
+
+    # Alpha go zero style of UCB
+    # def child_U(self):
+    #     """Get child U values (upper confidence bounds)"""
+    #     return self.explore_factor * math.sqrt(self.number_visits) * (
+    #         self.child_priors / (1 + self.child_number_visits))
 
     def best_child(self):
         """Get the best child based on the upper confidence bound"""
@@ -191,7 +198,7 @@ class MCTSNode:
         current = self
         path = []
         # While we aren't at a leaf node
-        while current.is_expanded:
+        while current.is_expanded and not current.done:
             # Since the thread is passing through this node remove one from the total value to encourage other threads to explore other nodes
             # current.total_value -= 1 # This has no change with one thread because it is replaced in backup
             
@@ -199,7 +206,7 @@ class MCTSNode:
             best_action = current.best_child()
             current = current.maybe_add_child(best_action) # Child is only added if we reach the unsimulated leaf node
             path.append(best_action) # Add the action to the path
-                
+
         # Return the leaf node we ended on
         if return_path:
             return current, path
@@ -224,11 +231,73 @@ class MCTSNode:
                                                  done=done, parallel=self.parallel)
 
         return self.children[action]
+            
+    def one_action_rollout(self, action, hertg=False, keep_nodes=False, keep_data=False):
+        """ Simulate the same action until reaching a terminal state """
+        # Get the cumulative reward of the same action
+        done = False
+        state = self.state
+        cumulative_reward = 0
+        leaf = self
+        states, rewards, dones = [], [], []
+        while not done:
+            if not keep_nodes:
+                state, reward, done = self.env.step(state, self.env.action_space[action])
+                states.append(state)
+                rewards.append(reward)
+                dones.append(done)
+            else:
+                leaf = leaf.maybe_add_child(action)
+                state, reward, done = leaf.state, leaf.reward, leaf.done
+                
+            cumulative_reward += reward
+        if hertg:
+            # Tack on expected cost to go to final state
+            pass
+        
+        if keep_data:
+            return cumulative_reward, states, rewards, dones
+        
+        return cumulative_reward
+    
+    def rollout_children(self, hertg=False, keep_nodes=True):
+        """ rollout children to get the expected reward """
+        rollout_rewards = np.zeros([self.env.N], dtype=np.float32)
+        for action in range(self.env.N):
+            rollout_rewards[action] = self.one_action_rollout(action, hertg=hertg, keep_nodes=keep_nodes)
+        return rollout_rewards
+    
+    def parallel_rollout_children(self, hertg=False, keep_nodes=True):
+        """ rollout children in parallel to get the expected reward """
+        pool = mp.Pool(processes=self.env.N)
+        
+        if keep_nodes:
+            partial_one_action_rollout = partial(self.one_action_rollout, hertg=hertg, keep_data=True)
+            rollout_results = pool.map(partial_one_action_rollout, np.arange(self.env.N))
+            
+            rollout_rewards, states, rewards, dones  = zip(*rollout_results)
+            for action, (state, reward, done) in enumerate(zip(states, rewards, dones)):
+                leaf = self
+                for i, (s, r, d) in enumerate(zip(state, reward, done)):
+                    leaf.children[action] = MCTSNode(self.env, s, action, explore_factor=self.explore_factor,
+                                                    discount_factor=self.discount_factor, reward=r, parent=self, 
+                                                    done=d, parallel=self.parallel)
+                    leaf = leaf.children[action]
+                    if i == 0:
+                        leaf.is_expanded = True
+                        leaf.number_visits += 1
+        else:
+            partial_one_action_rollout = partial(self.one_action_rollout, hertg=hertg, keep_data=False)
+            rollout_rewards= pool.map(partial_one_action_rollout, np.arange(self.env.N))
+        
+        pool.close()
+        pool.join()
+        return rollout_rewards
 
     def expand(self, child_priors):
         """Expand the current node with the given child_priors"""
         self.is_expanded = True
-        self.child_priors = child_priors
+        # self.child_priors = child_priors
 
     def backup(self, value_estimate: float):
         """Backpropogate the value estimate up the tree to the root node"""
@@ -251,7 +320,7 @@ class MCTSNode:
             # current.total_value += backup_cumulative_rewards + 1 # Add the 1 value back we subtracted in select_leaf
             current = current.parent # Move to the parent node
             
-def get_best_trajectory(root: MCTSNode, highest_Q=False):
+def get_best_trajectory(root: MCTSNode, highest_Q=False, return_rewards=False):
     """
     Get the best action trajectory from the root node
     :param root: the root node of the MCTS tree
@@ -262,10 +331,12 @@ def get_best_trajectory(root: MCTSNode, highest_Q=False):
     current = root
     action_trajectory = []
     state_trajectory = []
+    reward_trajectory = []
     
     # Iterate through the best actions until the best action node does not exist
     while True:
         state_trajectory.append(current.state)
+        reward_trajectory.append(current.reward)
         if highest_Q:
             best_action = np.argmax(current.child_Q())
         else:
@@ -278,7 +349,10 @@ def get_best_trajectory(root: MCTSNode, highest_Q=False):
         
         # Continue traversal
         current = current.children[best_action]
-        
+    
+    if return_rewards:
+        return action_trajectory, state_trajectory, reward_trajectory
+    
     return action_trajectory, state_trajectory
 
 class DummyNode(object):
@@ -318,6 +392,51 @@ def mcts_search(env: Environment, eval, starting_state: np.ndarray, learning_ite
 
     # Return the action with the most visits and the root node
     return env.action_space[np.argmax(root.child_number_visits)], root
+
+def one_action_mcts(action, learning_iterations=30):
+    root = MCTSNode(env, starting_state, action=None, explore_factor=explore_factor, 
+                    discount_factor=discount_factor, parent=DummyNode())
+    root.maybe_add_child(action)
+    action_root = root.children[action]
+    
+    for i in range(learning_iterations):
+        leaf = action_root.select_leaf() # Select with UCB up to the leaf node and do one environment step
+        
+        # Add the transition to the replay buffer for training (except for the root node)
+        # child_priors, value_estimate = eval.inference(leaf.state) # Inference the model to get the probability of each action and the value estimate
+        child_priors, value_estimate = np.ones([env.N]) / env.N, 0. # Even probability for each action for testing and no expected reward to go
+        
+        leaf.expand(child_priors) # Expand the leaf node with the child priors
+        leaf.backup(value_estimate) # Backup the value estimate up the tree to the root node
+        
+    return action_root.Q + action_root.U, action_root
+
+def init_worker(global_env, global_starting_state):
+    global env
+    global starting_state
+    env = global_env
+    starting_state = global_starting_state
+
+def parallel_mcts(action_space, env, starting_state):
+    """
+    Parallelizes the MCTS using multiprocessing.Pool.
+    """
+    pool = mp.Pool(processes=len(action_space), initializer=init_worker, initargs=(env, starting_state,))
+    
+    start_time = timeit.default_timer()
+    
+    # Distribute the actions to processes
+    results = pool.map(one_action_mcts, np.arange(len(action_space)), chunksize=1)
+    
+    pool.close()
+    pool.join()
+    
+    print(timeit.default_timer() - start_time)
+    
+    # Find the action with the best value
+    best_action, best_value = max(results, key=lambda x: x[1])
+    
+    return best_action, best_value
 
 def create_shared_array(shape, dtype=ctypes.c_float):
     """

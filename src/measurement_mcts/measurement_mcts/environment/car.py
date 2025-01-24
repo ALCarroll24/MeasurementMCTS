@@ -14,7 +14,7 @@ class Car:
         # Save parameters
         self.max_range = max_range # m
         self.max_bearing = max_bearing # Max sensor fov in radians (converted from degrees)
-        self.max_velocity = 5 # m/s
+        self.max_velocity = 3 # m/s
         self.range_arrow_length = range_arrow_length # Length of the range arrow which shows the sensor fov
         self.init_pos_bounds = init_pos_bounds # Initial position bounds for random state generation
         self.init_yaw_bounds = init_yaw_bounds # Initial yaw bounds for random state generation
@@ -35,7 +35,7 @@ class Car:
         final_drive_ratio = 3.47  # Final drive ratio
         gears_to_average = [1, 2]  # Gears to average to calculate max torque (Most time for this problem is spent in these gears)
         average_gear_ratio = np.mean(gear_ratios[gears_to_average]) * final_drive_ratio  # Average gear ratio
-        torque_ratio = 1/3  # Percentage of torque to assume is readily available from max (for largest acceleration action limit)
+        torque_ratio = 1/4  # Percentage of torque to assume is readily available from max (for largest acceleration action limit)
         max_wheel_torque = torque_ratio * max_engine_torque * average_gear_ratio * final_drive_ratio  # Maximum torque available at wheels in Nm
         tire_radius = 32.0 * 0.5 * 0.0254  # Tire radius in meters (converted from inches diameter)
         max_longitudinal_force = max_wheel_torque / tire_radius  # Maximum longitudinal force available at wheels in Nm
@@ -43,10 +43,10 @@ class Car:
         
         ### Longitudinal output class variables
         self.max_acceleration = max_longitudinal_force / gross_vehicle_mass  # Maximum acceleration given F=ma in m/s^2
-        self.brake_acceleration = 0.8 * 9.81  # Maximum deceleration with brakes in m/s^2
+        self.brake_acceleration = 0.4 * 9.81  # Maximum deceleration with brakes in m/s^2
 
         ### Lateral Parameters
-        max_steering_wheel_turns = 2.8  # Maximum steering wheel turns from lock to lock (far left to far right)
+        max_steering_wheel_turns = 2.  # Maximum steering wheel turns from lock to lock (far left to far right)
         steering_ratio = np.mean([15.7, 18.9])  # Steering wheel turns to wheel turns (averaging center and at lock)
         self.max_steering_angle = np.radians(0.5 * max_steering_wheel_turns * 360 / steering_ratio)  # Maximum steering angle in radians
         quarter_rotation_time = 0.5  # Time to rotate steering wheel 90 degrees (used to calculate acceleration limit)
@@ -136,6 +136,9 @@ class Car:
         
         # Compute action update of state (state + B @ action)
         state_with_action = state_vec + self.get_B_matrix(dt) @ scaled_action_vec
+        
+        # Limit forward and reverse max velocity
+        state_with_action[2] = np.clip(state_with_action[2], -self.max_velocity, self.max_velocity)
         
         # Update delta steering angle with euler integration (this saves a time step as previously matrices were calculated with non-updated delta)
         # Euler integration is now performed here for steering angle rather than in the A matrix
@@ -274,31 +277,31 @@ class Car:
         # Use the update_pure_pursuit method to update the car state based on the lookahead point
         return self.get_action_pure_pursuit(path[lookahead_index], starting_state)
 
-    # def get_collision_points(self, car_state=None):
-    #     # If we are calculating the polygon for a different state, use that state
-    #     if car_state is not None:
-    #         position = car_state[0:2]
-    #         yaw = car_state[3]
+    def get_collision_points(self, car_state=None):
+        # If we are calculating the polygon for a different state, use that state
+        if car_state is not None:
+            position = car_state[0:2]
+            yaw = car_state[3]
             
-    #     # Otherwise, use the current state
-    #     else:
-    #         position = self.state[:2]
-    #         yaw = self.state[3]
+        # Otherwise, use the current state
+        else:
+            position = self.state[:2]
+            yaw = self.state[3]
         
-    #     points_no_yaw = [[position[0] + self.width / 2, position[1] + self.length / 2],
-    #                      [position[0] + self.width / 2, position[1] - self.length / 2],
-    #                      [position[0] - self.width / 2, position[1] - self.length / 2],
-    #                      [position[0] - self.width / 2, position[1] + self.length / 2]]
+        points_no_yaw = [[position[0] + self.width / 2, position[1] + self.length / 2],
+                         [position[0] + self.width / 2, position[1] - self.length / 2],
+                         [position[0] - self.width / 2, position[1] - self.length / 2],
+                         [position[0] - self.width / 2, position[1] + self.length / 2]]
         
-    #     # Rotate the points by the yaw
-    #     points = rotate(np.array(points_no_yaw) - position, yaw - np.radians(90)) + position
+        # Rotate the points by the yaw
+        points = rotate(np.array(points_no_yaw) - position, yaw - np.radians(90)) + position
         
-    #     return points
+        return points
     
-    # def get_collision_polygon(self, car_state=None):
-    #     poly = Polygon(self.get_collision_points(car_state))
+    def get_collision_polygon(self, car_state=None):
+        poly = Polygon(self.get_collision_points(car_state))
         
-    #     return poly
+        return poly
 
         
     def draw_car_state(self, state=None):

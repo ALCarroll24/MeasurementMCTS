@@ -6,7 +6,7 @@ from measurement_mcts.utils.utils import wrapped_angle_diff, get_ellipse_scaling
 def measurement_model(z, car_pos, car_yaw, min_range=5., min_bearing=5., range_dev=1., bearing_dev=0.5):    
     # Calculate the range and bearing to the corner
     dist = max(np.linalg.norm(z - car_pos), min_range)  # Distance to observation
-    abs_bearing = np.arctan2(z[1] - car_pos[1], z[0] - car_pos[0]) - car_yaw  # Direction of observation
+    abs_bearing = np.arctan2(z[1] - car_pos[1], z[0] - car_pos[0])  # Direction of observation
     sensor_bearing = wrapped_angle_diff(abs_bearing, car_yaw)  # Angle between center of sensor and observation
     bearing_scale = np.clip(np.abs(sensor_bearing), np.radians(min_bearing), None)  # Lateral scaling in magnitude matrix
     

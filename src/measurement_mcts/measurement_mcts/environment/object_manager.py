@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from typing import NamedTuple, List, Tuple
-from measurement_mcts.utils.utils import get_ellipse_scaling
+from measurement_mcts.utils.utils import get_ellipse_scaling, wrap_angle
 
 class ObjectTuple(NamedTuple):
     """
@@ -34,13 +34,15 @@ def get_empty_df():
 class ObjectManager:
     def __init__(self, num_obstacles: int, num_occlusion: int, num_oois: int, car_collision_radius: float,
                  car_sensor_range: float, car_max_bearing: float, df: pd.DataFrame=None, object_bounds:np.ndarray=np.array([15, 85]),
-                 size_bounds: np.ndarray=np.array([1.0, 10.0]), init_covariance_diag: float=8, ui=None):
+                 size_bounds: np.ndarray=np.array([1.0, 10.0]), ooi_size_bounds: np.ndarray=np.array([1.0, 10.0]), 
+                 init_covariance_diag: float=8, ui=None):
         # Random object generation parameters
         self.num_obstacles = num_obstacles
         self.num_occlusion = num_occlusion
         self.num_oois = num_oois
         self.object_bounds = object_bounds
         self.size_bounds = size_bounds
+        self.ooi_size_bounds = ooi_size_bounds
         self.init_covariance_diag = init_covariance_diag
         self.bounding_box_buffer = 5.0 # Buffer for the bounding box of the car sensor area to filter out objects
         self.object_min_spacing = 0.5
@@ -154,7 +156,7 @@ class ObjectManager:
         for i in range(self.num_oois):
             while True:
                 mean = np.random.uniform(self.object_bounds[0], self.object_bounds[1], size=2)
-                length_width = np.random.uniform(self.size_bounds[0], self.size_bounds[1], size=2)
+                length_width = np.random.uniform(self.ooi_size_bounds[0], self.ooi_size_bounds[1], size=2)
                 max_radius = np.linalg.norm(length_width) / 2
                 points = np.array([mean + np.array([-length_width[0]/2, -length_width[1]/2]),
                                 mean + np.array([length_width[0]/2, -length_width[1]/2]),
@@ -247,8 +249,9 @@ class ObjectManager:
         # Get car position
         car_pos = car_state[0:2]
         
-        # First check the circle objects
-        df_circle = df_close[df_close['shape'] == 'circle']
+        # First check the circle objects (Use this for OOIs as well for now)
+        # df_circle = df_close[df_close['shape'] == 'circle']
+        df_circle = df_close[(df_close['shape'] == 'circle') | (df_close['object_type'] == 'ooi')]
         if not df_circle.empty:
             # Find the distance between the car and the circle centers
             circle_centers = np.vstack(df_circle['mean'].values)
@@ -260,20 +263,20 @@ class ObjectManager:
             # Add offending circle obstacle indices to the list
             offending_indices.extend(df_circle[offending_obstacles].index)
         
-        # Now check the polygon objects
-        df_poly = self.df[self.df['shape'] == '4polygon']
-        if not df_poly.empty:
-            # Get the distances of all polygon points to the car
-            poly_points = np.vstack(df_poly['points'].values)
-            distances = np.linalg.norm(poly_points - car_pos, axis=1)
+        # # Now check the polygon objects
+        # df_poly = self.df[self.df['shape'] == '4polygon']
+        # if not df_poly.empty:
+        #     # Get the distances of all polygon points to the car
+        #     poly_points = np.vstack(df_poly['points'].values)
+        #     distances = np.linalg.norm(poly_points - car_pos, axis=1)
             
-            # Offending points are those that are less than the car collision radius
-            offending_poly_points = distances < self.car_collision_radius # Get boolean array of each point
-            offending_poly_points_reshaped = offending_poly_points.reshape(-1, 4) # Convert to a row for each object and 4 bools per object
-            offending_poly_obstacles = np.logical_or.reduce(offending_poly_points_reshaped, axis=1) # Find what rows have any offending points
+        #     # Offending points are those that are less than the car collision radius
+        #     offending_poly_points = distances < self.car_collision_radius # Get boolean array of each point
+        #     offending_poly_points_reshaped = offending_poly_points.reshape(-1, 4) # Convert to a row for each object and 4 bools per object
+        #     offending_poly_obstacles = np.logical_or.reduce(offending_poly_points_reshaped, axis=1) # Find what rows have any offending points
         
-            # Add offending polygon obstacle indices to the list
-            offending_indices.extend(df_poly[offending_poly_obstacles].index)
+        #     # Add offending polygon obstacle indices to the list
+        #     offending_indices.extend(df_poly[offending_poly_obstacles].index)
         
         # Return the rows of the input dataframe that are offending
         offending_rows = self.df.loc[offending_indices]
@@ -358,7 +361,7 @@ class ObjectManager:
             if tuple.object_type == 'ooi':
                 # Get the points, bearings and ranges of the points
                 points = tuple.points
-                bearings = np.arctan2(points[:,1] - car_state[1], points[:,0] - car_state[0]) - car_state[3]
+                bearings = wrap_angle(np.arctan2(points[:,1] - car_state[1], points[:,0] - car_state[0]) - car_state[3])
                 ranges = np.linalg.norm(points - car_state[0:2], axis=1)
                 
                 # Sort by ranges and get the closest point and it's two neighbors

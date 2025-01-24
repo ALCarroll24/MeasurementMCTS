@@ -6,7 +6,7 @@ import threading
 import webbrowser
 
 class MatPlotLibUI:
-    def __init__(self, title=None):
+    def __init__(self, title=None, interactive=False):
         # Store the rectangles (car and tires) for later update
         self.patches = []
         
@@ -19,12 +19,23 @@ class MatPlotLibUI:
         # Flag for stopping the plotting loop and title
         self.shutdown = False
         self.title = title
+        
+        self.interactive = interactive
+        if interactive:
+            plt.ion()
+            self.fig, self.ax = plt.subplots(figsize=(8, 8))
+        
 
     def plot(self, get_fig_ax: bool=False, title:str=None, figsize:tuple=(8, 8)):
         """
         Refresh the display with new positions and orientations.
         """
-        fig, ax = plt.subplots(figsize=figsize)
+        
+        if not self.interactive:
+            fig, ax = plt.subplots(figsize=figsize)
+        else:
+            fig = self.fig
+            ax = self.ax
         
         # Set title
         if title is not None:
@@ -60,6 +71,11 @@ class MatPlotLibUI:
         
         if get_fig_ax:
             return fig, ax
+        
+        if self.interactive:
+            plt.draw()
+            fig.canvas.flush_events()
+            ax.clear()
 
     def draw_background_image(self, image, extent, alpha=1.0):
         """

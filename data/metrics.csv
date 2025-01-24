@@ -1,0 +1,3 @@
+strategy,percent done,actions,total reward,avg reward,LI,EF,DF,HL,dt,comp time,comp per action
+One LI per action w/ rollout to horizon,90.94923216757536,149,4.142909106510497,0.0276193940434033,25,100,1.0,6,0.6,430.42,2.869466666666667
+One LI per action w/ rollout to horizon,69.65038819895935,149,7.178495167573343,0.047856634450488954,25,100,1.0,6,0.6,502.08,3.3472
