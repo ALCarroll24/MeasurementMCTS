@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from typing import NamedTuple, List, Tuple
 from measurement_mcts.utils.utils import get_ellipse_scaling, wrap_angle
+from measurement_mcts.environment.static_kf_2d import measurement_model
 
 class ObjectTuple(NamedTuple):
     """
@@ -45,6 +46,8 @@ class ObjectManager:
         size_bounds: np.ndarray   = np.array([1.0, 10.0]),
         ooi_size_bounds: np.ndarray = np.array([1.0, 10.0]),
         init_covariance_diag: float = 8,
+        init_center_stddev: float = 5.0,
+        init_width_guess: float = 5.0,
         ui=None
     ):
         # Random object generation parameters
@@ -54,9 +57,13 @@ class ObjectManager:
         self.object_bounds = object_bounds
         self.size_bounds = size_bounds
         self.ooi_size_bounds = ooi_size_bounds
-        self.init_covariance_diag = init_covariance_diag
         self.bounding_box_buffer = 5.0  # Buffer in sensor area checks
         self.object_min_spacing = 0.5   # Spacing to prevent object overlap
+        
+        # Noisy initialization parameters
+        self.init_covariance_diag = init_covariance_diag
+        self.init_center_stddev = init_center_stddev
+        self.init_width_guess = init_width_guess
         
         # Car parameters and a UI for rendering
         self.car_collision_radius = car_collision_radius
@@ -187,6 +194,39 @@ class ObjectManager:
         
         # Nothing to return now — everything is in the NumPy arrays
         return  # Or you could return None
+    
+    def get_noisy_initial_state(self):
+        """
+        Use maintained real object means to generate noisy initial states for MCTS.
+        
+        Class variables init_covariance_diag, init_center_stddev, init_width_guess are used to make the guess for the initial state.
+        """
+        
+        # Create initial output data structures
+        ooi_corner_means = np.zeros((self.num_oois, 4, 2))
+        ooi_corner_covariances = np.zeros((self.num_oois, 4, 2, 2))
+        
+        # Fill the diagonals of the last two dimensions with the initial covariance diagonal value
+        for ooi_idx in range(self.num_oois):
+            for c_idx in range(4):
+                np.fill_diagonal(ooi_corner_covariances[ooi_idx, c_idx], self.init_covariance_diag)
+        
+        # Generate noisy center point for each OOI
+        noisy_ooi_means = self.oois.mean(axis=1) + \
+                        np.random.normal(0, self.init_center_stddev, size=(self.num_oois, 2))
+                        
+        # Use the init_width_guess to generate the corner points of the object
+        h_w = self.init_width_guess/2 # half width
+        for ooi_idx in range(self.num_oois):
+            ooi_corner_means[ooi_idx] = np.array([
+                        noisy_ooi_means[ooi_idx] + np.array([-h_w, -h_w]),
+                        noisy_ooi_means[ooi_idx] + np.array([ h_w, -h_w]),
+                        noisy_ooi_means[ooi_idx] + np.array([ h_w,  h_w]),
+                        noisy_ooi_means[ooi_idx] + np.array([-h_w,  h_w])
+                    ])
+
+        # Return the object means and covariances tuple
+        return ooi_corner_means, ooi_corner_covariances
 
     def draw_objects(
         self, 
@@ -194,19 +234,19 @@ class ObjectManager:
         in_collision_obs, 
         in_collision_ocl, 
         in_collision_oois, 
-        observation=None,
+        observation_indices=None,
     ):
         """
         Draw all obstacles, occlusions, and OOIs. For objects in collision,
         draw a solid red circle on top. Also, display an observation marker
-        for OOI corners that have been observed, optionally drawing arrows 
-        from the vehicle to those corners.
+        for OOI corners that have been observed, draw arrows 
+        from the vehicle to those corners and highlight with a circle.
         
         :param car_state: (x, y, theta) of the car
         :param in_collision_obs: 1D array of obstacle indices that are in collision
         :param in_collision_ocl: 1D array of occlusion indices that are in collision
         :param in_collision_oois: 1D array of OOI indices that are in collision
-        :param observation: Dictionary of observed OOI corners for displaying observation arrows
+        :param observation_indices: Dictionary of observed OOI corners for displaying observation arrows
         """
         if self.ui is None:
             raise ValueError("No UI has been set for drawing.")
@@ -270,9 +310,9 @@ class ObjectManager:
         # ------------------------------------------------------------------
         # 4) Draw Observation (if available)
         # ------------------------------------------------------------------
-        if observation is not None:
-            # Iterate through observed OOIs: observation = {ooi_idx: [corner0, corner3, ...], ...}
-            for ooi_idx, observed_corners in observation.items():
+        if observation_indices is not None:
+            # Iterate through observed OOIs: observation_indices = {ooi_idx: [corner0, corner3, ...], ...}
+            for ooi_idx, observed_corners in observation_indices.items():
                 # Iterate through each corner of the OOI
                 for corner_idx in observed_corners:
                     # Get the corner position
@@ -283,8 +323,6 @@ class ObjectManager:
                     
                     # An arrow from the car to the observed corner
                     self.ui.draw_arrow(car_pos, pt, color='g', alpha=0.1)
-
-
                     
     def check_collision(self, car_state):
         """
@@ -342,14 +380,14 @@ class ObjectManager:
         # Return the indices that are colliding
         return in_collision_obs, in_collision_ocl, in_collision_oois
     
-    def get_observation(self, car_state):
+    def get_observation_indices(self, car_state):
         """
         Determine which OOI corners are visible to the car, considering occlusions.
-        Returns a dictionary `observation`, e.g. {ooi_idx: [corner0, corner3, ...], ...}.
+        Returns a dictionary `observation_indices`, e.g. {ooi_idx: [corner0, corner3, ...], ...}.
         """
         # Make sure we actually have oois to observe
         if (self.num_oois == 0):
-            return {}  # No oois -> no observation
+            return {}  # No oois -> no observations
         
         # Car pose & sensor parameters
         car_x, car_y, car_heading = car_state[0], car_state[1], car_state[3]
@@ -448,7 +486,7 @@ class ObjectManager:
         # 4) Iterate through objects in ascending order, building up occluded bearing intervals
         # ----------------------------------------------------------------
         occluded_bearings = np.empty((0, 2))  # each row = [bearing_min, bearing_max]
-        observation = {}  # { ooi_index: [corner_idx0, corner_idx1, ...], ... }
+        observation_indices = {}  # { ooi_index: [corner_idx0, corner_idx1, ...], ... }
         
         for obj in object_list:
             if obj["object_type"] == "ooi":
@@ -508,8 +546,8 @@ class ObjectManager:
                         final_visible_corners.append(c_idx)
                 
                 if len(final_visible_corners) > 0:
-                    # Record them in the observation dictionary
-                    observation[ooi_idx] = final_visible_corners
+                    # Record them in the observation_indices dictionary
+                    observation_indices[ooi_idx] = final_visible_corners
                 
                 # Finally, add this OOI’s own min/max bearing to the global occluded intervals
                 min_bearing = corner_bearings.min()
@@ -546,6 +584,41 @@ class ObjectManager:
                 pass
         
         # ----------------------------------------------------------------
-        # Return only the final observation dictionary
+        # Return only the final observation_indices dictionary
         # ----------------------------------------------------------------
-        return observation
+        return observation_indices
+
+    def get_noisy_observation(self, car_state):
+        """
+        Get a noisy observation containing the observable ooi corners.
+        Noise is modelled by range-bearing sensor model with Gaussian noise.
+        
+        returns:
+        - observation_indices: Dictionary of observed OOI corners for displaying observation arrows
+        - noisy_observation: Dictionary of noisy OOI corner positions
+        """
+        
+        # Get the observation indices
+        observation_indices = self.get_observation_indices(car_state)
+        
+        # Create the noisy observation
+        noisy_observation = {}
+        for ooi_idx, observed_corners in observation_indices.items():
+            # Create a noisy corner for each observed corner
+            noisy_corners = np.zeros((len(observed_corners), 2))
+            
+            # Loop through each observed corner and add noise using the measurement model
+            for j, corner_idx in enumerate(observed_corners):
+                # Get the corner of the OOI
+                corner = self.oois[ooi_idx][corner_idx]
+                
+                # Use the measurement model to get the observation matrix
+                observation_matrix = measurement_model(corner, car_state[0:2], car_state[3])
+                
+                # Add noise to the real corner using the observation matrix
+                noisy_corners[j] = np.random.multivariate_normal(corner, observation_matrix)
+        
+            # Add the noisy corners to the noisy observation
+            noisy_observation[ooi_idx] = noisy_corners
+            
+        return observation_indices, noisy_observation

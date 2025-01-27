@@ -104,18 +104,16 @@ class MeasurementControlEnvironment(Environment):
         """
         # Reset the car to a random state (only random position and yaw), velocities and steering angle are set to 0
         car_state = self.car.reset()
+        self.car.set_state(car_state)
         
-        # Reset the object manager to generate a new set of objects
-        object_df = self.object_manager.reset(car_state)
+        # Reset the object manager to generate a new set of objects (maintained within class)
+        self.object_manager.reset(car_state)
         
-        # Reset the exploration grid (all ones) and zero cells inside of objects
-        explore_grid = self.explore_grid.reset(object_df=object_df)
+        # Get the noisy initial state of the ooi means and covariances
+        ooi_means, ooi_covs = self.object_manager.get_noisy_initial_state()
         
         # Place state into tuple format with horizon set to 0
-        state = (car_state, object_df, explore_grid, 0)
-        
-        # Set the state of the subclasses to this new random initial state
-        self.set_state(state)
+        state = (car_state, ooi_means, ooi_covs, 0)
         
         # If we are doing the first update, then update grid and KF with the initial step
         # This is done to remove reward gotten for the initial state (which is not a real action)
@@ -128,53 +126,54 @@ class MeasurementControlEnvironment(Environment):
         
         # Return the initial state
         return state
-        
-    def get_state(self, horizon=0) -> Tuple[np.ndarray, pd.DataFrame, np.ndarray, int]:
-        '''
-        Returns full state -> Tuple[Car state, Object Manager DF, Exploration Grid, horizon]
-        '''
-        return self.car.get_state(), self.object_manager.get_df(), self.explore_grid.get_grid(), horizon
+
+    # Not needed for now (because mean and cov are seperate from object manager)
+    # def get_state(self, horizon=0) -> Tuple[np.ndarray, pd.DataFrame, np.ndarray, int]:
+    #     '''
+    #     Returns full state -> Tuple[Car state, Object Manager DF, Exploration Grid, horizon]
+    #     '''
+    #     return self.car.get_state(), self.object_manager.get_df(), self.explore_grid.get_grid(), horizon
     
-    def set_state(self, state) -> None:
-        """
-        Set the state of the environment to a specific state.
+    # def set_state(self, state) -> None:
+    #     """
+    #     Set the state of the environment to a specific state.
         
-        :param state: (np.ndarray) the state tuple (Car state, Object Manager DF, Exploration Grid, horizon)
-        """
-        # Set the car state
-        self.car.set_state(deepcopy(state[0]))
+    #     :param state: (np.ndarray) the state tuple (Car state, Object Manager DF, Exploration Grid, horizon)
+    #     """
+    #     # Set the car state
+    #     self.car.set_state(deepcopy(state[0]))
         
-        # Set the object manager state
-        self.object_manager.set_df(deepcopy(state[1]))
+    #     # Set the object manager state
+    #     self.object_manager.set_df(deepcopy(state[1]))
         
-        # Set the exploration grid state
-        self.explore_grid.set_grid(deepcopy(state[2]))
+    #     # Set the exploration grid state
+    #     self.explore_grid.set_grid(deepcopy(state[2]))
         
-    def save_state(self, path, name) -> None:
-        """
-        Save the state of the environment to a file.
+    # def save_state(self, path, name) -> None:
+    #     """
+    #     Save the state of the environment to a file.
         
-        :param state: (np.ndarray) the state tuple (Car state, Object Manager DF, Exploration Grid, horizon)
-        :param name: (str) the name of the file to save the state to
-        """
-        # Save the state to a file
-        # np.save(f'{path}/{name}', (self.car.get_state(), self.object_manager.get_df(), self.explore_grid.get_grid(), 0))
-        with open(f'{path}/{name}.pkl', 'wb') as file:
-            pickle.dump((self.car.get_state(), self.object_manager.get_df(), self.explore_grid.get_grid(), 0), file)
+    #     :param state: (np.ndarray) the state tuple (Car state, Object Manager DF, Exploration Grid, horizon)
+    #     :param name: (str) the name of the file to save the state to
+    #     """
+    #     # Save the state to a file
+    #     # np.save(f'{path}/{name}', (self.car.get_state(), self.object_manager.get_df(), self.explore_grid.get_grid(), 0))
+    #     with open(f'{path}/{name}.pkl', 'wb') as file:
+    #         pickle.dump((self.car.get_state(), self.object_manager.get_df(), self.explore_grid.get_grid(), 0), file)
         
-    def load_state(self, path, name) -> None:
-        """
-        Load the state of the environment from a file.
+    # def load_state(self, path, name) -> None:
+    #     """
+    #     Load the state of the environment from a file.
         
-        :param name: (str) the name of the file to load the state from
-        """
-        # Load the state from a file
-        # state = np.load(f'{path}/{name}', allow_pickle=True)
-        with open(f'{path}/{name}.pkl', 'rb') as file:
-            state = pickle.load(file)
+    #     :param name: (str) the name of the file to load the state from
+    #     """
+    #     # Load the state from a file
+    #     # state = np.load(f'{path}/{name}', allow_pickle=True)
+    #     with open(f'{path}/{name}.pkl', 'rb') as file:
+    #         state = pickle.load(file)
         
-        # Set the state of the environment
-        self.set_state(state)
+    #     # Set the state of the environment
+    #     self.set_state(state)
     
     def estimate_remaining_points(self, points, car_state):
         """
@@ -283,14 +282,14 @@ class MeasurementControlEnvironment(Environment):
 
         return obs_dict, object_df, obs_polys, estimated_indices
     
-    def apply_observation(self, observation_dict: dict, object_df: pd.DataFrame, car_state: np.ndarray, 
+    def apply_observation(self, observation: dict, object_df: pd.DataFrame, car_state: np.ndarray, 
                           real_observation: np.ndarray=None, estimated_indices: np.ndarray=None) -> Tuple[pd.DataFrame, float]:
         # Take a copy of the object dataframe to update before modifying
         object_df = deepcopy(object_df)
         
         # Apply the KF update to the observed corners
         trace_delta_sum = 0. # Sum of the difference in trace made in this update
-        for i, (ooi_id, observed_indices) in enumerate(observation_dict.items()):
+        for i, (ooi_id, observed_indices) in enumerate(observation.items()):
             # Get the row corresponding to this ooi and the means and covariances of the OOI corners
             ooi_index = object_df.loc[object_df['ooi_id'] == ooi_id].index[0] # Index of the OOI in the object dataframe
             cur_means = deepcopy(object_df.loc[ooi_index, 'points']) # 4x2 numpy array of corner means
@@ -339,7 +338,7 @@ class MeasurementControlEnvironment(Environment):
             dt = self.simulation_dt
         
         # Pull out the state elements
-        car_state, object_df, explore_grid, horizon = state
+        car_state, ooi_means, ooi_covs, horizon = state
         
         # Increment the horizon
         horizon += 1
@@ -348,32 +347,24 @@ class MeasurementControlEnvironment(Environment):
         new_car_state = self.car.update(dt, action, starting_state=car_state)
         
         # Now see if the car has collided with any objects in the object manager
-        objects_in_collision_df = self.object_manager.check_collision(new_car_state)
+        in_collision_obs, in_collision_ocl, in_collision_oois = self.object_manager.check_collision(new_car_state)
         
         # Get an observation from the object manager at this new car state
-        observation_dict, new_object_df = self.object_manager.get_observation(new_car_state, df=object_df)
+        observation_indices, noisy_observation = self.object_manager.get_noisy_observation(new_car_state)
         
         # Apply the observation and get sum of the trace differences and the new object dataframe
-        new_object_df, trace_delta_sum = self.apply_observation(observation_dict, new_object_df, new_car_state)
-        
-        if self.enable_explore_grid:
-            # Update the exploration grid based on the new car state accounting for occlusions
-            new_grid, num_explored = self.explore_grid.update(explore_grid, new_car_state, new_object_df)
-        else:
-            new_grid = explore_grid
-            num_explored = 0
+        new_ooi_means, new_ooi_covs, trace_delta_sum = self.apply_observation(observation_indices, noisy_observation, new_car_state)
 
         # Calculate rewards
-        obstacle_reward = objects_in_collision_df.shape[0] * self.obstacle_punishment  # Reward for colliding with obstacles
+        num_in_collision = len(in_collision_obs) + len(in_collision_ocl) + len(in_collision_oois) # Number of objects in collision
+        obstacle_reward = num_in_collision * self.obstacle_punishment  # Reward for colliding with obstacles
         trace_delta_reward = min_max_normalize(trace_delta_sum, 0, self.init_covariance_trace) # Reward for reducing covariance trace
-        explore_reward = self.explored_cell_reward * num_explored # Reward for exploring unexplored cells
-        reward = obstacle_reward + trace_delta_reward + explore_reward # Total reward is sum of all rewards
+        reward = obstacle_reward + trace_delta_reward # Total reward is sum of all rewards
         
         # Print rewards if enabled
         if print_rewards:
             print(f'Obstacle Reward: {obstacle_reward}')
             print(f'Trace Delta Reward: {trace_delta_reward}')
-            print(f'Explore Reward: {explore_reward}')
             print(f'Total Reward: {reward}')
         
         # Check if the episode is done
@@ -385,7 +376,7 @@ class MeasurementControlEnvironment(Environment):
         done = done or horizon >= self.horizon_length
         
         # Combine the updated car state, mean, covariance and horizon into a new state
-        new_state = (new_car_state, new_object_df, new_grid, horizon)
+        new_state = (new_car_state, new_ooi_means, new_ooi_covs, horizon)
         
         # Return the reward and the new state
         return new_state, reward, done
