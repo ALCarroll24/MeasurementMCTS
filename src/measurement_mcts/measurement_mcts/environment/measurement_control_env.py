@@ -18,14 +18,16 @@ from measurement_mcts.mcts.mcts import Environment
 from measurement_mcts.environment.exploration_grid import ExplorationGrid
 
 class MeasurementControlEnvironment(Environment):
-    def __init__(self, init_reset=True, interactive=False):
+    def __init__(self, init_reset=True, interactive=False, enable_explore_grid=True):
+        self.enable_explore_grid = enable_explore_grid
+        
         # General important parameters
         self.final_cov_trace = 0.03 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
         self.simulation_dt = 0.6 # time step size for forward simulation search
         self.obstacle_punishment = -10. # reward for colliding with an obstacle
         self.init_covariance_diag = 8. # Initial diagonal value for all diagonals of (2x2) point covariance matrix
         self.explored_cell_reward = 0.00001 # reward for exploring a cell
-        self.horizon_length = 6 # length of the horizon for the environment
+        self.horizon_length = 10 # length of the horizon for the environment
         
         # Sensor parameters used in Object Manager for observation simulation and minimums for the measurement model
         sensor_min_range = 5. # minimum range for sensor model
@@ -354,8 +356,12 @@ class MeasurementControlEnvironment(Environment):
         # Apply the observation and get sum of the trace differences and the new object dataframe
         new_object_df, trace_delta_sum = self.apply_observation(observation_dict, new_object_df, new_car_state)
         
-        # Update the exploration grid based on the new car state accounting for occlusions
-        new_grid, num_explored = self.explore_grid.update(explore_grid, new_car_state, new_object_df)
+        if self.enable_explore_grid:
+            # Update the exploration grid based on the new car state accounting for occlusions
+            new_grid, num_explored = self.explore_grid.update(explore_grid, new_car_state, new_object_df)
+        else:
+            new_grid = explore_grid
+            num_explored = 0
 
         # Calculate rewards
         obstacle_reward = objects_in_collision_df.shape[0] * self.obstacle_punishment  # Reward for colliding with obstacles
@@ -483,7 +489,7 @@ class MeasurementControlEnvironment(Environment):
         self.car.draw_car_state(car_state)
         
         # Draw the objects in the dataframe
-        self.object_manager.draw_objects(car_state, df=object_df)
+        self.object_manager.draw_objects(car_state)
         
         if plot_explore_grid:
             # Draw the exploration grid
@@ -532,7 +538,7 @@ class MeasurementControlEnvironment(Environment):
         for child in node.children.values():
             self.draw_simulated_states(child, rew=rew, q_val=q_val, qu_val=qu_val, scaling=scaling, bias=bias, max=max)
 
-    def draw_state_set(self, state_set, title_perm=None, rewards=None):
+    def draw_state_set(self, state_set, title_perm=None, rewards=None, plot_explore_grid=True, roots=None, scaling=4, bias=0.1, max=1., rew=True):
         """
         Use matplotlib animate to create a video with the normal state display over time
         params: state_set - list of states to display
@@ -543,15 +549,19 @@ class MeasurementControlEnvironment(Environment):
                 patch.remove()
             
             # Draw the state create artists in UI class
-            self.draw_state(state_set[i], plot=False)
+            if (roots is not None) and i!=0:
+                self.draw_state(state_set[i], plot=False, plot_explore_grid=plot_explore_grid, root_node=roots[i-1], rew=rew, scaling=scaling, bias=bias, max=max)
+            else:
+                self.draw_state(state_set[i], plot=False, plot_explore_grid=plot_explore_grid)
             
             # Add artists to the axis
             for artist in self.ui.get_artists():
                 ax.add_patch(artist)
                 
-            # Add background image if it exists
-            if self.ui.background_image is not None:
-                ax.imshow(self.ui.background_image[0], extent=self.ui.background_image[1], alpha=self.ui.background_image[2])
+            if plot_explore_grid:
+                # Add background image if it exists
+                if self.ui.background_image is not None:
+                    ax.imshow(self.ui.background_image[0], extent=self.ui.background_image[1], alpha=self.ui.background_image[2])
                 
             # Add title
             if title_perm is not None and rewards is None:

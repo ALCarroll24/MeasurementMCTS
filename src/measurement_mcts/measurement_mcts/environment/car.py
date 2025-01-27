@@ -14,7 +14,7 @@ class Car:
         # Save parameters
         self.max_range = max_range # m
         self.max_bearing = max_bearing # Max sensor fov in radians (converted from degrees)
-        self.max_velocity = 3 # m/s
+        self.max_velocity = 8 # m/s
         self.range_arrow_length = range_arrow_length # Length of the range arrow which shows the sensor fov
         self.init_pos_bounds = init_pos_bounds # Initial position bounds for random state generation
         self.init_yaw_bounds = init_yaw_bounds # Initial yaw bounds for random state generation
@@ -170,7 +170,7 @@ class Car:
         return new_state
     
     # Update the car class or return the new state (when given a starting state) based on the action
-    def update(self, dt, action, starting_state=None):
+    def update(self, dt, action, starting_state=None, model_dt=0.1):
         # If we are doing forward simulation, we need to pass in the starting state
         # MUY IMPORTANTE - take a copy of the state, otherwise we will be modifying the original state object
         if starting_state is not None:
@@ -180,8 +180,25 @@ class Car:
                 raise ValueError("Car state is not set, call reset() or pass the starting_state.")
             state = self.state
         
-        # Use the car model to update the state
-        new_state = self.car_model(action, state, dt)
+        if model_dt == 0.0:
+            # Use the car model to update the state
+            new_state = self.car_model(action, state, dt)
+        # Check that model_dt is smaller than dt
+        elif model_dt > dt:
+            raise ValueError("model_dt must be smaller than dt")
+        else:
+            # Check that dt is a multiple of model_dt
+            division = dt / model_dt
+            rounded_division = round(division)
+            tolerance = 1e-9
+            if abs(division - rounded_division) > tolerance:
+                raise ValueError("model_dt must be a multiple of dt")
+            
+            # Perform multiple updates of the car model for higher fidelity
+            num_steps = int(dt / model_dt)
+            for _ in range(num_steps):
+                state = self.car_model(action, state, model_dt)
+            new_state = state
         
         # Only update class state if we are not simulating
         if starting_state is None:

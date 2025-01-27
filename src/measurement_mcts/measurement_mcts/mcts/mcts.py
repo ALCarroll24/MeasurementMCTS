@@ -175,13 +175,35 @@ class MCTSNode:
         return self.parent.child_U()[self.action]
 
     def child_Q(self):
-        """Get child Q values based on the stored total value and number of visits"""
-        return self.child_total_value / (1 + self.child_number_visits)
+        """
+        Returns the Q-values for each child.
+        For children with zero visits, set Q to 0.
+        """
+        # Prepare an array of infinities
+        q = np.full_like(self.child_number_visits, 0, dtype=float)
+        
+        visited_mask = (self.child_number_visits > 0)
+        q[visited_mask] = (self.child_total_value[visited_mask] 
+                        / self.child_number_visits[visited_mask])
+        
+        return q
 
     # UCB1 style of UCB
     def child_U(self):
-        """Get child U values (upper confidence bounds)"""
-        return self.explore_factor * np.sqrt(np.log(self.number_visits) / (1 + self.child_number_visits))
+        """
+        Returns the upper confidence bound (U) array for each child.
+        For children with zero visits, set U to +∞ and skip the division.
+        """
+        # Prepare an array of infinities
+        u = np.full_like(self.child_number_visits, np.inf, dtype=float)
+        
+        # Only compute for children that have > 0 visits
+        visited_mask = (self.child_number_visits > 0)
+        u[visited_mask] = (self.explore_factor 
+                        * np.sqrt(np.log(self.number_visits) 
+                                    / self.child_number_visits[visited_mask]))
+        
+        return u
 
     # Alpha go zero style of UCB
     # def child_U(self):
@@ -190,8 +212,25 @@ class MCTSNode:
     #         self.child_priors / (1 + self.child_number_visits))
 
     def best_child(self):
-        """Get the best child based on the upper confidence bound"""
-        return np.argmax(self.child_Q() + self.child_U())
+        """
+        Returns the index of the best child.
+        If any children have U = +∞ (e.g., unvisited), pick randomly among them.
+        Otherwise, pick the child with the max Q + U.
+        """
+        # Get the array of U-values for each child
+        u = self.child_U()  # [child_U1, child_U2, ...]
+        
+        # Check if any of them are infinity
+        inf_mask = np.isinf(u)
+        if np.any(inf_mask):
+            # Pick a random index among the infinite-U children
+            inf_indices = np.where(inf_mask)[0]
+            return np.random.choice(inf_indices)
+        else:
+            # No infinite values; select based on Q + U
+            q = self.child_Q()
+            return np.argmax(q + u)
+
 
     def select_leaf(self, return_path=False):
         """From current node, select highest upper confidence bound node until at next leaf node"""
@@ -232,15 +271,41 @@ class MCTSNode:
 
         return self.children[action]
             
-    def one_action_rollout(self, action, hertg=False, keep_nodes=False, keep_data=False):
-        """ Simulate the same action until reaching a terminal state """
+    def one_action_rollout(self, action, all_same=False, zero_after_first=False, accelerate_after_first=False, 
+                           accelerate=False, hertg=False, keep_nodes=False, keep_data=False):
+        """ Simulate the same action until reaching a terminal state 
+            params:
+                action: the action to simulate (int)
+                all_same: whether to simulate the same action for all steps (bool)
+                zero_after_first: whether to simulate the zero action after the first action (bool)
+                accelerate_after_first: accelerate in velocity direction after the first action (bool)
+                hertg: whether to use the HERTG heuristic at the end of the rollout (bool)
+                keep_nodes: whether to keep the nodes of the rollout (bool)
+                keep_data: whether to keep the data of the rollout (bool)
+        """
+        if all_same and zero_after_first and accelerate_after_first and accelerate:
+            raise ValueError('Cannot have all of 4 first options be True')
+        elif not all_same and not zero_after_first and not accelerate_after_first and not accelerate:
+            raise ValueError('Must have one of 4 first options be True')
+        
         # Get the cumulative reward of the same action
         done = False
         state = self.state
         cumulative_reward = 0
         leaf = self
         states, rewards, dones = [], [], []
+        first_action = True
         while not done:
+            if not first_action and zero_after_first:
+                action = 0
+            elif (not first_action and accelerate_after_first) or accelerate:
+                if state[0][2] < 0:
+                    action = 15
+                else:
+                    action = 10
+            else:
+                action = action
+                
             if not keep_nodes:
                 state, reward, done = self.env.step(state, self.env.action_space[action])
                 states.append(state)
@@ -251,6 +316,7 @@ class MCTSNode:
                 state, reward, done = leaf.state, leaf.reward, leaf.done
                 
             cumulative_reward += reward
+            first_action = False
         if hertg:
             # Tack on expected cost to go to final state
             pass
@@ -260,19 +326,49 @@ class MCTSNode:
         
         return cumulative_reward
     
-    def rollout_children(self, hertg=False, keep_nodes=True):
-        """ rollout children to get the expected reward """
+    def rollout_children(self, all_same=False, zero_after_first=False, accelerate_after_first=False,
+                         hertg=False, keep_nodes=True):
+        """ rollout children to get the expected reward
+            params:
+                all_same: whether to simulate the same action for all steps (bool)
+                zero_after_first: whether to simulate the zero action after the first action (bool)
+                accelerate_after_first: accelerate in velocity direction after the first action (bool)
+                hertg: whether to use the HERTG heuristic at the end of the rollout (bool)
+                keep_nodes: whether to keep the nodes of the rollout (bool)
+                keep_data: whether to keep the data of the rollout (bool)
+        """
+        if all_same and zero_after_first and accelerate_after_first:
+            raise ValueError('Cannot have same_action and zero_action be True')
+        elif not all_same and not zero_after_first and not accelerate_after_first:
+            raise ValueError('Must have all_same or zero_after_first or accelerate_after_first be True')
+        
         rollout_rewards = np.zeros([self.env.N], dtype=np.float32)
         for action in range(self.env.N):
-            rollout_rewards[action] = self.one_action_rollout(action, hertg=hertg, keep_nodes=keep_nodes)
+            rollout_rewards[action] = self.one_action_rollout(action, all_same=all_same, zero_after_first=zero_after_first,
+                                                              accelerate_after_first=True, hertg=hertg, keep_nodes=keep_nodes)
         return rollout_rewards
     
-    def parallel_rollout_children(self, hertg=False, keep_nodes=True):
-        """ rollout children in parallel to get the expected reward """
+    def parallel_rollout_children(self, all_same=False, zero_after_first=False, accelerate_after_first=False,
+                                  hertg=False, keep_nodes=True):
+        """ rollout children in parallel to get the expected reward 
+            params:
+                all_same: whether to simulate the same action for all steps (bool)
+                zero_after_first: whether to simulate the zero action after the first action (bool)
+                accelerate_after_first: accelerate in velocity direction after the first action (bool)
+                hertg: whether to use the HERTG heuristic at the end of the rollout (bool)
+                keep_nodes: whether to keep the nodes of the rollout (bool)
+                keep_data: whether to keep the data of the rollout (bool)
+        """
+        if all_same and zero_after_first and accelerate_after_first:
+            raise ValueError('Cannot have same_action and zero_action be True')
+        elif not all_same and not zero_after_first and not accelerate_after_first:
+            raise ValueError('Must have all_same or zero_after_first or accelerate_after_first be True')
+        
         pool = mp.Pool(processes=self.env.N)
         
         if keep_nodes:
-            partial_one_action_rollout = partial(self.one_action_rollout, hertg=hertg, keep_data=True)
+            partial_one_action_rollout = partial(self.one_action_rollout, all_same=all_same, zero_after_first=zero_after_first,
+                                                 accelerate_after_first=accelerate_after_first, hertg=hertg, keep_data=True)
             rollout_results = pool.map(partial_one_action_rollout, np.arange(self.env.N))
             
             rollout_rewards, states, rewards, dones  = zip(*rollout_results)
@@ -280,7 +376,7 @@ class MCTSNode:
                 leaf = self
                 for i, (s, r, d) in enumerate(zip(state, reward, done)):
                     leaf.children[action] = MCTSNode(self.env, s, action, explore_factor=self.explore_factor,
-                                                    discount_factor=self.discount_factor, reward=r, parent=self, 
+                                                    discount_factor=self.discount_factor, reward=r, parent=leaf, 
                                                     done=d, parallel=self.parallel)
                     leaf = leaf.children[action]
                     if i == 0:
