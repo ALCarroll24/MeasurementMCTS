@@ -43,19 +43,19 @@ class Environment(ABC):
     """
     pass
 
-  @abstractmethod
-  def evaluate(self, state: np.ndarray) -> Tuple[np.ndarray, float]:
-    """
-    Evaluate the current state of the environment
+#   @abstractmethod
+#   def evaluate(self, state: np.ndarray) -> Tuple[np.ndarray, float]:
+#     """
+#     Evaluate the current state of the environment
 
-    params:
-      state: the current state of the environment (np.ndarray(shape=(1, N)))
+#     params:
+#       state: the current state of the environment (np.ndarray(shape=(1, N)))
 
-    returns:
-      child_priors: the prior probabilities of each action, probabilities of best action (np.ndarray(shape=(1, N)))
-      value_estimate: the value estimate of the current state (float)
-    """
-    pass
+#     returns:
+#       child_priors: the prior probabilities of each action, probabilities of best action (np.ndarray(shape=(1, N)))
+#       value_estimate: the value estimate of the current state (float)
+#     """
+#     pass
 
   @property
   def N(self):

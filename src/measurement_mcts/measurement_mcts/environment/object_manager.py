@@ -4,33 +4,33 @@ from typing import NamedTuple, List, Tuple
 from measurement_mcts.utils.utils import get_ellipse_scaling, wrap_angle
 from measurement_mcts.environment.static_kf_2d import measurement_model
 
-class ObjectTuple(NamedTuple):
-    """
-    This defines a single object which is a row of the object dataframe maintained in the ObjectManager class
-    """
-    object_type: str         # occlusion, obstacle, ooi
-    shape: str               # circle, 4polygon
-    mean: np.ndarray         # [x, y]
-    ooi_id: int=None
-    points: np.ndarray=None  # [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
-    covariances: List[np.ndarray]=None # [cov1, cov2, cov3, cov4]
-    radius: float=None
-    observed: np.ndarray=np.zeros(4, dtype=bool) # [obs1, obs2, obs3, obs4]
-    in_collision: bool=False
+# class ObjectTuple(NamedTuple):
+#     """
+#     This defines a single object which is a row of the object dataframe maintained in the ObjectManager class
+#     """
+#     object_type: str         # occlusion, obstacle, ooi
+#     shape: str               # circle, 4polygon
+#     mean: np.ndarray         # [x, y]
+#     ooi_id: int=None
+#     points: np.ndarray=None  # [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
+#     covariances: List[np.ndarray]=None # [cov1, cov2, cov3, cov4]
+#     radius: float=None
+#     observed: np.ndarray=np.zeros(4, dtype=bool) # [obs1, obs2, obs3, obs4]
+#     in_collision: bool=False
     
-def get_empty_df():
-    """
-    This function returns an empty dataframe with the columns of the ObjectTuple
-    """
-    return pd.DataFrame({'object_type' : pd.Series(dtype='str'),
-                         'shape' : pd.Series(dtype='str'),
-                         'mean' : pd.Series(dtype='object'),
-                         'ooi_id' : pd.Series(dtype='int'),
-                         'points' : pd.Series(dtype='object'),
-                         'covariances' : pd.Series(dtype='object'),
-                         'radius' : pd.Series(dtype='float'),
-                         'observed' : pd.Series(dtype='object'),
-                         'in_collision' : pd.Series(dtype='bool')})
+# def get_empty_df():
+#     """
+#     This function returns an empty dataframe with the columns of the ObjectTuple
+#     """
+#     return pd.DataFrame({'object_type' : pd.Series(dtype='str'),
+#                          'shape' : pd.Series(dtype='str'),
+#                          'mean' : pd.Series(dtype='object'),
+#                          'ooi_id' : pd.Series(dtype='int'),
+#                          'points' : pd.Series(dtype='object'),
+#                          'covariances' : pd.Series(dtype='object'),
+#                          'radius' : pd.Series(dtype='float'),
+#                          'observed' : pd.Series(dtype='object'),
+#                          'in_collision' : pd.Series(dtype='bool')})
 
 class ObjectManager:
     def __init__(
@@ -48,6 +48,8 @@ class ObjectManager:
         init_covariance_diag: float = 8,
         init_center_stddev: float = 5.0,
         init_width_guess: float = 5.0,
+        range_stddev: float = 1.0,
+        bearing_stddev: float = 0.1,
         ui=None
     ):
         # Random object generation parameters
@@ -64,6 +66,10 @@ class ObjectManager:
         self.init_covariance_diag = init_covariance_diag
         self.init_center_stddev = init_center_stddev
         self.init_width_guess = init_width_guess
+        
+        # Noise model for generating noisy observations
+        self.range_stddev = range_stddev
+        self.bearing_stddev = bearing_stddev
         
         # Car parameters and a UI for rendering
         self.car_collision_radius = car_collision_radius
@@ -235,6 +241,9 @@ class ObjectManager:
         in_collision_ocl, 
         in_collision_oois, 
         observation_indices=None,
+        observation=None,
+        ooi_means=None,
+        ooi_covs=None
     ):
         """
         Draw all obstacles, occlusions, and OOIs. For objects in collision,
@@ -247,6 +256,9 @@ class ObjectManager:
         :param in_collision_ocl: 1D array of occlusion indices that are in collision
         :param in_collision_oois: 1D array of OOI indices that are in collision
         :param observation_indices: Dictionary of observed OOI corners for displaying observation arrows
+        :param observation: Dictionary of observed OOI corner positions
+        :param ooi_means: Means of the OOIs for drawing current estimate
+        :param ooi_covs: Covariances of the OOIs for drawing current estimated uncertainty
         """
         if self.ui is None:
             raise ValueError("No UI has been set for drawing.")
@@ -293,11 +305,11 @@ class ObjectManager:
             corners = self.oois[i]  # shape = (4, 2)
             
             # Draw the polygon outline
-            self.ui.draw_polygon(corners, color='b', facecolor='none', linestyle='--', alpha=1.0)
+            self.ui.draw_polygon(corners, color='b', facecolor='none', alpha=0.2)
             
-            for corner in corners:
-                # A small cyan point for each corner
-                self.ui.draw_point(corner, color='cyan')
+            # for corner in corners:
+            #     # A small cyan point for each corner
+            #     self.ui.draw_point(corner, color='cyan')
             
             # Draw a red bounding circle for OOIs in collision
             if i in in_collision_oois:
@@ -308,7 +320,8 @@ class ObjectManager:
                 self.ui.draw_circle(ooi_center, max_radius, color='red', facecolor='red', alpha=0.5)
             
         # ------------------------------------------------------------------
-        # 4) Draw Observation (if available)
+        # 4) Draw Observation index (if available)
+        #    This marks the real observed corners with green circles and arrows
         # ------------------------------------------------------------------
         if observation_indices is not None:
             # Iterate through observed OOIs: observation_indices = {ooi_idx: [corner0, corner3, ...], ...}
@@ -319,10 +332,41 @@ class ObjectManager:
                     pt = self.oois[ooi_idx, corner_idx] 
                     
                     # A green circle to indicate an observed corner
-                    self.ui.draw_circle(pt, 0.5, color='g', facecolor='none', alpha=1.0)
+                    self.ui.draw_circle(pt, 0.5, color='cyan', facecolor='none', alpha=0.2)
                     
                     # An arrow from the car to the observed corner
                     self.ui.draw_arrow(car_pos, pt, color='g', alpha=0.1)
+
+        # ------------------------------------------------------------------
+        # 5) Draw Noisy Observation (if available)
+        # ------------------------------------------------------------------
+        if observation is not None:
+            # Iterate through observed OOIs: observation = {ooi_idx: [[x0, y0], [x3, y3], ...], ...}
+            for ooi_idx, observed_corners in observation.items():
+                # Iterate through each corner of the OOI
+                for pt in observed_corners:
+                    # A green circle to indicate an observed corner
+                    self.ui.draw_circle(pt, 0.5, color='g', facecolor='none', alpha=1.0)
+                    
+                    # # An arrow from the car to the observed corner
+                    # self.ui.draw_arrow(car_pos, pt, color='g', alpha=0.1)
+                    
+        # ------------------------------------------------------------------
+        # 6) Draw Estimated OOIs (if available)
+        # ------------------------------------------------------------------
+        if (ooi_means is not None) and (ooi_covs is not None):
+            for i in range(self.num_oois):
+                # Draw the estimated means
+                self.ui.draw_polygon(ooi_means[i], color='purple', facecolor='none', linestyle='--', alpha=1.0)
+                
+                for j in range(4):
+                    # A small cyan point for each corner
+                    self.ui.draw_point(ooi_means[i][j], color='cyan', alpha=1.0)
+                    
+                    # Draw the covariance ellipse
+                    scalings, angle = get_ellipse_scaling(ooi_covs[i][j])
+                    self.ui.draw_ellipse(ooi_means[i][j], scalings[0], scalings[1], 
+                                         angle=angle, color='purple', alpha=0.2)
                     
     def check_collision(self, car_state):
         """
@@ -613,7 +657,8 @@ class ObjectManager:
                 corner = self.oois[ooi_idx][corner_idx]
                 
                 # Use the measurement model to get the observation matrix
-                observation_matrix = measurement_model(corner, car_state[0:2], car_state[3])
+                observation_matrix = measurement_model(corner, car_state[0:2], car_state[3], 
+                                                       range_dev=self.range_stddev, bearing_dev=self.bearing_stddev)
                 
                 # Add noise to the real corner using the observation matrix
                 noisy_corners[j] = np.random.multivariate_normal(corner, observation_matrix)

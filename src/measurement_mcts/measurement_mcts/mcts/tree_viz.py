@@ -61,7 +61,6 @@ def add_nodes_and_edges_pyvis(node, net, action_space, parent_hash=None, show_un
         ##### First add information about this node
         
         # Get corner covariance diagonals
-        corner_covariance = np.diag(node.state[2])
         label = "Action: " + " " + str(np.around(action_space[node.action], 2)) + "\n" + \
                 "Position: " + " " + str(np.around(node.state[0][0:2], 2)) + "\n" + \
                 "Yaw: " + " " + str(np.around(np.degrees(node.state[0][3]))) + "\n" + \

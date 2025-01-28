@@ -18,9 +18,7 @@ from measurement_mcts.mcts.mcts import Environment
 from measurement_mcts.environment.exploration_grid import ExplorationGrid
 
 class MeasurementControlEnvironment(Environment):
-    def __init__(self, init_reset=True, interactive=False, enable_explore_grid=True):
-        self.enable_explore_grid = enable_explore_grid
-        
+    def __init__(self, init_reset=True, interactive=False):
         # General important parameters
         self.final_cov_trace = 0.03 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
         self.simulation_dt = 0.6 # time step size for forward simulation search
@@ -28,12 +26,15 @@ class MeasurementControlEnvironment(Environment):
         self.init_covariance_diag = 8. # Initial diagonal value for all diagonals of (2x2) point covariance matrix
         self.explored_cell_reward = 0.00001 # reward for exploring a cell
         self.horizon_length = 10 # length of the horizon for the environment
+        car_collision_radius = 3.5 # Collision radius of the car
         
         # Sensor parameters used in Object Manager for observation simulation and minimums for the measurement model
         sensor_min_range = 5. # minimum range for sensor model
         sensor_min_bearing = 5. # minimum bearing for sensor model
         sensor_max_range = 60. # meters
         sensor_max_bearing = np.radians(60) # degrees
+        obs_range_dev = 0.3 # standard deviation for the range scaling of measurement model
+        obs_bearing_dev = 0.2 # standard deviation for the bearing scaling of measurement model
         
         # Action space parameters
         long_acc_options = np.array([-1., -0.5, 0., 0.5, 1.]) # options for longitudinal acceleration (scaled from [-1, 1] to vehicle [-max_acc, max_acc])
@@ -45,7 +46,7 @@ class MeasurementControlEnvironment(Environment):
                 
         # Create a UI object to pass to different classes for easy plotting
         self.ui = MatPlotLibUI(interactive=interactive)
-                
+
         # Create a car model with the initial state bounds
         init_pos_bounds = np.array([10., 90.])
         init_yaw_bounds = np.array([-np.pi, np.pi])
@@ -53,19 +54,25 @@ class MeasurementControlEnvironment(Environment):
                        init_pos_bounds=init_pos_bounds, init_yaw_bounds=init_yaw_bounds, ui=self.ui)
         
         # Create the object manager which manages collision, and getting observations accounting for occlusions
-        # Parameters are mainly for generating random objects
+        # Reset parameters for generating random objects
         self.num_obstacles = 5   # Random obstacles to generate on reset
         self.num_occlusions = 5  # Random occlusions to generate on reset
         self.num_oois = 4        # Random OOI's to generate on reset
-        self.init_covariance_trace = self.num_oois * 4 * 2 * self.init_covariance_diag # Total trace available, makes trace based rewards normalized to [0, 1]
-        car_collision_radius = 3.5 # Collision radius of the car
         object_bounds = np.array([15, 85]) # Bounds for random object generation
         object_size_bounds = np.array([2, 7]) # Bounds for random object size generation
         ooi_size_bounds = np.array([3, 12]) # Bounds for random OOI size generation
+        
+        
+        # Parameters for estimation and noise observations
+        self.init_covariance_trace = self.num_oois * 4 * 2 * self.init_covariance_diag # Total trace available, makes trace based rewards normalized to [0, 1]
+        init_center_stddev = 1. # Standard deviation for the center guess for estimator initialization
+        init_width_guess = 5. # Initial guess for the width of the object
         self.object_manager = ObjectManager(self.num_obstacles, self.num_occlusions, self.num_oois, car_collision_radius, 
                                             sensor_max_range, sensor_max_bearing, object_bounds=object_bounds,
                                             size_bounds=object_size_bounds, ooi_size_bounds=ooi_size_bounds,
-                                            init_covariance_diag=self.init_covariance_diag, ui=self.ui)
+                                            init_covariance_diag=self.init_covariance_diag, ui=self.ui,
+                                            init_center_stddev=init_center_stddev, init_width_guess=init_width_guess,
+                                            range_stddev=obs_range_dev, bearing_stddev=obs_bearing_dev)
         
         # Create a Static 2d Kalman Filter object
         range_dev = 1. # standard deviation for the range scaling of measurement model
@@ -73,13 +80,11 @@ class MeasurementControlEnvironment(Environment):
         self.skf = StaticKalmanFilter(range_dev=range_dev, min_range=sensor_min_range,
                                       bearing_dev=bearing_dev, min_bearing=sensor_min_bearing, ui=self.ui)
         
-        # Exploration grid which gives rewards for exploring the environment
-        meters_per_pixel = 1 # meters per pixel of the grid
-        explore_grid_bounds = np.array([[5, 95], [5, 95]]) # bounds of the grid
-        self.explore_grid = ExplorationGrid(explore_grid_bounds, meters_per_pixel, sensor_max_range, sensor_max_bearing, ui=self.ui)
-        
         # Flag for whether goal has been reached
         self.done = False
+        
+        # Save state within class for easy access
+        self.state = None
         
         # Do initial reset to set the initial state of each subcomponent at random within bounds
         if init_reset:
@@ -96,7 +101,7 @@ class MeasurementControlEnvironment(Environment):
     def N(self, value):
         self.N = value
         
-    def reset(self, first_update=True, print_rewards=False) -> Tuple[np.ndarray, pd.DataFrame, np.ndarray, int]:
+    def reset(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
         """
         Reset the environment to a random state
         
@@ -115,65 +120,49 @@ class MeasurementControlEnvironment(Environment):
         # Place state into tuple format with horizon set to 0
         state = (car_state, ooi_means, ooi_covs, 0)
         
-        # If we are doing the first update, then update grid and KF with the initial step
-        # This is done to remove reward gotten for the initial state (which is not a real action)
-        if first_update:
-            # Use the first action (no acceleration) in the action space to get the first state
-            state, reward, done = self.step(state, self.action_space[0], print_rewards=print_rewards)
-            
-            # Unpack state and update subclass states
-            self.set_state(state)
-        
-        # Return the initial state
+        # Save and return the initial state
+        self.state = state
         return state
 
     # Not needed for now (because mean and cov are seperate from object manager)
-    # def get_state(self, horizon=0) -> Tuple[np.ndarray, pd.DataFrame, np.ndarray, int]:
-    #     '''
-    #     Returns full state -> Tuple[Car state, Object Manager DF, Exploration Grid, horizon]
-    #     '''
-    #     return self.car.get_state(), self.object_manager.get_df(), self.explore_grid.get_grid(), horizon
+    def get_state(self, horizon=0) -> Tuple[np.ndarray, pd.DataFrame, np.ndarray, int]:
+        '''
+        Returns full state -> Tuple[Car state, Object Manager DF, Exploration Grid, horizon]
+        '''
+        return self.state
     
-    # def set_state(self, state) -> None:
-    #     """
-    #     Set the state of the environment to a specific state.
+    def set_state(self, state) -> None:
+        """
+        Set the state of the environment to a specific state.
         
-    #     :param state: (np.ndarray) the state tuple (Car state, Object Manager DF, Exploration Grid, horizon)
-    #     """
-    #     # Set the car state
-    #     self.car.set_state(deepcopy(state[0]))
+        :param state: (np.ndarray) the state tuple (Car state, Object Manager DF, Exploration Grid, horizon)
+        """
+        self.state = deepcopy(state)
         
-    #     # Set the object manager state
-    #     self.object_manager.set_df(deepcopy(state[1]))
+    def save_state(self, path, name) -> None:
+        """
+        Save the state of the environment to a file.
         
-    #     # Set the exploration grid state
-    #     self.explore_grid.set_grid(deepcopy(state[2]))
+        :param state: (np.ndarray) the state tuple (Car state, Object Manager DF, Exploration Grid, horizon)
+        :param name: (str) the name of the file to save the state to
+        """
+        # Save the state to a file
+        # np.save(f'{path}/{name}', (self.car.get_state(), self.object_manager.get_df(), self.explore_grid.get_grid(), 0))
+        with open(f'{path}/{name}.pkl', 'wb') as file:
+            pickle.dump(self.state, file)
         
-    # def save_state(self, path, name) -> None:
-    #     """
-    #     Save the state of the environment to a file.
+    def load_state(self, path, name) -> None:
+        """
+        Load the state of the environment from a file.
         
-    #     :param state: (np.ndarray) the state tuple (Car state, Object Manager DF, Exploration Grid, horizon)
-    #     :param name: (str) the name of the file to save the state to
-    #     """
-    #     # Save the state to a file
-    #     # np.save(f'{path}/{name}', (self.car.get_state(), self.object_manager.get_df(), self.explore_grid.get_grid(), 0))
-    #     with open(f'{path}/{name}.pkl', 'wb') as file:
-    #         pickle.dump((self.car.get_state(), self.object_manager.get_df(), self.explore_grid.get_grid(), 0), file)
+        :param name: (str) the name of the file to load the state from
+        """
+        # Load the state from a file
+        with open(f'{path}/{name}.pkl', 'rb') as file:
+            state = pickle.load(file)
         
-    # def load_state(self, path, name) -> None:
-    #     """
-    #     Load the state of the environment from a file.
-        
-    #     :param name: (str) the name of the file to load the state from
-    #     """
-    #     # Load the state from a file
-    #     # state = np.load(f'{path}/{name}', allow_pickle=True)
-    #     with open(f'{path}/{name}.pkl', 'rb') as file:
-    #         state = pickle.load(file)
-        
-    #     # Set the state of the environment
-    #     self.set_state(state)
+        # Set the state of the environment
+        self.set_state(state)
     
     def estimate_remaining_points(self, points, car_state):
         """
@@ -282,49 +271,75 @@ class MeasurementControlEnvironment(Environment):
 
         return obs_dict, object_df, obs_polys, estimated_indices
     
-    def apply_observation(self, observation: dict, object_df: pd.DataFrame, car_state: np.ndarray, 
-                          real_observation: np.ndarray=None, estimated_indices: np.ndarray=None) -> Tuple[pd.DataFrame, float]:
-        # Take a copy of the object dataframe to update before modifying
-        object_df = deepcopy(object_df)
+    # Old database method
+    # def apply_observation(self, observation: dict, object_df: pd.DataFrame, car_state: np.ndarray, 
+    #                       real_observation: np.ndarray=None, estimated_indices: np.ndarray=None) -> Tuple[pd.DataFrame, float]:
+    #     # Take a copy of the object dataframe to update before modifying
+    #     object_df = deepcopy(object_df)
+        
+    #     # Apply the KF update to the observed corners
+    #     trace_delta_sum = 0. # Sum of the difference in trace made in this update
+    #     for i, (ooi_id, observed_indices) in enumerate(observation.items()):
+    #         # Get the row corresponding to this ooi and the means and covariances of the OOI corners
+    #         ooi_index = object_df.loc[object_df['ooi_id'] == ooi_id].index[0] # Index of the OOI in the object dataframe
+    #         cur_means = deepcopy(object_df.loc[ooi_index, 'points']) # 4x2 numpy array of corner means
+    #         cur_covs = deepcopy(object_df.loc[ooi_index, 'covariances']) # List of 4 2x2 numpy covariance matrices
+            
+    #         # Go through the indeces of the OOI points that were observed
+    #         for j in observed_indices:
+    #             # KF update with the observed corner using the previous mean for now
+    #             prev_trace = np.trace(cur_covs[j]) # Get the trace of the covariance matrix pre-update
+                
+    #             # If we are doing a simulated update using the previous means
+    #             if real_observation is None:
+    #                 new_mean, new_cov = self.skf.update(cur_means[j,:], cur_covs[j], cur_means[j,:], car_state)
+                    
+    #             # Otherwise use the real observation dictionary to update the KF
+    #             else:
+    #                 # If this is an estimated point, inflate the noise
+    #                 if estimated_indices[i][j] == 1:
+    #                     new_mean, new_cov = self.skf.update(cur_means[j,:], cur_covs[j], real_observation[i][j], car_state, range_dev=10.0, bearing_dev=5.0)
+    #                 else:
+    #                     new_mean, new_cov = self.skf.update(cur_means[j,:], cur_covs[j], real_observation[i][j], car_state)
+                    
+    #             trace_delta_sum += prev_trace - np.trace(new_cov) # Add the difference in trace to the sum
+                
+    #             # Place the new mean and covariance into the copied means and covs
+    #             cur_means[j,:] = new_mean
+    #             cur_covs[j] = new_cov
+                
+    #         # Now place the updated means and covs back into the object dataframe
+    #         object_df.at[ooi_index, 'points'] = cur_means
+    #         object_df.at[ooi_index, 'covariances'] = cur_covs
+            
+    #     return object_df, trace_delta_sum
+    
+    def apply_observation(self, observation_indices: dict, observation: dict, car_state: np.ndarray, 
+                          ooi_means: np.ndarray, ooi_covs: np.ndarray) -> Tuple[pd.DataFrame, float]:
+        # Take a copy of the means and covariances to update before modifying
+        new_ooi_means = deepcopy(ooi_means)
+        new_ooi_covs = deepcopy(ooi_covs)
         
         # Apply the KF update to the observed corners
         trace_delta_sum = 0. # Sum of the difference in trace made in this update
-        for i, (ooi_id, observed_indices) in enumerate(observation.items()):
-            # Get the row corresponding to this ooi and the means and covariances of the OOI corners
-            ooi_index = object_df.loc[object_df['ooi_id'] == ooi_id].index[0] # Index of the OOI in the object dataframe
-            cur_means = deepcopy(object_df.loc[ooi_index, 'points']) # 4x2 numpy array of corner means
-            cur_covs = deepcopy(object_df.loc[ooi_index, 'covariances']) # List of 4 2x2 numpy covariance matrices
+        for ooi_idx, corner_indices in observation_indices.items():
             
             # Go through the indeces of the OOI points that were observed
-            for j in observed_indices:
+            for j, c_idx in enumerate(corner_indices):
                 # KF update with the observed corner using the previous mean for now
-                prev_trace = np.trace(cur_covs[j]) # Get the trace of the covariance matrix pre-update
+                prev_trace = np.trace(ooi_covs[ooi_idx][c_idx]) # Get the trace of the covariance matrix pre-update
                 
-                # If we are doing a simulated update using the previous means
-                if real_observation is None:
-                    new_mean, new_cov = self.skf.update(cur_means[j,:], cur_covs[j], cur_means[j,:], car_state)
-                    
-                # Otherwise use the real observation dictionary to update the KF
-                else:
-                    # If this is an estimated point, inflate the noise
-                    if estimated_indices[i][j] == 1:
-                        new_mean, new_cov = self.skf.update(cur_means[j,:], cur_covs[j], real_observation[i][j], car_state, range_dev=10.0, bearing_dev=5.0)
-                    else:
-                        new_mean, new_cov = self.skf.update(cur_means[j,:], cur_covs[j], real_observation[i][j], car_state)
+                new_mean, new_cov = self.skf.update(ooi_means[ooi_idx][c_idx], ooi_covs[ooi_idx][c_idx], observation[ooi_idx][j], car_state)
                     
                 trace_delta_sum += prev_trace - np.trace(new_cov) # Add the difference in trace to the sum
                 
                 # Place the new mean and covariance into the copied means and covs
-                cur_means[j,:] = new_mean
-                cur_covs[j] = new_cov
-                
-            # Now place the updated means and covs back into the object dataframe
-            object_df.at[ooi_index, 'points'] = cur_means
-            object_df.at[ooi_index, 'covariances'] = cur_covs
+                new_ooi_means[ooi_idx][c_idx] = new_mean
+                new_ooi_covs[ooi_idx][c_idx] = new_cov
             
-        return object_df, trace_delta_sum
+        return new_ooi_means, new_ooi_covs, trace_delta_sum
     
-    def step(self, state, action, dt=None, print_rewards=False) -> Tuple[tuple, float, bool]:
+    def step(self, state, action, dt=None, print_rewards=False, return_observation=False) -> Tuple[tuple, float, bool]:
         """
         Step the environment by one time step. The action is applied to the car, and the state is observed by the OOI.
         The observation is then passed to the KF for update.
@@ -353,7 +368,8 @@ class MeasurementControlEnvironment(Environment):
         observation_indices, noisy_observation = self.object_manager.get_noisy_observation(new_car_state)
         
         # Apply the observation and get sum of the trace differences and the new object dataframe
-        new_ooi_means, new_ooi_covs, trace_delta_sum = self.apply_observation(observation_indices, noisy_observation, new_car_state)
+        new_ooi_means, new_ooi_covs, trace_delta_sum = self.apply_observation(observation_indices, noisy_observation, 
+                                                                              new_car_state, ooi_means, ooi_covs)
 
         # Calculate rewards
         num_in_collision = len(in_collision_obs) + len(in_collision_ocl) + len(in_collision_oois) # Number of objects in collision
@@ -368,8 +384,10 @@ class MeasurementControlEnvironment(Environment):
             print(f'Total Reward: {reward}')
         
         # Check if the episode is done
-        new_ooi_df = new_object_df[new_object_df['object_type'] == 'ooi']
-        total_trace = new_ooi_df['covariances'].apply(lambda matrices: np.sum([np.trace(matrix) for matrix in matrices])).sum()
+        total_trace = 0
+        for ooi_idx in range(self.num_oois):
+            for c_idx in range(4):
+                total_trace += np.trace(new_ooi_covs[ooi_idx, c_idx])
         done = total_trace < self.final_cov_trace
         
         # Also done if horizon is equal to the maximum horizon length
@@ -378,37 +396,40 @@ class MeasurementControlEnvironment(Environment):
         # Combine the updated car state, mean, covariance and horizon into a new state
         new_state = (new_car_state, new_ooi_means, new_ooi_covs, horizon)
         
+        if return_observation:
+            return new_state, reward, done, noisy_observation
+        
         # Return the reward and the new state
         return new_state, reward, done
     
-    # Get normlized covariance trace for each point in the corners
-    def get_normalized_cov_pt_traces(self, state) -> np.ndarray:
-        # Get the diagonals of the covariance matrix for the corners to get trace
-        corner_cov_diags = np.diag(state[2])
+    # # Get normlized covariance trace for each point in the corners
+    # def get_normalized_cov_pt_traces(self, state) -> np.ndarray:
+    #     # Get the diagonals of the covariance matrix for the corners to get trace
+    #     corner_cov_diags = np.diag(state[2])
         
-        # Get the trace of every 2 diagonals (to get a per point trace)
-        reshaped_cov_diags = corner_cov_diags.reshape(4, 2) # this puts x in first column and y in second
-        point_traces = np.mean(reshaped_cov_diags, axis=1) # Sum the x and y covariances for each point to get trace
+    #     # Get the trace of every 2 diagonals (to get a per point trace)
+    #     reshaped_cov_diags = corner_cov_diags.reshape(4, 2) # this puts x in first column and y in second
+    #     point_traces = np.mean(reshaped_cov_diags, axis=1) # Sum the x and y covariances for each point to get trace
         
-        # Normalize the point traces to [0, covariance_trace_init/4] (this is the max trace for a single point)
-        norm_point_traces = min_max_normalize(point_traces, 0, self.covariance_trace_init/4)
+    #     # Normalize the point traces to [0, covariance_trace_init/4] (this is the max trace for a single point)
+    #     norm_point_traces = min_max_normalize(point_traces, 0, self.covariance_trace_init/4)
         
-        return norm_point_traces
+    #     return norm_point_traces
         
-    # Quick state evaluation based on kdtree for quick distance lookup to corners and obstacles
-    def evaluate(self, state, draw=False) -> float:
-        # Get the normalized covariance trace for each corner
-        norm_point_traces = self.get_normalized_cov_pt_traces(state)
+    # # Quick state evaluation based on kdtree for quick distance lookup to corners and obstacles
+    # def evaluate(self, state, draw=False) -> float:
+    #     # Get the normalized covariance trace for each corner
+    #     norm_point_traces = self.get_normalized_cov_pt_traces(state)
         
-        # Evaluate for each action in action space
-        prior_reward = np.zeros([self.N], dtype=np.float32)
-        for n, action in enumerate(self.action_space):
-            # Pass the car state to the KDTree evaluation to get the reward
-            prior_reward[n] = self.eval_kd_tree.evaluate(action, state[0], norm_point_traces, state[4], self.discount_factor, draw=draw)
+    #     # Evaluate for each action in action space
+    #     prior_reward = np.zeros([self.N], dtype=np.float32)
+    #     for n, action in enumerate(self.action_space):
+    #         # Pass the car state to the KDTree evaluation to get the reward
+    #         prior_reward[n] = self.eval_kd_tree.evaluate(action, state[0], norm_point_traces, state[4], self.discount_factor, draw=draw)
             
-        avg_reward = np.mean(prior_reward)
+    #     avg_reward = np.mean(prior_reward)
         
-        return prior_reward, avg_reward
+    #     return prior_reward, avg_reward
     
     # # Same repeating action evaluation as in evaluation.py but using full environment step
     # def full_evaluate(self, action, state, depth, draw=False) -> float:
@@ -457,9 +478,10 @@ class MeasurementControlEnvironment(Environment):
     #         # Create plot for the UI
     #         self.ui.single_plot()
     
-    def draw_state(self, state, title=None, plot_explore_grid=True, plot=True, root_node=None, 
+    def draw_state(self, state, title=None, plot=True, root_node=None, 
                    rew=None, q_val=None, qu_val=None, scaling=1, bias=0,
-                   max=4, get_fig_ax: bool=False):
+                   max=4, get_fig_ax: bool=False,
+                   observation=None) -> None:
         """
         Draw the state on the UI.
         
@@ -473,18 +495,21 @@ class MeasurementControlEnvironment(Environment):
         :param bias: (float) the bias to add to the radius of the points
         :param max: (float) the maximum radius of the points
         """
+        
         # Pull elements out of the state
-        car_state, object_df, explore_grid, horizon = state
+        car_state, ooi_means, ooi_covs, horizon = state
+        
+        # Simulate collision and observation to get objects in collision and observation display
+        in_collision_obs, in_collision_ocl, in_collision_oois = self.object_manager.check_collision(car_state)
+        observation_indices = self.object_manager.get_observation_indices(car_state)
         
         # Draw the car state
         self.car.draw_car_state(car_state)
         
         # Draw the objects in the dataframe
-        self.object_manager.draw_objects(car_state)
-        
-        if plot_explore_grid:
-            # Draw the exploration grid
-            self.explore_grid.draw_grid(explore_grid)
+        self.object_manager.draw_objects(car_state, in_collision_obs, in_collision_ocl, in_collision_oois, 
+                                         observation_indices=observation_indices, observation=observation,
+                                         ooi_means=ooi_means, ooi_covs=ooi_covs)
         
         # Draw the simulated states
         if root_node is not None:
@@ -529,7 +554,7 @@ class MeasurementControlEnvironment(Environment):
         for child in node.children.values():
             self.draw_simulated_states(child, rew=rew, q_val=q_val, qu_val=qu_val, scaling=scaling, bias=bias, max=max)
 
-    def draw_state_set(self, state_set, title_perm=None, rewards=None, plot_explore_grid=True, roots=None, scaling=4, bias=0.1, max=1., rew=True):
+    def draw_state_set(self, state_set, title_perm=None, rewards=None, roots=None, scaling=4, bias=0.1, max=1., rew=True):
         """
         Use matplotlib animate to create a video with the normal state display over time
         params: state_set - list of states to display
@@ -541,18 +566,13 @@ class MeasurementControlEnvironment(Environment):
             
             # Draw the state create artists in UI class
             if (roots is not None) and i!=0:
-                self.draw_state(state_set[i], plot=False, plot_explore_grid=plot_explore_grid, root_node=roots[i-1], rew=rew, scaling=scaling, bias=bias, max=max)
+                self.draw_state(state_set[i], plot=False, root_node=roots[i-1], rew=rew, scaling=scaling, bias=bias, max=max)
             else:
-                self.draw_state(state_set[i], plot=False, plot_explore_grid=plot_explore_grid)
+                self.draw_state(state_set[i], plot=False)
             
             # Add artists to the axis
             for artist in self.ui.get_artists():
                 ax.add_patch(artist)
-                
-            if plot_explore_grid:
-                # Add background image if it exists
-                if self.ui.background_image is not None:
-                    ax.imshow(self.ui.background_image[0], extent=self.ui.background_image[1], alpha=self.ui.background_image[2])
                 
             # Add title
             if title_perm is not None and rewards is None:
