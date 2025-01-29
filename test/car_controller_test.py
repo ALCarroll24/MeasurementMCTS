@@ -51,8 +51,25 @@ try:
         x_axis = 0.0 if abs(x_axis) < dead_zone else x_axis
         y_axis = 0.0 if abs(y_axis) < dead_zone else y_axis
 
-        # Format action (swap axes for intuitive control)
-        action = [-y_axis, -x_axis]
+        # Compute desired action values (pre-snap)
+        target_long = -y_axis  # Invert y-axis for intuitive forward=positive acceleration
+        target_steer = -x_axis
+
+        # Define available options (replace with your actual arrays)
+        long_acc_options = np.array([-1., -0.5, 0., 0.5, 1.])
+        steering_acc_options = np.array([-1., -0.25, 0., 0.25, 1.])
+
+        # Snap to closest valid action
+        snapped_long = long_acc_options[np.argmin(np.abs(long_acc_options - target_long))]
+        snapped_steer = steering_acc_options[np.argmin(np.abs(steering_acc_options - target_steer))]
+
+        # Final snapped action
+        action = [snapped_long, snapped_steer]
+
+        # # Format action (swap axes for intuitive control)
+        # action = [-y_axis, -x_axis]
+        # print(f'Action: {action}')
+
         print(f'Action: {action}')
 
         # --- Environment Update ---
