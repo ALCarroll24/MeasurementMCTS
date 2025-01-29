@@ -1,0 +1,73 @@
+import numpy as np
+import pandas as pd
+import timeit
+import sys
+import matplotlib.pyplot as plt
+from time import sleep
+import pygame
+# Add measurement mcts python package to path
+sys.path.append('./src/measurement_mcts')
+from measurement_mcts.mcts.mcts import mcts_search, get_best_trajectory, MCTSNode, DummyNode
+from measurement_mcts.mcts.tree_viz import render_pyvis
+from measurement_mcts.state_evaluation.reinforcement_learning import MCTSRLWrapper, plot_state_image
+from measurement_mcts.environment.measurement_control_env import MeasurementControlEnvironment
+
+# Initialize the environment
+env = MeasurementControlEnvironment(init_reset=False, interactive=True)
+state = env.reset()
+env.draw_state(state)
+
+# Initialize Pygame and the joystick module
+pygame.init()
+pygame.joystick.init()
+
+# Check for connected controllers
+if pygame.joystick.get_count() == 0:
+    print("No controller detected.")
+    exit()
+
+# Initialize the first joystick/controller
+joystick = pygame.joystick.Joystick(0)
+joystick.init()
+
+print(f"Controller detected: {joystick.get_name()}")
+dt = 0.1  # Time step in seconds
+dt_ms = int(dt * 1000)
+
+try:
+    while True:
+        # Track loop start time
+        loop_start_ticks = pygame.time.get_ticks()
+
+        # --- Controller Input & Processing ---
+        pygame.event.pump()
+        
+        # Get left stick axes (X=0, Y=1)
+        x_axis = joystick.get_axis(0)
+        y_axis = joystick.get_axis(1)
+
+        # Apply dead zone
+        dead_zone = 0.25
+        x_axis = 0.0 if abs(x_axis) < dead_zone else x_axis
+        y_axis = 0.0 if abs(y_axis) < dead_zone else y_axis
+
+        # Format action (swap axes for intuitive control)
+        action = [-y_axis, -x_axis]
+        print(f'Action: {action}')
+
+        # --- Environment Update ---
+        state, reward, done = env.step(state, action, dt=dt)
+        env.draw_state(state)
+        # print(f'Speed: {state[0][2]*2.23694} mph')
+
+        # --- Dynamic Sleep Adjustment ---
+        elapsed_time = pygame.time.get_ticks() - loop_start_ticks
+        remaining_sleep = dt_ms - elapsed_time
+        
+        if remaining_sleep > 0:
+            pygame.time.delay(remaining_sleep)  # Sleep only if there's time left
+
+except KeyboardInterrupt:
+    print("\nExiting...")
+finally:
+    pygame.quit()

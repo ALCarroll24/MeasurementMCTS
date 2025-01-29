@@ -9,8 +9,9 @@ from copy import deepcopy
 
 class Car:
     def __init__(self, max_range: float, max_bearing: float,
-                 init_pos_bounds: np.ndarray, init_yaw_bounds: np.ndarray, 
-                 range_arrow_length: float=10.0, state=None, ui=None):        
+                 init_pos_bounds: np.ndarray, init_yaw_bounds: np.ndarray,
+                 steering_center_spring_rate: float=0.08, steering_velocity_damping: float=0.16,
+                 longitudinal_damping: float=0.04, range_arrow_length: float=10.0, state=None, ui=None):
         # Save parameters
         self.max_range = max_range # m
         self.max_bearing = max_bearing # Max sensor fov in radians (converted from degrees)
@@ -18,6 +19,9 @@ class Car:
         self.range_arrow_length = range_arrow_length # Length of the range arrow which shows the sensor fov
         self.init_pos_bounds = init_pos_bounds # Initial position bounds for random state generation
         self.init_yaw_bounds = init_yaw_bounds # Initial yaw bounds for random state generation
+        self.steering_center_spring_rate = steering_center_spring_rate # Steering center spring rate
+        self.steering_velocity_damping = steering_velocity_damping # Steering velocity damping
+        self.longitudinal_damping = longitudinal_damping # Longitudinal damping to slow down the car
         self.ui = ui # UI object for plotting
         
         # Initialize the car state or leave as none until reset() is called
@@ -35,7 +39,7 @@ class Car:
         final_drive_ratio = 3.47  # Final drive ratio
         gears_to_average = [1, 2]  # Gears to average to calculate max torque (Most time for this problem is spent in these gears)
         average_gear_ratio = np.mean(gear_ratios[gears_to_average]) * final_drive_ratio  # Average gear ratio
-        torque_ratio = 1/4  # Percentage of torque to assume is readily available from max (for largest acceleration action limit)
+        torque_ratio = 1/3  # Percentage of torque to assume is readily available from max (for largest acceleration action limit)
         max_wheel_torque = torque_ratio * max_engine_torque * average_gear_ratio * final_drive_ratio  # Maximum torque available at wheels in Nm
         tire_radius = 32.0 * 0.5 * 0.0254  # Tire radius in meters (converted from inches diameter)
         max_longitudinal_force = max_wheel_torque / tire_radius  # Maximum longitudinal force available at wheels in Nm
@@ -43,10 +47,10 @@ class Car:
         
         ### Longitudinal output class variables
         self.max_acceleration = max_longitudinal_force / gross_vehicle_mass  # Maximum acceleration given F=ma in m/s^2
-        self.brake_acceleration = 0.4 * 9.81  # Maximum deceleration with brakes in m/s^2
+        self.brake_acceleration = 0.6 * 9.81  # Maximum deceleration with brakes in m/s^2
 
         ### Lateral Parameters
-        max_steering_wheel_turns = 2.  # Maximum steering wheel turns from lock to lock (far left to far right)
+        max_steering_wheel_turns = 2.8  # Maximum steering wheel turns from lock to lock (far left to far right)
         steering_ratio = np.mean([15.7, 18.9])  # Steering wheel turns to wheel turns (averaging center and at lock)
         self.max_steering_angle = np.radians(0.5 * max_steering_wheel_turns * 360 / steering_ratio)  # Maximum steering angle in radians
         quarter_rotation_time = 0.5  # Time to rotate steering wheel 90 degrees (used to calculate acceleration limit)
@@ -160,6 +164,13 @@ class Car:
 
             # Set the steering angle rate to zero
             state_with_action[5] = 0
+        
+        # Apply steering centering spring rate and damping
+        state_with_action[5] = np.clip(state_with_action[5] - self.steering_center_spring_rate * state_with_action[4] - self.steering_velocity_damping * state_with_action[5],
+                                       -self.max_steering_alpha, self.max_steering_alpha)
+        
+        # Apply longitudinal damping
+        state_with_action[2] = state_with_action[2] - self.longitudinal_damping * state_with_action[2]
         
         # Now update the state using the A matrix (function of yaw and steering angle)
         new_state = self.get_A_matrix(state_with_action[3], dt) @ state_with_action
@@ -321,7 +332,7 @@ class Car:
         return poly
 
         
-    def draw_car_state(self, state=None):
+    def draw_car_state(self, state=None, draw_steering_angle=True):
         if self.ui is None:
             raise ValueError('UI object is not set')
         
@@ -338,6 +349,11 @@ class Car:
                                                                 np.sin(state[3] + self.max_bearing)*self.range_arrow_length]))
         self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[3] - self.max_bearing)*self.range_arrow_length,
                                                                 np.sin(state[3] - self.max_bearing)*self.range_arrow_length]))
+        
+        # Draw the steering angle if requested
+        if draw_steering_angle:
+            self.ui.draw_arrow(state[0:2], state[0:2] + np.array([np.cos(state[3] + state[4])*self.range_arrow_length/2,
+                                                                    np.sin(state[3] + state[4])*self.range_arrow_length/2]))
         
     def get_state(self):
         return self.state
