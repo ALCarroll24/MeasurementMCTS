@@ -184,33 +184,33 @@ def render_pyvis(root, action_space, show_unsimulated=True, show_unexpanded=True
     # Save and open the network graph in a browser
     net.save_graph(f'{filename}.html')
 
-    # Add JavaScript code to the HTML file to handle node click events
-    javascript_code = """
-    <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        network.on("click", function (params) {
-            if (params.nodes.length > 0) {
-                var nodeId = params.nodes[0];
-                fetch('/node_click', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({nodeId: nodeId}),
-                })
-                .then(response => response.json())
-                .then(data => {
-                    console.log('Success:', data);
-                })
-                .catch((error) => {
-                    console.error('Error:', error);
-                });
-            }
-        });
-    });
-    </script>
-    """
-    insert_javascript("tree_visualization.html", javascript_code)
+    # # Add JavaScript code to the HTML file to handle node click events
+    # javascript_code = """
+    # <script>
+    # document.addEventListener('DOMContentLoaded', function() {
+    #     network.on("click", function (params) {
+    #         if (params.nodes.length > 0) {
+    #             var nodeId = params.nodes[0];
+    #             fetch('/node_click', {
+    #                 method: 'POST',
+    #                 headers: {
+    #                     'Content-Type': 'application/json',
+    #                 },
+    #                 body: JSON.stringify({nodeId: nodeId}),
+    #             })
+    #             .then(response => response.json())
+    #             .then(data => {
+    #                 console.log('Success:', data);
+    #             })
+    #             .catch((error) => {
+    #                 console.error('Error:', error);
+    #             });
+    #         }
+    #     });
+    # });
+    # </script>
+    # """
+    # insert_javascript("tree_visualization.html", javascript_code)
 
 
 def insert_javascript(filepath, javascript_code):

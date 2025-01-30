@@ -10,8 +10,8 @@ from measurement_mcts.mcts.tree_viz import render_pyvis
 from measurement_mcts.environment.measurement_control_env import MeasurementControlEnvironment
 
 # Initialize the environment
-env = MeasurementControlEnvironment(interactive=True)
-state = env.get_state()
+env = MeasurementControlEnvironment(init_reset=False, interactive=True)
+state = env.reset()
 env.draw_state(state)
 
 # Parameters
@@ -28,29 +28,34 @@ LI={learning_iterations}, EF={explore_factor}, DF={discount_factor}, HL={env.hor
 dt = env.simulation_dt
 search_count = 1
 cumulative_reward = 0
-root = None
+root = subroot = None
+observation = None
 title = title_perm
 try:
     while True:
         # Plot and check leftover time
         start_loop_time = timeit.default_timer()
-        env.draw_state(state)
+        env.draw_state(state, title=title, observation=observation)#, root_node=root, scaling=4, bias=0.1, max=1., rew=True)
         leftover_time = dt - (timeit.default_timer() - start_loop_time)
         print(f"Leftover time: {leftover_time}")
         
-        # Run MCTS, get best action, and update state
+        # # Run MCTS, get best action, and update state
         root, LI_comp = mcts_with_rollout(env, state, learning_iterations, explore_factor, discount_factor, 
-                                          rollout_method, start_with_root=root, max_time=leftover_time)
-        best_child = root.children[root.best_child()]
-        best_action = best_child.action
-        state, reward, done = best_child.state, best_child.reward, best_child.done
+                                          rollout_method, start_with_root=subroot, max_time=leftover_time)
+        best_action_idx = root.best_child()
+        state, reward, done, observation = env.step(state, env.action_space[best_action_idx], return_observation=True)
+        
+        # Reset the depth of the state to 0
+        state_list = list(state)
+        state_list[3] = 0
+        state = tuple(state_list)
         
         # Update cumulative reward, root for next iteration, and title
         cumulative_reward += reward
-        root = get_action_subtree(root, best_action)
-        title = f'{title_perm}\nSearch: {search_count}, LI: {LI_comp}, {round(state[0][2]*2.23694),2} mph, CR: {round(cumulative_reward,2)}'
-        search_count += 1
+        subroot = get_action_subtree(root, best_action_idx)
+        title = f'{title_perm}\nSearch: {search_count}, LI: {LI_comp}, {round(state[0][2]*2.23694,2)} mph, CR: {round(cumulative_reward,2)}'
         print(f'Total Time: {timeit.default_timer() - start_loop_time}')
+        search_count += 1
         
         if done:
             print(f"Done! Cumulative reward: {cumulative_reward}")

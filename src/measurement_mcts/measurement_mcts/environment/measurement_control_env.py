@@ -516,7 +516,7 @@ class MeasurementControlEnvironment(Environment):
             self.draw_simulated_states(root_node, rew=rew, q_val=q_val, qu_val=qu_val, scaling=scaling, bias=bias, max=max)
         
         if plot:
-            return self.ui.plot(get_fig_ax=get_fig_ax)
+            return self.ui.plot(get_fig_ax=get_fig_ax, title=title)
     
     def draw_simulated_states(self, node, rew=False, q_val=False, qu_val=False, scaling=1, bias=0, max=4) -> None:
         """

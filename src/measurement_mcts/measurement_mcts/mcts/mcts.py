@@ -492,9 +492,8 @@ def get_action_subtree(root: MCTSNode, action: int):
     returns
         subtree: the subtree of the action
     """
-    copied_root = deepcopy(root) # Copy the root node to avoid changing the original tree
-    state = copied_root.children[action].state
-    new_root = copied_root.children[action]
+    state = root.children[action].state
+    new_root = root.children[action]
     new_root_total_value = new_root.total_value     # Save root node params since we are
     new_root_number_visits = new_root.number_visits # about to remove the parent they are stored in
     new_root.parent = DummyNode()
@@ -581,7 +580,7 @@ def mcts_with_rollout(env, starting_state, learning_iterations, explore_factor, 
         leaf.backup(rollout_reward) # Backup the best rollout reward to the root node
 
         # If max time is provided, check if we have exceeded the time
-        if max_time is not None:
+        if max_time is not None and i > 24: # Must go through each action once before exiting
             if timeit.default_timer() - start_time > max_time:
                 return root, i+1 # Return the root node and the number of learning iterations completed
         
