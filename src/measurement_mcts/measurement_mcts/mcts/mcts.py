@@ -1,6 +1,7 @@
 import collections
 import numpy as np
 import math
+from copy import deepcopy
 from abc import ABC, abstractmethod
 from typing import Tuple, Any
 import multiprocessing as mp
@@ -13,7 +14,7 @@ import pickle
 import sys
 
 # Measurement MCTS python package imports
-sys.path.append("..")  # Adds higher directory to python modules path.
+# sys.path.append("..")  # Adds higher directory to python modules path.
 # from state_evaluation.reinforcement_learning import MCTSRLWrapper
 
 class Environment(ABC):
@@ -62,6 +63,15 @@ class Environment(ABC):
     """Get the size of the action space"""
     pass
 
+class DummyNode(object):
+    """
+    Dummy node class that simplifies implimentation when it is the parent of the root of the MCTS tree
+    """
+    def __init__(self):
+        self.parent = None
+        self.child_total_value = collections.defaultdict(float)
+        self.child_number_visits = collections.defaultdict(float)
+
 class MCTSNode:
     """
     MCTS Node class that represents a node in the MCTS tree
@@ -105,21 +115,25 @@ class MCTSNode:
         self.children = {}  # Dict[action, MCTSNode]
         self.child_priors = np.zeros([self.env.N], dtype=np.float32)
 
-        if self.parallel:
-            # Initialize shared arrays if parallel
-            self.child_number_visits, self.shared_number_visits_base = create_shared_array((self.env.N,), ctypes.c_int)
-            self.child_total_value, self.shared_total_value_base = create_shared_array((self.env.N,), ctypes.c_float)
+        ### Parallel is not fully implimented and is not recommended to use
+        # if self.parallel:
+        #     # Initialize shared arrays if parallel
+        #     self.child_number_visits, self.shared_number_visits_base = create_shared_array((self.env.N,), ctypes.c_int)
+        #     self.child_total_value, self.shared_total_value_base = create_shared_array((self.env.N,), ctypes.c_float)
             
-            # Initialize lock for making sure shared variables are updated correctly
-            self.lock = mp.Lock() # Does nothing if not parallel
-        else:
-            # Initialize numpy arrays if not parallel
-            self.child_number_visits = np.zeros([self.env.N], dtype=np.int32)
-            self.child_total_value = np.zeros([self.env.N], dtype=np.float32)
-            self.lock = None # No lock if not parallel
+        #     # Initialize lock for making sure shared variables are updated correctly
+        #     self.lock = mp.Lock() # Does nothing if not parallel
+        # else:
+        
+        # Initialize numpy arrays if not parallel
+        self.child_number_visits = np.zeros([self.env.N], dtype=np.int32)
+        self.child_total_value = np.zeros([self.env.N], dtype=np.float32)
+        self.lock = None # No lock if not parallel
 
 
-    # These properties are designed to allow you to use values of this node despite the vectorized structure
+    ############################################################################################################
+    # Properties of children and wrappers for self properties
+    ############################################################################################################
     @property
     def prior(self):
         """Get the prior probability of the action that led to this node"""
@@ -164,6 +178,10 @@ class MCTSNode:
         else:
             self.parent.child_total_value[self.action] = value
             
+            
+    ############################################################################################################
+    # Core MCTS Methods
+    ############################################################################################################
     @property
     def Q(self):
         """Get the Q value of this node"""
@@ -270,130 +288,12 @@ class MCTSNode:
                                                  done=done, parallel=self.parallel)
 
         return self.children[action]
-            
-    def one_action_rollout(self, action, all_same=False, zero_after_first=False, accelerate_after_first=False, 
-                           accelerate=False, hertg=False, keep_nodes=False, keep_data=False):
-        """ Simulate the same action until reaching a terminal state 
-            params:
-                action: the action to simulate (int)
-                all_same: whether to simulate the same action for all steps (bool)
-                zero_after_first: whether to simulate the zero action after the first action (bool)
-                accelerate_after_first: accelerate in velocity direction after the first action (bool)
-                hertg: whether to use the HERTG heuristic at the end of the rollout (bool)
-                keep_nodes: whether to keep the nodes of the rollout (bool)
-                keep_data: whether to keep the data of the rollout (bool)
-        """
-        if all_same and zero_after_first and accelerate_after_first and accelerate:
-            raise ValueError('Cannot have all of 4 first options be True')
-        elif not all_same and not zero_after_first and not accelerate_after_first and not accelerate:
-            raise ValueError('Must have one of 4 first options be True')
-        
-        # Get the cumulative reward of the same action
-        done = False
-        state = self.state
-        cumulative_reward = 0
-        leaf = self
-        states, rewards, dones = [], [], []
-        first_action = True
-        while not done:
-            if not first_action and zero_after_first:
-                action = 0
-            elif (not first_action and accelerate_after_first) or accelerate:
-                if state[0][2] < 0:
-                    action = 15
-                else:
-                    action = 10
-            else:
-                action = action
-                
-            if not keep_nodes:
-                state, reward, done = self.env.step(state, self.env.action_space[action])
-                states.append(state)
-                rewards.append(reward)
-                dones.append(done)
-            else:
-                leaf = leaf.maybe_add_child(action)
-                state, reward, done = leaf.state, leaf.reward, leaf.done
-                
-            cumulative_reward += reward
-            first_action = False
-        if hertg:
-            # Tack on expected cost to go to final state
-            pass
-        
-        if keep_data:
-            return cumulative_reward, states, rewards, dones
-        
-        return cumulative_reward
-    
-    def rollout_children(self, all_same=False, zero_after_first=False, accelerate_after_first=False,
-                         hertg=False, keep_nodes=True):
-        """ rollout children to get the expected reward
-            params:
-                all_same: whether to simulate the same action for all steps (bool)
-                zero_after_first: whether to simulate the zero action after the first action (bool)
-                accelerate_after_first: accelerate in velocity direction after the first action (bool)
-                hertg: whether to use the HERTG heuristic at the end of the rollout (bool)
-                keep_nodes: whether to keep the nodes of the rollout (bool)
-                keep_data: whether to keep the data of the rollout (bool)
-        """
-        if all_same and zero_after_first and accelerate_after_first:
-            raise ValueError('Cannot have same_action and zero_action be True')
-        elif not all_same and not zero_after_first and not accelerate_after_first:
-            raise ValueError('Must have all_same or zero_after_first or accelerate_after_first be True')
-        
-        rollout_rewards = np.zeros([self.env.N], dtype=np.float32)
-        for action in range(self.env.N):
-            rollout_rewards[action] = self.one_action_rollout(action, all_same=all_same, zero_after_first=zero_after_first,
-                                                              accelerate_after_first=True, hertg=hertg, keep_nodes=keep_nodes)
-        return rollout_rewards
-    
-    def parallel_rollout_children(self, all_same=False, zero_after_first=False, accelerate_after_first=False,
-                                  hertg=False, keep_nodes=True):
-        """ rollout children in parallel to get the expected reward 
-            params:
-                all_same: whether to simulate the same action for all steps (bool)
-                zero_after_first: whether to simulate the zero action after the first action (bool)
-                accelerate_after_first: accelerate in velocity direction after the first action (bool)
-                hertg: whether to use the HERTG heuristic at the end of the rollout (bool)
-                keep_nodes: whether to keep the nodes of the rollout (bool)
-                keep_data: whether to keep the data of the rollout (bool)
-        """
-        if all_same and zero_after_first and accelerate_after_first:
-            raise ValueError('Cannot have same_action and zero_action be True')
-        elif not all_same and not zero_after_first and not accelerate_after_first:
-            raise ValueError('Must have all_same or zero_after_first or accelerate_after_first be True')
-        
-        pool = mp.Pool(processes=self.env.N)
-        
-        if keep_nodes:
-            partial_one_action_rollout = partial(self.one_action_rollout, all_same=all_same, zero_after_first=zero_after_first,
-                                                 accelerate_after_first=accelerate_after_first, hertg=hertg, keep_data=True)
-            rollout_results = pool.map(partial_one_action_rollout, np.arange(self.env.N))
-            
-            rollout_rewards, states, rewards, dones  = zip(*rollout_results)
-            for action, (state, reward, done) in enumerate(zip(states, rewards, dones)):
-                leaf = self
-                for i, (s, r, d) in enumerate(zip(state, reward, done)):
-                    leaf.children[action] = MCTSNode(self.env, s, action, explore_factor=self.explore_factor,
-                                                    discount_factor=self.discount_factor, reward=r, parent=leaf, 
-                                                    done=d, parallel=self.parallel)
-                    leaf = leaf.children[action]
-                    if i == 0:
-                        leaf.is_expanded = True
-                        leaf.number_visits += 1
-        else:
-            partial_one_action_rollout = partial(self.one_action_rollout, hertg=hertg, keep_data=False)
-            rollout_rewards= pool.map(partial_one_action_rollout, np.arange(self.env.N))
-        
-        pool.close()
-        pool.join()
-        return rollout_rewards
 
-    def expand(self, child_priors):
-        """Expand the current node with the given child_priors"""
-        self.is_expanded = True
-        # self.child_priors = child_priors
+    # Used in previous alpha go zero style of MCTS
+    # def expand(self, child_priors):
+    #     """Expand the current node with the given child_priors"""
+    #     self.is_expanded = True
+    #     # self.child_priors = child_priors
 
     def backup(self, value_estimate: float):
         """Backpropogate the value estimate up the tree to the root node"""
@@ -416,13 +316,144 @@ class MCTSNode:
             # current.total_value += backup_cumulative_rewards + 1 # Add the 1 value back we subtracted in select_leaf
             current = current.parent # Move to the parent node
             
+    ############################################################################################################
+    # Rollout evaluation methods
+    ############################################################################################################
+    def one_action_rollout(self, rollout_method, first_action=None, hertg=False, keep_nodes=False, keep_data=False):
+        """ Simulate the same action until reaching a terminal state 
+            params:
+                action: the action to simulate (int)
+                rollout_method: The method to use for the rollout (str)
+                    random: randomly select an action
+                    same: select the same action for all steps
+                    random_same: randomly select the same action for all steps
+                    zero: select the zero action after the first action
+                    accelerate: accelerate the car in the direction of velocity with no steering wheel input
+                    heuristic: use the highest HERTG action for all steps
+                first_action: action to use first before using rollout_method (must pass if using same) (bool)
+                hertg: whether to use the HERTG heuristic at the end of the rollout (bool)
+                keep_nodes: whether to keep the nodes of the rollout (bool)
+                keep_data: whether to keep the data of the rollout (bool)
+        """
+        available_methods = ['random', 'same', 'random_same', 'zero', 'accelerate', 'heuristic']
+        if rollout_method not in available_methods:
+            raise ValueError(f"Rollout method must be one of {available_methods}")
+        if rollout_method == 'same' and first_action is None:
+            raise ValueError("Must pass first_action if using same rollout method")
+        
+        # Get the cumulative reward of the same action
+        done = False
+        state = self.state
+        cumulative_reward = 0
+        leaf = self
+        states, rewards, dones = [], [], []
+        is_first_action = True
+        random_same_action = np.random.choice(self.env.N)
+        while not done:
+            if is_first_action is True and first_action is not None:
+                action = first_action
+            elif rollout_method == 'random':
+                action = np.random.choice(self.env.N)
+            elif rollout_method == 'same':
+                action = first_action
+            elif rollout_method == 'random_same':
+                action = random_same_action
+            elif rollout_method == 'zero':
+                action = 0
+            elif rollout_method == 'accelerate':
+                if state[0][2] < 0: # If the velocity is negative, accelerate in the negative direction
+                    action = 15
+                else:               # If the velocity is positive or 0, accelerate in the positive direction
+                    action = 10
+            elif rollout_method == 'heuristic':
+                raise NotImplementedError("Heuristic rollout method not implemented")
+                
+            if not keep_nodes:
+                state, reward, done = self.env.step(state, self.env.action_space[action])
+                states.append(state)
+                rewards.append(reward)
+                dones.append(done)
+            else:
+                leaf = leaf.maybe_add_child(action)
+                state, reward, done = leaf.state, leaf.reward, leaf.done
+                
+            cumulative_reward += reward
+            is_first_action = False
+            
+        if hertg:
+            # Tack on expected cost to go to final state
+            pass
+        
+        if keep_data:
+            return cumulative_reward, states, rewards, dones
+        
+        return cumulative_reward
+    
+    def rollout_children(self, rollout_method, hertg=False, keep_nodes=True, parallel=True):
+        """ rollout all children in parallel to get the expected reward 
+            params:
+                rollout_method: The method to use for the rollout (random, same, zero, heuristic) (str)
+                    random: randomly select an action
+                    same: select the same action for all steps
+                    random_same: randomly select the same action for all steps
+                    zero: select the zero action after the first action
+                    accelerate: accelerate the car in the direction of velocity with no steering wheel input
+                    heuristic: use the highest HERTG action for all steps
+                hertg: whether to use the HERTG heuristic at the end of the rollout (bool)
+                keep_nodes: whether to keep the nodes of the rollout (bool)
+        """
+        available_methods = ['random', 'same', 'random_same', 'zero', 'accelerate', 'heuristic']
+        if rollout_method not in available_methods:
+            raise ValueError(f"Rollout method must be one of {available_methods}")
+        
+        if parallel is True:
+            pool = mp.Pool(processes=self.env.N)
+            
+            if keep_nodes:
+                partial_one_action_rollout = partial(self.one_action_rollout, rollout_method, hertg=hertg, 
+                                                     keep_nodes=False, keep_data=True)
+                rollout_results = pool.map(partial_one_action_rollout, np.arange(self.env.N))
+                
+                # Reconstruct the tree with the rollout results (can't add to tree in parallel)
+                rollout_rewards, states, rewards, dones  = zip(*rollout_results)
+                for action, (state, reward, done) in enumerate(zip(states, rewards, dones)):
+                    leaf = self
+                    for i, (s, r, d) in enumerate(zip(state, reward, done)):
+                        leaf.children[action] = MCTSNode(self.env, s, action, explore_factor=self.explore_factor,
+                                                        discount_factor=self.discount_factor, reward=r, parent=leaf, 
+                                                        done=d, parallel=self.parallel)
+                        leaf = leaf.children[action]
+                        if i == 0:
+                            leaf.is_expanded = True
+                            leaf.number_visits += 1
+            else:
+                partial_one_action_rollout = partial(self.one_action_rollout, rollout_method, hertg=hertg, 
+                                                     keep_nodes=False, keep_data=False)
+                rollout_rewards= pool.map(partial_one_action_rollout, np.arange(self.env.N))
+            
+            pool.close()
+            pool.join()
+            return rollout_rewards
+        
+        else:
+            rollout_rewards = np.zeros([self.env.N], dtype=np.float32)
+            for action in range(self.env.N):
+                rollout_rewards[action] = self.one_action_rollout(rollout_method, first_action=action, hertg=hertg, keep_nodes=keep_nodes)
+            return rollout_rewards
+        
+
+############################################################################################################
+# Helper methods for MCTS
+############################################################################################################
 def get_best_trajectory(root: MCTSNode, highest_Q=False, return_rewards=False):
     """
     Get the best action trajectory from the root node
-    :param root: the root node of the MCTS tree
-    :param highest_Q: whether to take the highest Q value action or the highest UCB action
-    :returns action_trajectory: the best action trajectory from the root node
-    :returns state_trajectory: the state trajectory of the best action trajectory
+    params:
+        root: the root node of the MCTS tree
+        highest_Q: whether to take the highest Q value action or the highest UCB action
+    returns:
+        action_trajectory: the best action trajectory from the root node
+        state_trajectory: the state trajectory of the best action trajectory
     """
     current = root
     action_trajectory = []
@@ -451,162 +482,258 @@ def get_best_trajectory(root: MCTSNode, highest_Q=False, return_rewards=False):
     
     return action_trajectory, state_trajectory
 
-class DummyNode(object):
+def get_action_subtree(root: MCTSNode, action: int):
     """
-    Dummy node class that simplifies implimentation when it is the root of the MCTS tree
+    Get the subtree of the action from the root node
+    This enables for reusing tree for next search after taking best action and applying
+    params
+        root: the root node of the MCTS tree
+        action: the action to get the subtree of
+    returns
+        subtree: the subtree of the action
     """
-    def __init__(self):
-        self.parent = None
-        self.child_total_value = collections.defaultdict(float)
-        self.child_number_visits = collections.defaultdict(float)
+    copied_root = deepcopy(root) # Copy the root node to avoid changing the original tree
+    state = copied_root.children[action].state
+    new_root = copied_root.children[action]
+    new_root_total_value = new_root.total_value     # Save root node params since we are
+    new_root_number_visits = new_root.number_visits # about to remove the parent they are stored in
+    new_root.parent = DummyNode()
+    new_root.total_value = new_root_total_value
+    new_root.number_visits = new_root_number_visits
+    new_root.is_expanded = True
+    new_state = list(state) # Convert state from tuple to list (avoid immutability)
+    new_state[3] = 1 # Set depth to one so it can be decremented and be accurate
+    new_root.state = tuple(new_state) # Convert back to tuple
 
+    def decrement_depth(node):
+        # Convert state from tuple to list (avoid immutability)
+        new_state = list(node.state)
+        new_state[3] -= 1  # Subtracting 1 from depth
+        node.state = tuple(new_state)  # Convert back to tuple
+        for child in node.children.values():
+            decrement_depth(child)
+            
+    # Remove 1 depth on each node since we removed one level from the tree
+    decrement_depth(new_root)
+    
+    return new_root
 
-def mcts_search(env: Environment, eval, starting_state: np.ndarray, learning_iterations: int=1000, explore_factor: float=1., discount_factor: float=0.9):
+############################################################################################################
+# MCTS search method currently used
+############################################################################################################
+def mcts_with_rollout(env, starting_state, learning_iterations, explore_factor, discount_factor, 
+                      rollout_method, parallel_rollout=False, start_with_root=None, hertg=False, 
+                      keep_nodes=True, max_time=None):
     """
-    Run many iterations of MCTS to build up a tree and get the best action to take
+    Run MCTS search with a rollout from each selected node
     params:
-    env: the environment to run MCTS on, class that inherits from Environment class
-    starting_state: the starting state of the search (Any)
-    learning_iterations: the number of iterations to run MCTS (int)
-
+        env: The environment to run MCTS on
+        starting_state: The starting state of the environment
+        learning_iterations: The number of learning iterations to perform
+        explore_factor: The exploration factor for the UCB selection
+        discount_factor: The discount factor for the backup
+        rollout_method: The method to use for the rollout (str)
+            random: randomly select an action
+            same: select the same action for all steps
+            random_same: randomly select the same action for all steps
+            zero: select the zero action after the first action
+            accelerate: accelerate the car in the direction of velocity with no steering wheel input
+            heuristic: use the highest HERTG action for all steps
+        parallel_rollout: If True do first rollouts for all children in parallel
+        start_with_root: If provided start with the provided root node
+        hertg: If True tack on Heuristic Expected Reward to go at end of rollout
+        keep_nodes: If True keep the rollout nodes in the tree for visualization and re-use
+        max_time: If provided, stop the search after the given time in seconds, also returns LI completed
     returns:
-    the index of the best action to take (int)
-    the root node of the MCTS tree (MCTSNode)
+        The root node of the MCTS tree
     """
-    root = MCTSNode(env, starting_state, action=None, parent=DummyNode(), explore_factor=explore_factor, discount_factor=discount_factor)
-    for _ in range(learning_iterations):
-        leaf = root.select_leaf() # Select with UCB up to the leaf node and do one environment step
-        
-        # Add the transition to the replay buffer for training (except for the root node)
-        # child_priors, value_estimate = eval.inference(leaf.state) # Inference the model to get the probability of each action and the value estimate
-        child_priors, value_estimate = np.ones([env.N]) / env.N, 0. # Even probability for each action for testing and no expected reward to go
-        
-        leaf.expand(child_priors) # Expand the leaf node with the child priors
-        leaf.backup(value_estimate) # Backup the value estimate up the tree to the root node
-        
-        # eval.optimize_model() # Optimize the model using replay memory which we just added one transition to
-
-    # Return the action with the most visits and the root node
-    return env.action_space[np.argmax(root.child_number_visits)], root
-
-def one_action_mcts(action, learning_iterations=30):
-    root = MCTSNode(env, starting_state, action=None, explore_factor=explore_factor, 
-                    discount_factor=discount_factor, parent=DummyNode())
-    root.maybe_add_child(action)
-    action_root = root.children[action]
-    
-    for i in range(learning_iterations):
-        leaf = action_root.select_leaf() # Select with UCB up to the leaf node and do one environment step
-        
-        # Add the transition to the replay buffer for training (except for the root node)
-        # child_priors, value_estimate = eval.inference(leaf.state) # Inference the model to get the probability of each action and the value estimate
-        child_priors, value_estimate = np.ones([env.N]) / env.N, 0. # Even probability for each action for testing and no expected reward to go
-        
-        leaf.expand(child_priors) # Expand the leaf node with the child priors
-        leaf.backup(value_estimate) # Backup the value estimate up the tree to the root node
-        
-    return action_root.Q + action_root.U, action_root
-
-def init_worker(global_env, global_starting_state):
-    global env
-    global starting_state
-    env = global_env
-    starting_state = global_starting_state
-
-def parallel_mcts(action_space, env, starting_state):
-    """
-    Parallelizes the MCTS using multiprocessing.Pool.
-    """
-    pool = mp.Pool(processes=len(action_space), initializer=init_worker, initargs=(env, starting_state,))
-    
     start_time = timeit.default_timer()
     
-    # Distribute the actions to processes
-    results = pool.map(one_action_mcts, np.arange(len(action_space)), chunksize=1)
+    # Start with a root node if provided or make a new one
+    if start_with_root is None:
+        root = MCTSNode(env, starting_state, action=None, parent=DummyNode(), explore_factor=explore_factor, discount_factor=discount_factor)
+    else:
+        root = start_with_root
+        
+    # Expand the root node to prevent first search from doing nothing
+    root.is_expanded = True
     
-    pool.close()
-    pool.join()
-    
-    print(timeit.default_timer() - start_time)
-    
-    # Find the action with the best value
-    best_action, best_value = max(results, key=lambda x: x[1])
-    
-    return best_action, best_value
+    # If enabled do first rollouts for all children in parallel
+    if parallel_rollout:
+        rollout_rewards = root.rollout_children(rollout_method, hertg=hertg, keep_nodes=keep_nodes, parallel=False)
+        root.child_total_value = np.array(rollout_rewards) # Set the total value of the root node to the rollout rewards
+        root.number_visits = env.N # Set the number of visits to the number of rollouts
+        
+    # Do the learning iterations
+    for i in range(learning_iterations):
+        leaf = root.select_leaf() # Select with UCB up to the leaf node and do one environment step
+        
+        # Handle getting same action for rollouts
+        if rollout_method == 'same':
+            first_action = leaf.action
+        else:
+            first_action = None
+        
+        # Do a rollout from the leaf node to get estimated value
+        rollout_reward = leaf.one_action_rollout(rollout_method, first_action=first_action, hertg=hertg, keep_nodes=keep_nodes)
+        
+        leaf.is_expanded = True # Mark the leaf node as expanded
+        leaf.backup(rollout_reward) # Backup the best rollout reward to the root node
 
-def create_shared_array(shape, dtype=ctypes.c_float):
-    """
-    Create a shared array with the given shape and dtype for parallel MCTS
-    """
-    shared_array_base = mpArray(dtype, int(np.prod(shape)))
-    shared_array = np.ctypeslib.as_array(shared_array_base.get_obj())
-    return shared_array.reshape(shape), shared_array_base
+        # If max time is provided, check if we have exceeded the time
+        if max_time is not None:
+            if timeit.default_timer() - start_time > max_time:
+                return root, i+1 # Return the root node and the number of learning iterations completed
+        
+    if max_time is not None:
+        return root, learning_iterations
+    return root
 
-def mcts_worker(env: Environment, root_mcts_node: MCTSNode, output_queue: mp.Queue):
-    """
-    Worker function for running MCTS in parallel.
-    
-    params:
-    env: the environment to run MCTS on, class that inherits from Environment class
-    root_mcts_node: the root node of the MCTS tree, which we are starting the search from
-    output_queue: the queue to put the tree additions into
-    """
-    
-    # Run stages of MCTS until we create a new leaf node
-    leaf, path = root_mcts_node.select_leaf(return_path=True)
-    child_priors, value_estimate = env.evaluate(leaf.state)
-    
-    # Place the node parameters into the queue
-    leaf_parameters = (path, leaf.state, leaf.action, child_priors, value_estimate)
-    output_queue.put(leaf_parameters)
+############################################################################################################
+# Old Alpha go zero style MCTS search method
+############################################################################################################
+# def mcts_search(env: Environment, eval, starting_state: np.ndarray, learning_iterations: int=1000, explore_factor: float=1., discount_factor: float=0.9):
+#     """
+#     Run many iterations of MCTS to build up a tree and get the best action to take
+#     params:
+#     env: the environment to run MCTS on, class that inherits from Environment class
+#     starting_state: the starting state of the search (Any)
+#     learning_iterations: the number of iterations to run MCTS (int)
 
-def parallel_mcts_search(env: Environment, starting_state: np.ndarray, learning_iterations: int, num_processes: int):
-    """
-    Run many iterations of MCTS to build up a tree and get the best action to take in parallel
-    params:
-    env: the environment to run MCTS on, class that inherits from Environment class
-    starting_state: the starting state of the search (Any)
-    learning_iterations: the number of iterations to run MCTS (int)
-    
-    returns:
-    the index of the best action to take (int)
-    the root node of the MCTS tree (MCTSNode)
-    """
-    root = MCTSNode(env, starting_state, action=None, parent=DummyNode(), parallel=True)
-    output_queue = mp.Queue()
-    
-    for _ in range(learning_iterations // num_processes):
-        processes = []
-        for _ in range(num_processes):
-            p = mp.Process(target=mcts_worker, args=(env, root, output_queue))
-            processes.append(p)
-            p.start()
+#     returns:
+#     the index of the best action to take (int)
+#     the root node of the MCTS tree (MCTSNode)
+#     """
+#     root = MCTSNode(env, starting_state, action=None, parent=DummyNode(), explore_factor=explore_factor, discount_factor=discount_factor)
+#     for _ in range(learning_iterations):
+#         leaf = root.select_leaf() # Select with UCB up to the leaf node and do one environment step
+        
+#         # Add the transition to the replay buffer for training (except for the root node)
+#         # child_priors, value_estimate = eval.inference(leaf.state) # Inference the model to get the probability of each action and the value estimate
+#         child_priors, value_estimate = np.ones([env.N]) / env.N, 0. # Even probability for each action for testing and no expected reward to go
+        
+#         leaf.expand(child_priors) # Expand the leaf node with the child priors
+#         leaf.backup(value_estimate) # Backup the value estimate up the tree to the root node
+        
+#         # eval.optimize_model() # Optimize the model using replay memory which we just added one transition to
 
-        for p in processes:
-            p.join()
+#     # Return the action with the most visits and the root node
+#     return env.action_space[np.argmax(root.child_number_visits)], root
+
+############################################################################################################
+# Parallel Methods which were not finished
+############################################################################################################
+# def one_action_mcts(action, learning_iterations=30):
+#     root = MCTSNode(env, starting_state, action=None, explore_factor=1., 
+#                     discount_factor=0.9, parent=DummyNode())
+#     root.maybe_add_child(action)
+#     action_root = root.children[action]
+    
+#     for i in range(learning_iterations):
+#         leaf = action_root.select_leaf() # Select with UCB up to the leaf node and do one environment step
+        
+#         # Add the transition to the replay buffer for training (except for the root node)
+#         # child_priors, value_estimate = eval.inference(leaf.state) # Inference the model to get the probability of each action and the value estimate
+#         child_priors, value_estimate = np.ones([env.N]) / env.N, 0. # Even probability for each action for testing and no expected reward to go
+        
+#         leaf.expand(child_priors) # Expand the leaf node with the child priors
+#         leaf.backup(value_estimate) # Backup the value estimate up the tree to the root node
+        
+#     return action_root.Q + action_root.U, action_root
+
+# def init_worker(global_env, global_starting_state):
+#     global env
+#     global starting_state
+#     env = global_env
+#     starting_state = global_starting_state
+
+# def parallel_mcts(action_space, env, starting_state):
+#     """
+#     Parallelizes the MCTS using multiprocessing.Pool.
+#     """
+#     pool = mp.Pool(processes=len(action_space), initializer=init_worker, initargs=(env, starting_state,))
+    
+#     start_time = timeit.default_timer()
+    
+#     # Distribute the actions to processes
+#     results = pool.map(one_action_mcts, np.arange(len(action_space)), chunksize=1)
+    
+#     pool.close()
+#     pool.join()
+    
+#     print(timeit.default_timer() - start_time)
+    
+#     # Find the action with the best value
+#     best_action, best_value = max(results, key=lambda x: x[1])
+    
+#     return best_action, best_value
+
+# def create_shared_array(shape, dtype=ctypes.c_float):
+#     """
+#     Create a shared array with the given shape and dtype for parallel MCTS
+#     """
+#     shared_array_base = mpArray(dtype, int(np.prod(shape)))
+#     shared_array = np.ctypeslib.as_array(shared_array_base.get_obj())
+#     return shared_array.reshape(shape), shared_array_base
+
+# Part of unfinished full parallel MCTS
+# def mcts_worker(env: Environment, root_mcts_node: MCTSNode, output_queue: mp.Queue):
+#     """
+#     Worker function for running MCTS in parallel.
+    
+#     params:
+#     env: the environment to run MCTS on, class that inherits from Environment class
+#     root_mcts_node: the root node of the MCTS tree, which we are starting the search from
+#     output_queue: the queue to put the tree additions into
+#     """
+    
+#     # Run stages of MCTS until we create a new leaf node
+#     leaf, path = root_mcts_node.select_leaf(return_path=True)
+#     child_priors, value_estimate = env.evaluate(leaf.state)
+    
+#     # Place the node parameters into the queue
+#     leaf_parameters = (path, leaf.state, leaf.action, child_priors, value_estimate)
+#     output_queue.put(leaf_parameters)
+
+# Not tested fully, not usable without more work
+# def parallel_mcts_search(env: Environment, starting_state: np.ndarray, learning_iterations: int, num_processes: int):
+#     """
+#     Run many iterations of MCTS to build up a tree and get the best action to take in parallel
+#     params:
+#     env: the environment to run MCTS on, class that inherits from Environment class
+#     starting_state: the starting state of the search (Any)
+#     learning_iterations: the number of iterations to run MCTS (int)
+    
+#     returns:
+#     the index of the best action to take (int)
+#     the root node of the MCTS tree (MCTSNode)
+#     """
+#     root = MCTSNode(env, starting_state, action=None, parent=DummyNode(), parallel=True)
+#     output_queue = mp.Queue()
+    
+#     for _ in range(learning_iterations // num_processes):
+#         processes = []
+#         for _ in range(num_processes):
+#             p = mp.Process(target=mcts_worker, args=(env, root, output_queue))
+#             processes.append(p)
+#             p.start()
+
+#         for p in processes:
+#             p.join()
             
-            # Get the parameters to create a new leaf node
-            path, state, action, child_priors, value_estimate = output_queue.get()
+#             # Get the parameters to create a new leaf node
+#             path, state, action, child_priors, value_estimate = output_queue.get()
 
-            # Recreate the leaf node
-            leaf = MCTSNode(env, state, action, parallel=True)
+#             # Recreate the leaf node
+#             leaf = MCTSNode(env, state, action, parallel=True)
             
-            # Add the leaf node using the path of actions (If path is empty, leaf is the root node, no need to add)
-            current = root
-            for action in path:
-                current = current.maybe_add_child(action, insert_leaf=leaf)
+#             # Add the leaf node using the path of actions (If path is empty, leaf is the root node, no need to add)
+#             current = root
+#             for action in path:
+#                 current = current.maybe_add_child(action, insert_leaf=leaf)
                 
-            # Expand node with priors and backup value estimate
-            current.expand(child_priors)
-            current.backup(value_estimate)
+#             # Expand node with priors and backup value estimate
+#             current.expand(child_priors)
+#             current.backup(value_estimate)
 
-    return np.argmax(root.child_number_visits), root
-
-def test_picklable(obj):
-    try:
-        pickle.dumps(obj)
-        print('Picklable')
-    except pickle.PicklingError as e:
-        print(f'PicklingError: {e}')
-    except TypeError as e:
-        print(f'TypeError: {e}')
+#     return np.argmax(root.child_number_visits), root

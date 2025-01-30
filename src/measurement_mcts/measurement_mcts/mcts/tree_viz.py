@@ -68,8 +68,8 @@ def add_nodes_and_edges_pyvis(node, net, action_space, parent_hash=None, show_un
                 "Reward: " + " " + str(np.around(node.reward, 2)) + "\n" + \
                 "Q value: " + " " + str(np.around(node.parent.child_Q()[node.action], 2)) + "\n" + \
                 "U value: " + " " + str(np.around(node.parent.child_U()[node.action], 2)) + "\n" + \
+                "Q+U value: " + " " + str(np.around(node.parent.child_Q()[node.action]+node.parent.child_U()[node.action], 2)) + "\n" + \
                 "is_expanded: " + " " + str(node.is_expanded) + "\n" + \
-                "Total Value: " + " " + str(np.around(node.total_value, 2)) + "\n" + \
                 "Visit count: " + " " + str(np.around(node.number_visits, 2)) + "\n" + \
                 "Depth: " + " " + str(horizon_step)
 
@@ -154,7 +154,7 @@ def add_nodes_and_edges_pyvis(node, net, action_space, parent_hash=None, show_un
     # for child in node.children.values():
     #     add_nodes_and_edges_pyvis(child, net, node_hash)
 
-def render_pyvis(root, action_space, show_unsimulated=True, show_unexpanded=True):
+def render_pyvis(root, action_space, show_unsimulated=True, show_unexpanded=True, filename="tree_visualization"):
     net = Network(height="1200px", width="100%", directed=True)
     net.force_atlas_2based()
     add_nodes_and_edges_pyvis(root, net, action_space, show_unsimulated=show_unsimulated, show_unexpanded=show_unexpanded)
@@ -182,7 +182,7 @@ def render_pyvis(root, action_space, show_unsimulated=True, show_unexpanded=True
     net.set_options(options_json)
     
     # Save and open the network graph in a browser
-    net.save_graph("tree_visualization.html")
+    net.save_graph(f'{filename}.html')
 
     # Add JavaScript code to the HTML file to handle node click events
     javascript_code = """
