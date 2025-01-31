@@ -26,7 +26,7 @@ class MeasurementControlEnvironment(Environment):
         self.init_covariance_diag = 8. # Initial diagonal value for all diagonals of (2x2) point covariance matrix
         self.explored_cell_reward = 0.00001 # reward for exploring a cell
         self.horizon_length = 10 # length of the horizon for the environment
-        car_collision_radius = 3.5 # Collision radius of the car
+        self.car_collision_radius = 3.5 # Collision radius of the car
         
         # Sensor parameters used in Object Manager for observation simulation and minimums for the measurement model
         sensor_min_range = 5. # minimum range for sensor model
@@ -37,9 +37,9 @@ class MeasurementControlEnvironment(Environment):
         obs_bearing_dev = 0.2 # standard deviation for the bearing scaling of measurement model
         
         # Action space parameters
-        long_acc_options = np.array([-1., -0.5, 0., 0.5, 1.]) # options for longitudinal acceleration (scaled from [-1, 1] to vehicle [-max_acc, max_acc])
-        steering_acc_options = np.array([-1., -0.25, 0., 0.25, 1.]) # options for steering acceleration (scaled from [-1, 1] to vehicle [-max_steering_alpha, max_steering_alpha])
-        action_space = np.array(np.meshgrid(long_acc_options, steering_acc_options)).T.reshape(-1, 2) # Generate all combinations using the Cartesian product of the two action spaces
+        self.long_acc_options = np.array([-1., -0.5, 0., 0.5, 1.]) # options for longitudinal acceleration (scaled from [-1, 1] to vehicle [-max_acc, max_acc])
+        self.steering_acc_options = np.array([-1., -0.25, 0., 0.25, 1.]) # options for steering acceleration (scaled from [-1, 1] to vehicle [-max_steering_alpha, max_steering_alpha])
+        action_space = np.array(np.meshgrid(self.long_acc_options, self.steering_acc_options)).T.reshape(-1, 2) # Generate all combinations using the Cartesian product of the two action spaces
         zero_action = np.array([0.0, 0.0]) # Move the zero action to the front of the list (this is the default action)
         zero_action_index = np.where(np.all(action_space == zero_action, axis=1))[0][0]
         self.action_space = np.concatenate((action_space[zero_action_index:], action_space[:zero_action_index]))
@@ -67,7 +67,7 @@ class MeasurementControlEnvironment(Environment):
         self.init_covariance_trace = self.num_oois * 4 * 2 * self.init_covariance_diag # Total trace available, makes trace based rewards normalized to [0, 1]
         init_center_stddev = 1. # Standard deviation for the center guess for estimator initialization
         init_width_guess = 5. # Initial guess for the width of the object
-        self.object_manager = ObjectManager(self.num_obstacles, self.num_occlusions, self.num_oois, car_collision_radius, 
+        self.object_manager = ObjectManager(self.num_obstacles, self.num_occlusions, self.num_oois, self.car_collision_radius, 
                                             sensor_max_range, sensor_max_bearing, object_bounds=object_bounds,
                                             size_bounds=object_size_bounds, ooi_size_bounds=ooi_size_bounds,
                                             init_covariance_diag=self.init_covariance_diag, ui=self.ui,
@@ -384,10 +384,7 @@ class MeasurementControlEnvironment(Environment):
             print(f'Total Reward: {reward}')
         
         # Check if the episode is done
-        total_trace = 0
-        for ooi_idx in range(self.num_oois):
-            for c_idx in range(4):
-                total_trace += np.trace(new_ooi_covs[ooi_idx, c_idx])
+        total_trace = np.sum(np.trace(new_ooi_covs, axis1=2, axis2=3))
         done = total_trace < self.final_cov_trace
         
         # Also done if horizon is equal to the maximum horizon length
