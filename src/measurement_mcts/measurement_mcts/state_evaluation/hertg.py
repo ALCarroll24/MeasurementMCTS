@@ -1,7 +1,7 @@
 import numpy as np
 from measurement_mcts.utils.utils import wrap_angle, min_max_normalize, rotate_about_point, angle_difference
 
-def get_hertg_target_point(state, env, dist_weight=0.1, bearing_weight=1, lookahead_distance=15, ooi_circle_space=15, ui=None):
+def get_hertg_target_point(state, env, dist_weight=0.1, bearing_weight=1, lookahead_distance=15, ooi_circle_space=4, ui=None):
     # Pull out state elements
     car_state, ooi_means, ooi_covs, horizon = state
     car_pos, car_yaw = car_state[:2], car_state[3]
@@ -27,35 +27,47 @@ def get_hertg_target_point(state, env, dist_weight=0.1, bearing_weight=1, lookah
     
     # Project the target point from car to best ooi
     best_ooi_center = ooi_centers[best_ooi_idx]
-    car_to_ooi = best_ooi_center - car_pos
-    car_to_ooi_norm = np.linalg.norm(car_to_ooi)
-    unit_car_to_ooi = car_to_ooi / car_to_ooi_norm
+    car_to_best_ooi = best_ooi_center - car_pos
+    car_to_best_ooi_norm = np.linalg.norm(car_to_best_ooi)
+    unit_car_to_best_ooi = car_to_best_ooi / car_to_best_ooi_norm
     
     # Cap the lookahead distance to the distance to the best ooi
-    lookahead_distance = min(lookahead_distance, car_to_ooi_norm)
-    target_point = car_pos + lookahead_distance * unit_car_to_ooi
+    lookahead_distance = min(lookahead_distance, car_to_best_ooi_norm)
+    target_point = car_pos + lookahead_distance * unit_car_to_best_ooi
+    
+    # Now to check for collision calculate the radius of each ooi and model as a circle
+    ooi_radii = np.linalg.norm(ooi_means - ooi_centers[:, None], axis=2)
+    ooi_max_radii = np.max(ooi_radii, axis=1)
     
     # Check if the target point is near an ooi circle
-    target_point_near_ooi = np.linalg.norm(target_point - ooi_centers, axis=1) < ooi_circle_space
-    
+    target_point_near_ooi = np.linalg.norm(target_point - ooi_centers, axis=1) < ooi_max_radii + ooi_circle_space
+    print(target_point_near_ooi)
     # Get indices where true
     near_ooi_indices = np.where(target_point_near_ooi)[0]
+    
+    # Angle to iterate with
+    angle_iter = np.radians(5)
     
     if len(near_ooi_indices) > 1:
         raise ValueError('Multiple OOIs near target point')
     elif len(near_ooi_indices) == 1:
-        # Rotate target point around car to avoid ooi
-        angle = np.abs(np.arctan2(ooi_circle_space, car_to_center_dists[near_ooi_indices[0]]))
-        
-        # Pick direction based on car heading relative to ooi
+        print('Near OOI')        
+        # Pick direction to rotate around based on car heading relative to ooi
         car_to_close_ooi = ooi_centers[near_ooi_indices[0]] - car_pos
         car_to_ooi_angle = np.arctan2(car_to_close_ooi[1], car_to_close_ooi[0])
         angle_diff = angle_difference(car_to_ooi_angle, car_yaw)
         if angle_diff > 0:
-            angle = -angle
+            angle_direction = -1
+        else:
+            angle_direction = 1
         
-        # Rotate target point around car
-        target_point = rotate_about_point(target_point, angle, car_pos)
+        # First place the target_point on the ooi circle
+        unit_car_to_close_ooi = car_to_close_ooi / np.linalg.norm(car_to_close_ooi)
+        target_point = ooi_centers[near_ooi_indices[0]] + (ooi_circle_space + ooi_max_radii[near_ooi_indices[0]]) * -unit_car_to_close_ooi
+        
+        # Rotate target point around ooi circle until the distance from car to target point is greater than lookahead
+        while np.linalg.norm(target_point - car_pos) < lookahead_distance:
+            target_point = rotate_about_point(target_point, angle_direction * angle_iter, ooi_centers[near_ooi_indices[0]])
         
         if ui is not None:
             ui.draw_point(target_point, 'green', radius=0.25)
@@ -72,9 +84,11 @@ def get_hertg_target_point(state, env, dist_weight=0.1, bearing_weight=1, lookah
     if len(collision_indices) > 1:
         raise ValueError('Multiple obstacles/occlusions near target point')
     elif len(collision_indices) == 1:
+        print('Inside Obstacle/Occlusion')
         # Rotate target point around car to avoid obstacle
         car_to_obs_dist = np.linalg.norm(obs_means[collision_indices[0]] - car_pos)
-        angle = np.abs(np.arctan2(obs_radii[collision_indices[0]] + env.car_collision_radius, car_to_obs_dist))
+        # angle = np.abs(np.arctan2(obs_radii[collision_indices[0]] + env.car_collision_radius, car_to_obs_dist))
+        push_distance = obs_radii[collision_indices[0]] + env.car_collision_radius - target_point_to_obs_dists[collision_indices[0]]
         
         # Pick direction based on target_point heading relative to obstacle
         car_to_close_obs = obs_means[collision_indices[0]] - car_pos
@@ -83,20 +97,19 @@ def get_hertg_target_point(state, env, dist_weight=0.1, bearing_weight=1, lookah
         car_to_target_point_angle = np.arctan2(car_to_target_point[1], car_to_target_point[0])
         angle_diff = angle_difference(car_to_obs_angle, car_to_target_point_angle)
         if angle_diff < 0:
-            angle = -angle
+            # angle = -angle
+            car_perpendicular_unit = np.array([np.cos(car_yaw + np.pi/2), np.sin(car_yaw + np.pi/2)])
+        else:
+            car_perpendicular_unit = np.array([np.cos(car_yaw - np.pi/2), np.sin(car_yaw - np.pi/2)])
         
         # Rotate target point around car
-        target_point = rotate_about_point(target_point, angle, car_pos)
+        # target_point = rotate_about_point(target_point, angle, car_pos)
+        target_point = target_point + push_distance * car_perpendicular_unit
         
         if ui is not None:
             ui.draw_point(target_point, 'green', radius=0.25)
             
         return target_point
-
-    if ui is not None:
-        ui.draw_point(target_point, 'green', radius=0.25)
-        
-    return target_point
 
     if ui is not None:
         ui.draw_point(target_point, 'green', radius=0.25)
