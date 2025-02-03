@@ -60,7 +60,7 @@ class ObjectManager:
         self.size_bounds = size_bounds
         self.ooi_size_bounds = ooi_size_bounds
         self.bounding_box_buffer = 5.0  # Buffer in sensor area checks
-        self.object_min_spacing = 6.0   # Spacing to prevent object overlap
+        self.object_min_spacing = 10.0   # Spacing to prevent object overlap
         
         # Noisy initialization parameters
         self.init_covariance_diag = init_covariance_diag
