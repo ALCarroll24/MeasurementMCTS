@@ -20,11 +20,10 @@ from measurement_mcts.environment.exploration_grid import ExplorationGrid
 class MeasurementControlEnvironment(Environment):
     def __init__(self, init_reset=True, interactive=False):
         # General important parameters
-        self.final_cov_trace = 0.03 # Covariance trace threshold for stopping the episode (normalized from (0, initial trace)-> (0, 1))
         self.simulation_dt = 0.6 # time step size for forward simulation search
         self.obstacle_punishment = -10. # reward for colliding with an obstacle
         self.init_covariance_diag = 8. # Initial diagonal value for all diagonals of (2x2) point covariance matrix
-        self.explored_cell_reward = 0.00001 # reward for exploring a cell
+        self.fully_observered_corner_reward = 0.5 # reward for fully observing a corner
         self.horizon_length = 10 # length of the horizon for the environment
         self.car_collision_radius = 3.5 # Collision radius of the car
         
@@ -61,18 +60,23 @@ class MeasurementControlEnvironment(Environment):
         object_bounds = np.array([15, 85]) # Bounds for random object generation
         object_size_bounds = np.array([2, 7]) # Bounds for random object size generation
         ooi_size_bounds = np.array([3, 12]) # Bounds for random OOI size generation
-        
+        bounding_box_buffer = 5 # (m) Buffer in sensor area checks
+        object_min_spacing = 10 # (m) Spacing to prevent object overlap
         
         # Parameters for estimation and noise observations
         self.init_covariance_trace = self.num_oois * 4 * 2 * self.init_covariance_diag # Total trace available, makes trace based rewards normalized to [0, 1]
+        self.final_corner_cov_trace = 0.2 * 2 # (m) Covariance trace threshold for each corner to consider fully observed
+        self.final_cov_trace = self.final_corner_cov_trace * 4 * self.num_oois # Covariance trace threshold for all corners to consider fully observed
         init_center_stddev = 1. # Standard deviation for the center guess for estimator initialization
         init_width_guess = 5. # Initial guess for the width of the object
         self.object_manager = ObjectManager(self.num_obstacles, self.num_occlusions, self.num_oois, self.car_collision_radius, 
                                             sensor_max_range, sensor_max_bearing, object_bounds=object_bounds,
                                             size_bounds=object_size_bounds, ooi_size_bounds=ooi_size_bounds,
+                                            bounding_box_buffer=bounding_box_buffer, object_min_spacing=object_min_spacing,
                                             init_covariance_diag=self.init_covariance_diag, ui=self.ui,
                                             init_center_stddev=init_center_stddev, init_width_guess=init_width_guess,
-                                            range_stddev=obs_range_dev, bearing_stddev=obs_bearing_dev)
+                                            range_stddev=obs_range_dev, bearing_stddev=obs_bearing_dev,
+                                            final_corner_covariance=self.final_corner_cov_trace)
         
         # Create a Static 2d Kalman Filter object
         range_dev = 1. # standard deviation for the range scaling of measurement model
@@ -322,6 +326,7 @@ class MeasurementControlEnvironment(Environment):
         
         # Apply the KF update to the observed corners
         trace_delta_sum = 0. # Sum of the difference in trace made in this update
+        fully_observed_corners = 0 # Number of corners that become fully observed
         for ooi_idx, corner_indices in observation_indices.items():
             
             # Go through the indeces of the OOI points that were observed
@@ -331,13 +336,24 @@ class MeasurementControlEnvironment(Environment):
                 
                 new_mean, new_cov = self.skf.update(ooi_means[ooi_idx][c_idx], ooi_covs[ooi_idx][c_idx], observation[ooi_idx][j], car_state)
                     
-                trace_delta_sum += prev_trace - np.trace(new_cov) # Add the difference in trace to the sum
+                # Check if the trace of the covariance is already below the threshold
+                if prev_trace < self.final_corner_cov_trace:
+                    pass # No reward for already fully observed corners
+                
+                # Check if the trace of the covariance is below the threshold after the update
+                elif np.trace(new_cov) < self.final_corner_cov_trace:
+                    trace_delta_sum += prev_trace - self.final_corner_cov_trace # Add the difference in trace to the sum
+                    fully_observed_corners += 1 # Increment the number of fully observed corners
+                    
+                # Otherwise normal trace update
+                else:
+                    trace_delta_sum += prev_trace - np.trace(new_cov) # Add the difference in trace to the sum
                 
                 # Place the new mean and covariance into the copied means and covs
                 new_ooi_means[ooi_idx][c_idx] = new_mean
                 new_ooi_covs[ooi_idx][c_idx] = new_cov
             
-        return new_ooi_means, new_ooi_covs, trace_delta_sum
+        return new_ooi_means, new_ooi_covs, trace_delta_sum, fully_observed_corners
     
     def step(self, state, action, dt=None, print_rewards=False, return_observation=False) -> Tuple[tuple, float, bool]:
         """
@@ -368,14 +384,15 @@ class MeasurementControlEnvironment(Environment):
         observation_indices, noisy_observation = self.object_manager.get_noisy_observation(new_car_state)
         
         # Apply the observation and get sum of the trace differences and the new object dataframe
-        new_ooi_means, new_ooi_covs, trace_delta_sum = self.apply_observation(observation_indices, noisy_observation, 
-                                                                              new_car_state, ooi_means, ooi_covs)
+        new_ooi_means, new_ooi_covs, trace_delta_sum, fully_observed_corners = \
+        self.apply_observation(observation_indices, noisy_observation, new_car_state, ooi_means, ooi_covs)
 
         # Calculate rewards
         num_in_collision = len(in_collision_obs) + len(in_collision_ocl) + len(in_collision_oois) # Number of objects in collision
         obstacle_reward = num_in_collision * self.obstacle_punishment  # Reward for colliding with obstacles
         trace_delta_reward = min_max_normalize(trace_delta_sum, 0, self.init_covariance_trace) # Reward for reducing covariance trace
-        reward = obstacle_reward + trace_delta_reward # Total reward is sum of all rewards
+        fully_observed_reward = fully_observed_corners * self.fully_observered_corner_reward # Reward for fully observing a corner
+        reward = obstacle_reward + trace_delta_reward + fully_observed_reward # Total reward is sum of all rewards
         
         # Print rewards if enabled
         if print_rewards:

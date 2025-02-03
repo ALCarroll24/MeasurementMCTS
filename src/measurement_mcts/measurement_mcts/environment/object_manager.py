@@ -41,15 +41,17 @@ class ObjectManager:
         car_collision_radius: float,
         car_sensor_range: float, 
         car_max_bearing: float, 
-        df=None,
         object_bounds: np.ndarray = np.array([15, 85]),
         size_bounds: np.ndarray   = np.array([1.0, 10.0]),
         ooi_size_bounds: np.ndarray = np.array([1.0, 10.0]),
+        bounding_box_buffer: float = 5.0,
+        object_min_spacing: float = 10.0,
         init_covariance_diag: float = 8,
         init_center_stddev: float = 5.0,
         init_width_guess: float = 5.0,
         range_stddev: float = 1.0,
         bearing_stddev: float = 0.1,
+        final_corner_covariance: float = 0.4,
         ui=None
     ):
         # Random object generation parameters
@@ -59,8 +61,8 @@ class ObjectManager:
         self.object_bounds = object_bounds
         self.size_bounds = size_bounds
         self.ooi_size_bounds = ooi_size_bounds
-        self.bounding_box_buffer = 5.0  # Buffer in sensor area checks
-        self.object_min_spacing = 10.0   # Spacing to prevent object overlap
+        self.bounding_box_buffer = bounding_box_buffer  # Buffer in sensor area checks
+        self.object_min_spacing = object_min_spacing   # Spacing to prevent object overlap
         
         # Noisy initialization parameters
         self.init_covariance_diag = init_covariance_diag
@@ -75,6 +77,7 @@ class ObjectManager:
         self.car_collision_radius = car_collision_radius
         self.car_sensor_range = car_sensor_range
         self.car_max_bearing = car_max_bearing
+        self.final_corner_covariance = final_corner_covariance # Covariance for completed corner for drawing
         self.ui = ui
         
         # --- New data structures: arrays instead of a DataFrame ---
@@ -131,16 +134,10 @@ class ObjectManager:
     
     def reset(self, car_state):
         """
-        Generates obstacles, occlusions, and OOIs, ensuring none overlap
-        each other or the car. Stores them in the class NumPy arrays.
-        
-        :param car_state: [x, y, theta] of the car
+        Generates obstacles, occlusions, and OOIs with retries if placement fails.
         """
-        # For overlap checks, keep a list of (mean, radius).
-        # Start with the car (so we don't spawn into the car).
-        placed_objects = [
-            (np.array(car_state[0:2]), self.car_collision_radius)
-        ]
+        max_restarts = 100  # Maximum restarts for the entire process
+        max_attempts_per_object = 1000  # Maximum attempts per object placement
 
         def is_overlapping(mean, radius, existing_objs):
             """Check if (mean, radius) overlaps with any item in existing_objs."""
@@ -149,58 +146,88 @@ class ObjectManager:
                 if dist < (radius + obj_radius + self.object_min_spacing):
                     return True
             return False
-        
-        # --- Generate obstacles (circular) ---
-        for i in range(self.num_obstacles):
-            while True:
-                mean = np.random.uniform(self.object_bounds[0], self.object_bounds[1], size=2)
-                radius = np.random.uniform(self.size_bounds[0], self.size_bounds[1])
-                if not is_overlapping(mean, radius, placed_objects):
-                    # Store in class arrays
-                    self.obstacle_means[i, :] = mean
-                    self.obstacle_radii[i] = radius
-                    # Add to global "placed_objects" so future spawns avoid overlap
-                    placed_objects.append((mean, radius))
+
+        for _ in range(max_restarts):
+            # Reset placed_objects on each restart
+            placed_objects = [
+                (np.array(car_state[0:2]), self.car_collision_radius)
+            ]
+
+            # --- Generate obstacles ---
+            obstacle_success = True
+            for i in range(self.num_obstacles):
+                attempts = 0
+                while True:
+                    attempts += 1
+                    if attempts > max_attempts_per_object:
+                        obstacle_success = False
+                        break  # Exit while loop
+                    mean = np.random.uniform(self.object_bounds[0], self.object_bounds[1], size=2)
+                    radius = np.random.uniform(self.size_bounds[0], self.size_bounds[1])
+                    if not is_overlapping(mean, radius, placed_objects):
+                        self.obstacle_means[i, :] = mean
+                        self.obstacle_radii[i] = radius
+                        placed_objects.append((mean, radius))
+                        break
+                if not obstacle_success:
+                    break  # Exit obstacle loop to restart
+            if not obstacle_success:
+                continue  # Restart the entire process
+
+            # --- Generate occlusions ---
+            occlusion_success = True
+            for i in range(self.num_occlusion):
+                attempts = 0
+                while True:
+                    attempts += 1
+                    if attempts > max_attempts_per_object:
+                        occlusion_success = False
+                        break
+                    mean = np.random.uniform(self.object_bounds[0], self.object_bounds[1], size=2)
+                    radius = np.random.uniform(self.size_bounds[0], self.size_bounds[1])
+                    if not is_overlapping(mean, radius, placed_objects):
+                        self.occlusion_means[i, :] = mean
+                        self.occlusion_radii[i] = radius
+                        placed_objects.append((mean, radius))
+                        break
+                if not occlusion_success:
                     break
-        
-        # --- Generate occlusions (circular) ---
-        for i in range(self.num_occlusion):
-            while True:
-                mean = np.random.uniform(self.object_bounds[0], self.object_bounds[1], size=2)
-                radius = np.random.uniform(self.size_bounds[0], self.size_bounds[1])
-                if not is_overlapping(mean, radius, placed_objects):
-                    self.occlusion_means[i, :] = mean
-                    self.occlusion_radii[i] = radius
-                    placed_objects.append((mean, radius))
+            if not occlusion_success:
+                continue
+
+            # --- Generate OOIs ---
+            ooi_success = True
+            for i in range(self.num_oois):
+                attempts = 0
+                while True:
+                    attempts += 1
+                    if attempts > max_attempts_per_object:
+                        ooi_success = False
+                        break
+                    mean = np.random.uniform(self.object_bounds[0], self.object_bounds[1], size=2)
+                    length_width = np.random.uniform(self.ooi_size_bounds[0], self.ooi_size_bounds[1], size=2)
+                    corners = np.array([
+                        mean + np.array([-length_width[0]/2, -length_width[1]/2]),
+                        mean + np.array([ length_width[0]/2, -length_width[1]/2]),
+                        mean + np.array([ length_width[0]/2,  length_width[1]/2]),
+                        mean + np.array([-length_width[0]/2,  length_width[1]/2])
+                    ])
+                    max_radius = 0.5 * np.linalg.norm(length_width)
+                    if not is_overlapping(mean, max_radius, placed_objects):
+                        self.oois[i, :, :] = corners
+                        placed_objects.append((mean, max_radius))
+                        break
+                if not ooi_success:
                     break
+            if not ooi_success:
+                continue
+
+            # If all objects placed successfully, exit
+            return
+
+        # If all restarts failed
+        raise RuntimeError("Failed to place objects after maximum restarts")
         
-        # --- Generate OOIs (4-point polygons) ---
-        for i in range(self.num_oois):
-            while True:
-                mean = np.random.uniform(self.object_bounds[0], self.object_bounds[1], size=2)
-                length_width = np.random.uniform(self.ooi_size_bounds[0], self.ooi_size_bounds[1], size=2)
-                
-                # The 4 corners of the rectangle (centered at `mean`)
-                corners = np.array([
-                    mean + np.array([-length_width[0]/2, -length_width[1]/2]),
-                    mean + np.array([ length_width[0]/2, -length_width[1]/2]),
-                    mean + np.array([ length_width[0]/2,  length_width[1]/2]),
-                    mean + np.array([-length_width[0]/2,  length_width[1]/2])
-                ])
-                # For overlap checks, treat the OOI as a circle with radius = half the diagonal
-                # which is half the distance between opposite corners
-                # e.g. the bounding circle about 'mean'
-                max_radius = 0.5 * np.linalg.norm(length_width)
-                
-                if not is_overlapping(mean, max_radius, placed_objects):
-                    # Store corners
-                    self.oois[i, :, :] = corners
-                    placed_objects.append((mean, max_radius))
-                    break
-        
-        # Nothing to return now — everything is in the NumPy arrays
-        return  # Or you could return None
-    
     def get_noisy_initial_state(self):
         """
         Use maintained real object means to generate noisy initial states for MCTS.
@@ -360,8 +387,14 @@ class ObjectManager:
                 self.ui.draw_polygon(ooi_means[i], color='purple', facecolor='none', linestyle='--', alpha=1.0)
                 
                 for j in range(4):
+                    # Change color to green if this corner is fully observed
+                    if np.trace(ooi_covs[i][j]) < self.final_corner_covariance:
+                        color = 'g'
+                    else:
+                        color = 'cyan'
+                    
                     # A small cyan point for each corner
-                    self.ui.draw_point(ooi_means[i][j], color='cyan', alpha=1.0)
+                    self.ui.draw_point(ooi_means[i][j], color=color, alpha=1.0)
                     
                     # Draw the covariance ellipse
                     scalings, angle = get_ellipse_scaling(ooi_covs[i][j])

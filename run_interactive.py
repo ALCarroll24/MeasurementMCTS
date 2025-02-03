@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from time import sleep
 sys.path.append('src/measurement_mcts')
 from measurement_mcts.mcts.mcts import mcts_with_rollout, get_action_subtree
+from measurement_mcts.state_evaluation.hertg import get_hertg_target_point, get_target_point_follow_action
 from measurement_mcts.mcts.tree_viz import render_pyvis
 from measurement_mcts.environment.measurement_control_env import MeasurementControlEnvironment
 
@@ -44,6 +45,8 @@ try:
                                           rollout_method, start_with_root=subroot, max_time=leftover_time)
         best_action_idx = root.best_child()
         state, reward, done, observation = env.step(state, env.action_space[best_action_idx], return_observation=True)
+        
+        get_hertg_target_point(state, env, ui=env.ui)
         
         # Reset the depth of the state to 0
         state_list = list(state)

@@ -8,6 +8,7 @@ import pygame
 # Add measurement mcts python package to path
 sys.path.append('./src/measurement_mcts')
 from measurement_mcts.mcts.mcts import get_best_trajectory, MCTSNode, DummyNode
+from measurement_mcts.state_evaluation.hertg import get_hertg_target_point, get_target_point_follow_action
 from measurement_mcts.mcts.tree_viz import render_pyvis
 from measurement_mcts.state_evaluation.reinforcement_learning import MCTSRLWrapper, plot_state_image
 from measurement_mcts.environment.measurement_control_env import MeasurementControlEnvironment
@@ -72,6 +73,9 @@ try:
 
         print(f'Action: {action}')
 
+        # Plot the hertg target point for debugging
+        get_hertg_target_point(state, env, ui=env.ui)
+        
         # --- Environment Update ---
         state, reward, done = env.step(state, action, dt=dt)
         env.draw_state(state)
