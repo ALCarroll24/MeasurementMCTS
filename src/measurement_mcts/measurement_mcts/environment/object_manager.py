@@ -411,6 +411,7 @@ class ObjectManager:
         """
         car_pos = np.array(car_state[0:2], dtype=float)
         car_radius = self.car_collision_radius
+        collision_distances = np.zeros(0, dtype=float)
         
         # -------------------------
         # 1) Check collision: Obstacles
@@ -420,6 +421,8 @@ class ObjectManager:
             # True if distance < (car + obstacle radius)
             collision_mask_obs = obstacle_distances < (car_radius + self.obstacle_radii)
             in_collision_obs = np.where(collision_mask_obs)[0]
+            distances = obstacle_distances[in_collision_obs] - self.obstacle_radii[in_collision_obs] - car_radius
+            collision_distances = np.concatenate((collision_distances, distances))
         else:
             in_collision_obs = np.array([], dtype=int)
 
@@ -430,6 +433,8 @@ class ObjectManager:
             occlusion_distances = np.linalg.norm(self.occlusion_means - car_pos, axis=1)
             collision_mask_ocl = occlusion_distances < (car_radius + self.occlusion_radii)
             in_collision_ocl = np.where(collision_mask_ocl)[0]
+            distances = occlusion_distances[in_collision_ocl] - self.occlusion_radii[in_collision_ocl] - car_radius
+            collision_distances = np.concatenate((collision_distances, distances))
         else:
             in_collision_ocl = np.array([], dtype=int)
 
@@ -451,11 +456,13 @@ class ObjectManager:
             ooi_distances = np.linalg.norm(ooi_centers - car_pos, axis=1)
             collision_mask_ooi = ooi_distances < (car_radius + ooi_radii)
             in_collision_oois = np.where(collision_mask_ooi)[0]
+            distances = ooi_distances[in_collision_oois] - ooi_radii[in_collision_oois] - car_radius
+            collision_distances = np.concatenate((collision_distances, distances))
         else:
             in_collision_oois = np.array([], dtype=int)
         
         # Return the indices that are colliding
-        return in_collision_obs, in_collision_ocl, in_collision_oois
+        return in_collision_obs, in_collision_ocl, in_collision_oois, collision_distances
     
     def get_observation_indices(self, car_state):
         """

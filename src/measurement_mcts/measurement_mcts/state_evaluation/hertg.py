@@ -41,7 +41,7 @@ def get_hertg_target_point(state, env, dist_weight=0.1, bearing_weight=1, lookah
     
     # Check if the target point is near an ooi circle
     target_point_near_ooi = np.linalg.norm(target_point - ooi_centers, axis=1) < ooi_max_radii + ooi_circle_space
-    print(target_point_near_ooi)
+
     # Get indices where true
     near_ooi_indices = np.where(target_point_near_ooi)[0]
     
@@ -51,7 +51,7 @@ def get_hertg_target_point(state, env, dist_weight=0.1, bearing_weight=1, lookah
     if len(near_ooi_indices) > 1:
         raise ValueError('Multiple OOIs near target point')
     elif len(near_ooi_indices) == 1:
-        print('Near OOI')        
+        # print('Near OOI')
         # Pick direction to rotate around based on car heading relative to ooi
         car_to_close_ooi = ooi_centers[near_ooi_indices[0]] - car_pos
         car_to_ooi_angle = np.arctan2(car_to_close_ooi[1], car_to_close_ooi[0])
@@ -84,27 +84,25 @@ def get_hertg_target_point(state, env, dist_weight=0.1, bearing_weight=1, lookah
     if len(collision_indices) > 1:
         raise ValueError('Multiple obstacles/occlusions near target point')
     elif len(collision_indices) == 1:
-        print('Inside Obstacle/Occlusion')
-        # Rotate target point around car to avoid obstacle
-        car_to_obs_dist = np.linalg.norm(obs_means[collision_indices[0]] - car_pos)
-        # angle = np.abs(np.arctan2(obs_radii[collision_indices[0]] + env.car_collision_radius, car_to_obs_dist))
-        push_distance = obs_radii[collision_indices[0]] + env.car_collision_radius - target_point_to_obs_dists[collision_indices[0]]
-        
+        # print('Inside Obstacle/Occlusion')
         # Pick direction based on target_point heading relative to obstacle
         car_to_close_obs = obs_means[collision_indices[0]] - car_pos
         car_to_obs_angle = np.arctan2(car_to_close_obs[1], car_to_close_obs[0])
         car_to_target_point = target_point - car_pos
         car_to_target_point_angle = np.arctan2(car_to_target_point[1], car_to_target_point[0])
         angle_diff = angle_difference(car_to_obs_angle, car_to_target_point_angle)
-        if angle_diff < 0:
-            # angle = -angle
-            car_perpendicular_unit = np.array([np.cos(car_yaw + np.pi/2), np.sin(car_yaw + np.pi/2)])
+        if angle_diff > 0:
+            angle_direction = -1
         else:
-            car_perpendicular_unit = np.array([np.cos(car_yaw - np.pi/2), np.sin(car_yaw - np.pi/2)])
+            angle_direction = 1
         
-        # Rotate target point around car
-        # target_point = rotate_about_point(target_point, angle, car_pos)
-        target_point = target_point + push_distance * car_perpendicular_unit
+        # First place the target_point on the obstacle circle
+        unit_car_to_close_obs = car_to_close_obs / np.linalg.norm(car_to_close_obs)
+        target_point = obs_means[collision_indices[0]] + (obs_radii[collision_indices[0]] + env.car_collision_radius) * -unit_car_to_close_obs
+        
+        # Rotate target point around ooi circle until the distance from car to target point is greater than lookahead
+        while np.linalg.norm(target_point - car_pos) < lookahead_distance:
+            target_point = rotate_about_point(target_point, angle_direction * angle_iter, obs_means[collision_indices[0]])
         
         if ui is not None:
             ui.draw_point(target_point, 'green', radius=0.25)
@@ -136,3 +134,40 @@ def get_target_point_follow_action(car_state, env, target_point, no_turn_degrees
         return [1, angle_sign * steering_options[1]]    # Accelerate, turn slightly
     else:
         return [1, angle_sign * steering_options[2]]    # Accelerate, turn max
+    
+
+def get_hertg_reward(state, env, target_point=None, scale=0.01):
+    """
+    Compute the reward for the HERTG algorithm based on the velocity and angle to the target point.
+    :param state: Current state of the environment.
+    :param env: Environment object.
+    :param dist_weight: Weight for distance in the reward calculation.
+    :param angle_weight: Weight for angle in the reward calculation.
+    :return: Reward based on distance and angle to the target"""
+    
+    # First get the target point from the HERTG algorithm
+    if target_point is None:
+        target_point = get_hertg_target_point(state, env)
+    
+    # Now compute the reward based on distance and angle to the target point
+    car_pos = state[0][:2]
+    car_yaw = state[0][3]
+    car_vel = state[0][2]
+    car_steering_angle = state[0][4]
+    
+    # Compute vector from car to target point
+    car_to_target_point = target_point - car_pos
+    unit_car_to_target_point = car_to_target_point / np.linalg.norm(car_to_target_point)
+    
+    # Compute velocity velocity vector with direction of car tires
+    if car_vel >= 0:
+        velocity_vector = car_vel * np.array([np.cos(car_yaw + car_steering_angle), np.sin(car_yaw + car_steering_angle)])
+        
+    # Account for vehicle travelling velocity vector in reverse
+    else:
+        velocity_vector = car_vel * np.array([np.cos(car_yaw - car_steering_angle), np.sin(car_yaw - car_steering_angle)])
+        # punish travelling in reverse somewhat
+        velocity_vector = 0.5 * velocity_vector
+    
+    # Take the dot product to get the heuristic reward
+    return scale * unit_car_to_target_point @ velocity_vector

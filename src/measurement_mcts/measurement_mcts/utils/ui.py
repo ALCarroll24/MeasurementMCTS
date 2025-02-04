@@ -24,7 +24,24 @@ class MatPlotLibUI:
         if interactive:
             plt.ion()
             self.fig, self.ax = plt.subplots(figsize=(8, 8))
+            
+            # Handle close event
+            self.fig.canvas.mpl_connect('close_event', self.handle_close)
+            
+            # Create Buttons
+            play_button_ax = self.fig.add_axes([0.4, 0.97, 0.2, 0.03])  # Adjust as necessary
+            self.play_button = Button(play_button_ax, 'Play/Pause', color='lightgoldenrodyellow', hovercolor='0.975')
+            self.play_button.on_clicked(self.on_play_button_click)
+            self.paused = False
+
+    def handle_close(self, event):
+        # Handle what happens when the window is closed
+        print("Matplotlib window closed.")
+        self.shutdown = True  # Set a global flag to stop the main loop        
         
+    def on_play_button_click(self, event):
+        print("play/pause button clicked")
+        self.paused = not self.paused
 
     def plot(self, get_fig_ax: bool=False, title:str=None, figsize:tuple=(8, 8)):
         """

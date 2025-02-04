@@ -8,9 +8,8 @@ import pygame
 # Add measurement mcts python package to path
 sys.path.append('./src/measurement_mcts')
 from measurement_mcts.mcts.mcts import get_best_trajectory, MCTSNode, DummyNode
-from measurement_mcts.state_evaluation.hertg import get_hertg_target_point, get_target_point_follow_action
+from measurement_mcts.state_evaluation.hertg import get_hertg_target_point, get_target_point_follow_action, get_hertg_reward
 from measurement_mcts.mcts.tree_viz import render_pyvis
-from measurement_mcts.state_evaluation.reinforcement_learning import MCTSRLWrapper, plot_state_image
 from measurement_mcts.environment.measurement_control_env import MeasurementControlEnvironment
 
 # Initialize the environment
@@ -36,7 +35,7 @@ dt = 0.1  # Time step in seconds
 dt_ms = int(dt * 1000)
 
 try:
-    while True:
+    while not env.ui.shutdown:
         # Track loop start time
         loop_start_ticks = pygame.time.get_ticks()
 
@@ -78,6 +77,7 @@ try:
         
         # --- Environment Update ---
         state, reward, done = env.step(state, action, dt=dt)
+        # print(f'(rew, her): {reward}, {get_hertg_reward(state, env)}')
         env.draw_state(state)
         # print(f'Speed: {state[0][2]*2.23694} mph')
 

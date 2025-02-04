@@ -21,19 +21,19 @@ class MeasurementControlEnvironment(Environment):
     def __init__(self, init_reset=True, interactive=False):
         # General important parameters
         self.simulation_dt = 0.6 # time step size for forward simulation search
-        self.obstacle_punishment = -10. # reward for colliding with an obstacle
+        self.obstacle_punishment = -0.01 # reward for colliding with an obstacle
         self.init_covariance_diag = 8. # Initial diagonal value for all diagonals of (2x2) point covariance matrix
         self.fully_observered_corner_reward = 0.5 # reward for fully observing a corner
-        self.horizon_length = 10 # length of the horizon for the environment
-        self.car_collision_radius = 3.5 # Collision radius of the car
+        self.horizon_length = 4 # length of the horizon for the environment
+        self.car_collision_radius = 4 # Collision radius of the car
         
         # Sensor parameters used in Object Manager for observation simulation and minimums for the measurement model
         sensor_min_range = 5. # minimum range for sensor model
         sensor_min_bearing = 5. # minimum bearing for sensor model
         sensor_max_range = 60. # meters
         sensor_max_bearing = np.radians(60) # degrees
-        obs_range_dev = 0.3 # standard deviation for the range scaling of measurement model
-        obs_bearing_dev = 0.2 # standard deviation for the bearing scaling of measurement model
+        obs_range_dev = 0.2 # standard deviation for the range scaling of measurement model
+        obs_bearing_dev = 0.1 # standard deviation for the bearing scaling of measurement model
         
         # Action space parameters
         self.long_acc_options = np.array([-1., -0.5, 0., 0.5, 1.]) # options for longitudinal acceleration (scaled from [-1, 1] to vehicle [-max_acc, max_acc])
@@ -56,7 +56,7 @@ class MeasurementControlEnvironment(Environment):
         # Reset parameters for generating random objects
         self.num_obstacles = 5   # Random obstacles to generate on reset
         self.num_occlusions = 5  # Random occlusions to generate on reset
-        self.num_oois = 4        # Random OOI's to generate on reset
+        self.num_oois = 3        # Random OOI's to generate on reset
         object_bounds = np.array([15, 85]) # Bounds for random object generation
         object_size_bounds = np.array([2, 7]) # Bounds for random object size generation
         ooi_size_bounds = np.array([3, 12]) # Bounds for random OOI size generation
@@ -65,7 +65,7 @@ class MeasurementControlEnvironment(Environment):
         
         # Parameters for estimation and noise observations
         self.init_covariance_trace = self.num_oois * 4 * 2 * self.init_covariance_diag # Total trace available, makes trace based rewards normalized to [0, 1]
-        self.final_corner_cov_trace = 0.2 * 2 # (m) Covariance trace threshold for each corner to consider fully observed
+        self.final_corner_cov_trace = 0.4 * 2 # (m) Covariance trace threshold for each corner to consider fully observed
         self.final_cov_trace = self.final_corner_cov_trace * 4 * self.num_oois # Covariance trace threshold for all corners to consider fully observed
         init_center_stddev = 1. # Standard deviation for the center guess for estimator initialization
         init_width_guess = 5. # Initial guess for the width of the object
@@ -79,8 +79,8 @@ class MeasurementControlEnvironment(Environment):
                                             final_corner_covariance=self.final_corner_cov_trace)
         
         # Create a Static 2d Kalman Filter object
-        range_dev = 1. # standard deviation for the range scaling of measurement model
-        bearing_dev = 0.5 # standard deviation for the bearing scaling of measurement model
+        range_dev = 0.3 # standard deviation for the range scaling of measurement model
+        bearing_dev = 0.15 # standard deviation for the bearing scaling of measurement model
         self.skf = StaticKalmanFilter(range_dev=range_dev, min_range=sensor_min_range,
                                       bearing_dev=bearing_dev, min_bearing=sensor_min_bearing, ui=self.ui)
         
@@ -378,7 +378,7 @@ class MeasurementControlEnvironment(Environment):
         new_car_state = self.car.update(dt, action, starting_state=car_state)
         
         # Now see if the car has collided with any objects in the object manager
-        in_collision_obs, in_collision_ocl, in_collision_oois = self.object_manager.check_collision(new_car_state)
+        in_collision_obs, in_collision_ocl, in_collision_oois, collision_distances = self.object_manager.check_collision(new_car_state)
         
         # Get an observation from the object manager at this new car state
         observation_indices, noisy_observation = self.object_manager.get_noisy_observation(new_car_state)
@@ -388,11 +388,13 @@ class MeasurementControlEnvironment(Environment):
         self.apply_observation(observation_indices, noisy_observation, new_car_state, ooi_means, ooi_covs)
 
         # Calculate rewards
-        num_in_collision = len(in_collision_obs) + len(in_collision_ocl) + len(in_collision_oois) # Number of objects in collision
-        obstacle_reward = num_in_collision * self.obstacle_punishment  # Reward for colliding with obstacles
+        # num_in_collision = len(in_collision_obs) + len(in_collision_ocl) + len(in_collision_oois) # Number of objects in collision
+        # obstacle_reward = num_in_collision * self.obstacle_punishment  # Reward for colliding with obstacles
+        obstacle_reward = self.obstacle_punishment * np.sum(collision_distances**2) # Reward for colliding with obstacles
         trace_delta_reward = min_max_normalize(trace_delta_sum, 0, self.init_covariance_trace) # Reward for reducing covariance trace
         fully_observed_reward = fully_observed_corners * self.fully_observered_corner_reward # Reward for fully observing a corner
         reward = obstacle_reward + trace_delta_reward + fully_observed_reward # Total reward is sum of all rewards
+        # reward = 0. # For now, no rewards
         
         # Print rewards if enabled
         if print_rewards:
@@ -514,7 +516,7 @@ class MeasurementControlEnvironment(Environment):
         car_state, ooi_means, ooi_covs, horizon = state
         
         # Simulate collision and observation to get objects in collision and observation display
-        in_collision_obs, in_collision_ocl, in_collision_oois = self.object_manager.check_collision(car_state)
+        in_collision_obs, in_collision_ocl, in_collision_oois, collision_distances = self.object_manager.check_collision(car_state)
         observation_indices = self.object_manager.get_observation_indices(car_state)
         
         # Draw the car state

@@ -10,7 +10,7 @@ from copy import deepcopy
 class Car:
     def __init__(self, max_range: float, max_bearing: float,
                  init_pos_bounds: np.ndarray, init_yaw_bounds: np.ndarray,
-                 steering_center_spring_rate: float=0.08, steering_velocity_damping: float=0.16,
+                 steering_center_spring_rate: float=0.08, steering_velocity_damping: float=0.1,
                  longitudinal_damping: float=0.04, range_arrow_length: float=10.0, state=None, ui=None):
         # Save parameters
         self.max_range = max_range # m
@@ -53,7 +53,7 @@ class Car:
         max_steering_wheel_turns = 2.8  # Maximum steering wheel turns from lock to lock (far left to far right)
         steering_ratio = np.mean([15.7, 18.9])  # Steering wheel turns to wheel turns (averaging center and at lock)
         self.max_steering_angle = np.radians(0.5 * max_steering_wheel_turns * 360 / steering_ratio)  # Maximum steering angle in radians
-        quarter_rotation_time = 0.5  # Time to rotate steering wheel 90 degrees (used to calculate acceleration limit)
+        quarter_rotation_time = 0.25  # Time to rotate steering wheel 90 degrees (used to calculate acceleration limit)
         
         # Lateral output class variables
         # From rearanging: theta = 1/2 * alpha * t^2, we get alpha = 2 * theta / t^2:
