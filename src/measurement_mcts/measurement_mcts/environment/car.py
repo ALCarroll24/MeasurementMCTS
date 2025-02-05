@@ -28,7 +28,7 @@ class Car:
         self.state = state
         
         # The internal dt to run the car model at (0.0 means use the dt passed in the update function)
-        self.model_dt = 0.1
+        self.model_dt = 0.2
         
         ###### Jeep Grand Cherokee Trailhawk Parameters ######
         ### Car dimension parameters
