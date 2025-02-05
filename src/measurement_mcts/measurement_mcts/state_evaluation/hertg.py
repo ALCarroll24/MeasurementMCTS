@@ -27,11 +27,8 @@ class HERTG:
         return get_distance_reward(state, self.target_point, self.reward_scale)
     
     def update_best_ooi(self, state):
-        print(f'Best OOI: {self.best_ooi_idx}')
         if self.check_ooi_completion(state) is True:
-            print(f'Completed OOI: {self.best_ooi_idx}')
             self.set_best_ooi(state)
-            print(f'New Best OOI: {self.best_ooi_idx}')
             
             if self.method == 'static':
                 self.target_point = get_hertg_past_ooi_target_point(state, self.env, self.best_ooi_idx)

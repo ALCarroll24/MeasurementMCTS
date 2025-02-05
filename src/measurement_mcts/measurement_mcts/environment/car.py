@@ -10,8 +10,8 @@ from copy import deepcopy
 class Car:
     def __init__(self, max_range: float, max_bearing: float,
                  init_pos_bounds: np.ndarray, init_yaw_bounds: np.ndarray,
-                 steering_center_spring_rate: float=0.08, steering_velocity_damping: float=0.16,
-                 longitudinal_damping: float=0.04, range_arrow_length: float=10.0, state=None, ui=None):
+                 steering_center_spring_rate: float=0.4, steering_velocity_damping: float=0.6,
+                 longitudinal_damping: float=0.3, range_arrow_length: float=10.0, state=None, ui=None):
         # Save parameters
         self.max_range = max_range # m
         self.max_bearing = max_bearing # Max sensor fov in radians (converted from degrees)
@@ -26,6 +26,9 @@ class Car:
         
         # Initialize the car state or leave as none until reset() is called
         self.state = state
+        
+        # The internal dt to run the car model at (0.0 means use the dt passed in the update function)
+        self.model_dt = 0.1
         
         ###### Jeep Grand Cherokee Trailhawk Parameters ######
         ### Car dimension parameters
@@ -166,11 +169,21 @@ class Car:
             state_with_action[5] = 0
         
         # Apply steering centering spring rate and damping
-        state_with_action[5] = np.clip(state_with_action[5] - self.steering_center_spring_rate * state_with_action[4] - self.steering_velocity_damping * state_with_action[5],
-                                       -self.max_steering_alpha, self.max_steering_alpha)
+        state_with_action[5] = np.clip(
+            state_with_action[5] - (self.steering_center_spring_rate * state_with_action[4] +
+                                    self.steering_velocity_damping * state_with_action[5]) * dt,
+                                    -self.max_steering_alpha,
+                                    self.max_steering_alpha
+        )
         
         # Apply longitudinal damping
-        state_with_action[2] = state_with_action[2] - self.longitudinal_damping * state_with_action[2]
+        state_with_action[2] = state_with_action[2] - self.longitudinal_damping * state_with_action[2] * dt
+        
+        # If we were braking keep velocity at zero if it has crossed zero
+        if state_vec[2] < 0 and state_with_action[2] > 0:
+            state_with_action[2] = 0
+        elif state_vec[2] > 0 and state_with_action[2] < 0:
+            state_with_action[2] = 0
         
         # Now update the state using the A matrix (function of yaw and steering angle)
         new_state = self.get_A_matrix(state_with_action[3], dt) @ state_with_action
@@ -181,7 +194,7 @@ class Car:
         return new_state
     
     # Update the car class or return the new state (when given a starting state) based on the action
-    def update(self, dt, action, starting_state=None, model_dt=0.1):
+    def update(self, dt, action, starting_state=None, model_dt=None):
         # If we are doing forward simulation, we need to pass in the starting state
         # MUY IMPORTANTE - take a copy of the state, otherwise we will be modifying the original state object
         if starting_state is not None:
@@ -190,6 +203,10 @@ class Car:
             if self.state is None:
                 raise ValueError("Car state is not set, call reset() or pass the starting_state.")
             state = self.state
+        
+        # Check if we are using the default model_dt
+        if model_dt is None:
+            model_dt = self.model_dt
         
         if model_dt == 0.0:
             # Use the car model to update the state
@@ -219,6 +236,14 @@ class Car:
         else:
             return new_state
         
+    def get_stop_distance(self, speed, dt, buffer=0.7):
+        state = [0,0, speed, 0, 0, 0]
+        time = 0
+        while state[2] > 0:
+            state = self.update(dt, [-1,0], starting_state=state, model_dt=0.0)
+            time += dt
+        return state[0] + buffer
+    
     def get_action_pure_pursuit(self, target_point: np.ndarray, starting_state: np.ndarray = None):
         # Use the update function to update the car state based on pure pursuit and target point
 

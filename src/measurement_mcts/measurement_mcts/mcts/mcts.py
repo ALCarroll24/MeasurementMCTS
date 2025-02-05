@@ -270,8 +270,10 @@ class MCTSNode:
             return current, path
         return current
 
-    def maybe_add_child(self, action, insert_leaf=None):
+    def maybe_add_child(self, action, insert_leaf=None, return_min_obs_dist=False):
         """Add a child if it does not exist"""
+        min_obs_dist = np.inf # set default value
+        
         # Check if the action has already been simulated
         if action not in self.children:
             # If we have a leaf we want to insert since it was already simulated
@@ -283,11 +285,14 @@ class MCTSNode:
              
             # If not, Run the simulation and update the child
             else:
-                new_state, reward, done = self.env.step(self.state, self.env.action_space[action])
+                new_state, reward, done, min_obs_dist = self.env.step(self.state, self.env.action_space[action], return_min_obs_dist=True)
                 self.children[action] = MCTSNode(self.env, new_state, action, explore_factor=self.explore_factor,
                                                  discount_factor=self.discount_factor, reward=reward, parent=self, 
                                                  done=done, parallel=self.parallel)
 
+        if return_min_obs_dist:
+            return self.children[action], min_obs_dist
+        
         return self.children[action]
 
     # Used in previous alpha go zero style of MCTS
@@ -320,7 +325,8 @@ class MCTSNode:
     ############################################################################################################
     # Rollout evaluation methods
     ############################################################################################################
-    def one_action_rollout(self, rollout_method, first_action=None, hertg=None, keep_nodes=False, keep_data=False):
+    def one_action_rollout(self, rollout_method, rollout_pre_collision_stop=True, first_action=None, hertg=None, 
+                           keep_nodes=False, keep_data=False):
         """ Simulate the same action until reaching a terminal state 
             params:
                 action: the action to simulate (int)
@@ -330,7 +336,7 @@ class MCTSNode:
                     random_same: randomly select the same action for all steps
                     zero: select the zero action after the first action
                     accelerate: accelerate the car in the direction of velocity with no steering wheel input
-                    heuristic: use the highest HERTG action for all steps
+                rollout_pre_collision_stop: If True decellerate the car to 0 velocity if a collision is predicted
                 first_action: action to use first before using rollout_method (must pass if using same) (bool)
                 hertg: HERTG object used to add heuristic at the end of the rollout, None disables (HERTG)
                 keep_nodes: whether to keep the nodes of the rollout (bool)
@@ -350,6 +356,7 @@ class MCTSNode:
         states, rewards, dones = [], [], []
         is_first_action = True
         random_same_action = np.random.choice(self.env.N)
+        min_obs_dist = np.inf
         while not done:
             if is_first_action is True and first_action is not None:
                 action = first_action
@@ -366,16 +373,24 @@ class MCTSNode:
                     action = 15
                 else:               # If the velocity is positive or 0, accelerate in the positive direction
                     action = 10
-            elif rollout_method == 'heuristic':
-                raise NotImplementedError("Heuristic rollout method not implemented")
+                    
+            if rollout_pre_collision_stop:
+                stop_dist = self.env.car.get_stop_distance(state[0][2], self.env.car.model_dt)
+                if stop_dist > min_obs_dist:
+                    # If car is travelling forward
+                    if state[0][2] >= 0:
+                        action = 15 # If the velocity is positive, accelerate in the negative direction
+                    else:
+                        action = 10 # If the velocity is negative, accelerate in the positive direction
                 
             if not keep_nodes:
-                state, reward, done = self.env.step(state, self.env.action_space[action])
+                state, reward, done, min_obs_dist = self.env.step(state, self.env.action_space[action], 
+                                                                    return_min_obs_dist=True)
                 states.append(state)
                 rewards.append(reward)
                 dones.append(done)
             else:
-                leaf = leaf.maybe_add_child(action)
+                leaf, min_obs_dist = leaf.maybe_add_child(action, return_min_obs_dist=True)
                 state, reward, done = leaf.state, leaf.reward, leaf.done
                 
             cumulative_reward += reward
@@ -392,7 +407,7 @@ class MCTSNode:
         
         return cumulative_reward
     
-    def rollout_children(self, rollout_method, hertg=None, keep_nodes=True, parallel=True):
+    def rollout_children(self, rollout_method, rollout_pre_collision_stop=True, hertg=None, keep_nodes=True, parallel=True):
         """ rollout all children in parallel to get the expected reward 
             params:
                 rollout_method: The method to use for the rollout (random, same, zero, heuristic) (str)
@@ -401,7 +416,7 @@ class MCTSNode:
                     random_same: randomly select the same action for all steps
                     zero: select the zero action after the first action
                     accelerate: accelerate the car in the direction of velocity with no steering wheel input
-                    heuristic: use the highest HERTG action for all steps
+                rollout_pre_collision_stop: If True decellerate the car to 0 velocity if a collision is predicted
                 hertg: HERTG object used to add heuristic at the end of the rollout, None disables (HERTG)
                 target_point: the target point for the HERTG heuristic (np.ndarray)
                 keep_nodes: whether to keep the nodes of the rollout (bool)
@@ -414,8 +429,8 @@ class MCTSNode:
             pool = mp.Pool(processes=self.env.N)
             
             if keep_nodes:
-                partial_one_action_rollout = partial(self.one_action_rollout, rollout_method, hertg=hertg, 
-                                                     keep_nodes=False, keep_data=True)
+                partial_one_action_rollout = partial(self.one_action_rollout, rollout_method, rollout_pre_collision_stop=rollout_pre_collision_stop,
+                                                     hertg=hertg, keep_nodes=False, keep_data=True)
                 rollout_results = pool.map(partial_one_action_rollout, np.arange(self.env.N))
                 
                 # Reconstruct the tree with the rollout results (can't add to tree in parallel)
@@ -431,8 +446,8 @@ class MCTSNode:
                             leaf.is_expanded = True
                             leaf.number_visits += 1
             else:
-                partial_one_action_rollout = partial(self.one_action_rollout, rollout_method, hertg=hertg, 
-                                                     keep_nodes=False, keep_data=False)
+                partial_one_action_rollout = partial(self.one_action_rollout, rollout_method, rollout_pre_collision_stop=rollout_pre_collision_stop,
+                                                     hertg=hertg, keep_nodes=False, keep_data=False)
                 rollout_rewards= pool.map(partial_one_action_rollout, np.arange(self.env.N))
             
             pool.close()
@@ -526,8 +541,8 @@ def get_action_subtree(root: MCTSNode, action: int):
 # MCTS search method currently used
 ############################################################################################################
 def mcts_with_rollout(env, starting_state, learning_iterations, explore_factor, discount_factor, 
-                      rollout_method, parallel_rollout=False, start_with_root=None, hertg=None, 
-                      keep_nodes=True, max_time=None):
+                      rollout_method, rollout_pre_collision_stop=True, parallel_rollout=False, start_with_root=None, 
+                      hertg=None, keep_nodes=True, max_time=None):
     """
     Run MCTS search with a rollout from each selected node
     params:
@@ -542,7 +557,7 @@ def mcts_with_rollout(env, starting_state, learning_iterations, explore_factor, 
             random_same: randomly select the same action for all steps
             zero: select the zero action after the first action
             accelerate: accelerate the car in the direction of velocity with no steering wheel input
-            heuristic: use the highest HERTG action for all steps
+        rollout_pre_collision_stop: If True decellerate the car to 0 velocity if a collision is predicted
         parallel_rollout: If True do first rollouts for all children in parallel
         start_with_root: If provided start with the provided root node
         hertg: HERTG object used to add heuristic at the end of the rollout, None disables
@@ -568,7 +583,8 @@ def mcts_with_rollout(env, starting_state, learning_iterations, explore_factor, 
     
     # If enabled do first rollouts for all children in parallel
     if parallel_rollout:
-        rollout_rewards = root.rollout_children(rollout_method, hertg=hertg, keep_nodes=keep_nodes, parallel=False)
+        rollout_rewards = root.rollout_children(rollout_method, rollout_pre_collision_stop=rollout_pre_collision_stop, 
+                                                hertg=hertg, keep_nodes=keep_nodes, parallel=False)
         root.child_total_value = np.array(rollout_rewards) # Set the total value of the root node to the rollout rewards
         root.number_visits = env.N # Set the number of visits to the number of rollouts
         
@@ -583,7 +599,8 @@ def mcts_with_rollout(env, starting_state, learning_iterations, explore_factor, 
             first_action = None
         
         # Do a rollout from the leaf node to get estimated value
-        rollout_reward = leaf.one_action_rollout(rollout_method, first_action=first_action, hertg=hertg, keep_nodes=keep_nodes)
+        rollout_reward = leaf.one_action_rollout(rollout_method, rollout_pre_collision_stop=rollout_pre_collision_stop,
+                                                 first_action=first_action, hertg=hertg, keep_nodes=keep_nodes)
         
         leaf.is_expanded = True # Mark the leaf node as expanded
         leaf.backup(rollout_reward) # Backup the best rollout reward to the root node

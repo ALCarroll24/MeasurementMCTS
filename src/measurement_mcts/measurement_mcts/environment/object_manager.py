@@ -404,20 +404,24 @@ class ObjectManager:
     def check_collision(self, car_state):
         """
         Checks which obstacles, occlusions, and OOIs are colliding with the car.
-        Returns three 1D arrays of indices:
-        - in_collision_obs   (for obstacles)
-        - in_collision_ocl   (for occlusions)
-        - in_collision_oois  (for OOIs)
+        Returns:
+            in_collision_obs   (for obstacles)
+            in_collision_ocl   (for occlusions)
+            in_collision_oois  (for OOIs)
+            collision_distances (distances to colliding objects)
+            min_obs_dist (minimum distance to collide with any object)
         """
         car_pos = np.array(car_state[0:2], dtype=float)
         car_radius = self.car_collision_radius
         collision_distances = np.zeros(0, dtype=float)
+        min_obs_dist = np.inf
         
         # -------------------------
         # 1) Check collision: Obstacles
         # -------------------------
         if self.num_obstacles > 0:
             obstacle_distances = np.linalg.norm(self.obstacle_means - car_pos, axis=1)
+            min_obs_dist = np.min(obstacle_distances - self.obstacle_radii - car_radius)
             # True if distance < (car + obstacle radius)
             collision_mask_obs = obstacle_distances < (car_radius + self.obstacle_radii)
             in_collision_obs = np.where(collision_mask_obs)[0]
@@ -431,6 +435,7 @@ class ObjectManager:
         # -------------------------
         if self.num_occlusion > 0:
             occlusion_distances = np.linalg.norm(self.occlusion_means - car_pos, axis=1)
+            min_obs_dist = min(min_obs_dist, np.min(occlusion_distances - self.occlusion_radii - car_radius))
             collision_mask_ocl = occlusion_distances < (car_radius + self.occlusion_radii)
             in_collision_ocl = np.where(collision_mask_ocl)[0]
             distances = occlusion_distances[in_collision_ocl] - self.occlusion_radii[in_collision_ocl] - car_radius
@@ -455,6 +460,7 @@ class ObjectManager:
             # Collision check with car
             ooi_distances = np.linalg.norm(ooi_centers - car_pos, axis=1)
             collision_mask_ooi = ooi_distances < (car_radius + ooi_radii)
+            min_obs_dist = min(min_obs_dist, np.min(ooi_distances - ooi_radii - car_radius))
             in_collision_oois = np.where(collision_mask_ooi)[0]
             distances = ooi_distances[in_collision_oois] - ooi_radii[in_collision_oois] - car_radius
             collision_distances = np.concatenate((collision_distances, distances))
@@ -462,7 +468,7 @@ class ObjectManager:
             in_collision_oois = np.array([], dtype=int)
         
         # Return the indices that are colliding
-        return in_collision_obs, in_collision_ocl, in_collision_oois, collision_distances
+        return in_collision_obs, in_collision_ocl, in_collision_oois, collision_distances, min_obs_dist
     
     def get_observation_indices(self, car_state):
         """

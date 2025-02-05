@@ -34,6 +34,7 @@ joystick.init()
 print(f"Controller detected: {joystick.get_name()}")
 dt = 0.1  # Time step in seconds
 dt_ms = int(dt * 1000)
+min_obs_dist = np.inf
 
 try:
     while not env.ui.shutdown:
@@ -69,15 +70,27 @@ try:
 
         # # Format action (swap axes for intuitive control)
         # action = [-y_axis, -x_axis]
-        # print(f'Action: {action}')
 
+        # print(f'Action: {action}')
+        stop_dist = env.car.get_stop_distance(state[0][2], env.car.model_dt)
+        # print(f'Stopping distance: {stop_dist}')
+        # print(f'Minimum obstacle distance: {min_obs_dist}')
+        
+        if min_obs_dist < stop_dist:
+            # print("OH SHIDDDDDD")
+            if state[0][2] > 0.01:
+                action = [-1, 0]
+            elif state[0][2] < -0.01:
+                action = [1, 0]
+                
         print(f'Action: {action}')
 
         # Plot the hertg target point for debugging
         hertg.update_best_ooi(state)
         
         # --- Environment Update ---
-        state, reward, done, observation = env.step(state, action, dt=dt, return_observation=True)
+        state, reward, done, observation, min_obs_dist = env.step(state, action, dt=dt,
+                                                    return_observation=True, return_min_obs_dist=True)
         # print(f'(rew, her): {reward}, {get_hertg_reward(state, env)}')
         env.draw_state(state, observation=observation, hertg=hertg)
         # print(f'Speed: {state[0][2]*2.23694} mph')

@@ -19,9 +19,11 @@ env.draw_state(state)
 learning_iterations = 400
 explore_factor = 0.1
 discount_factor = 1.0
-rollout_method = 'random_same'
+rollout_method = 'accelerate'
 hertg_method = 'static'
 dynamic_learning_iterations = True # When true varies LI to match the timestep
+rollout_pre_collision_stop = True # When true decellerates car when collision is predicted
+
 
 # Create hertg object
 hertg = HERTG(state, env, hertg_method, reward_scale=0.01)
@@ -61,12 +63,12 @@ try:
         # Run MCTS, get best action, and update state
         if dynamic_learning_iterations:
             root, LI_comp = mcts_with_rollout(env, state, learning_iterations, explore_factor, discount_factor, 
-                                              rollout_method, start_with_root=None, max_time=leftover_time, 
-                                              hertg=hertg)
+                                              rollout_method, rollout_pre_collision_stop=rollout_pre_collision_stop,
+                                              start_with_root=None, max_time=leftover_time, hertg=hertg)
         else:
             root = mcts_with_rollout(env, state, learning_iterations, explore_factor, discount_factor, 
-                                     rollout_method, start_with_root=None, max_time=None, 
-                                     hertg=hertg)
+                                     rollout_method, rollout_pre_collision_stop=rollout_pre_collision_stop,
+                                     start_with_root=None, max_time=None, hertg=hertg)
 
         best_action_idx = np.argmax(root.child_Q())
         state, reward, done, observation = env.step(state, env.action_space[best_action_idx], return_observation=True)

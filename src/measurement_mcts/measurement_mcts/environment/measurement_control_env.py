@@ -24,7 +24,7 @@ class MeasurementControlEnvironment(Environment):
         self.obstacle_punishment = -0.01 # reward for colliding with an obstacle
         self.init_covariance_diag = 8. # Initial diagonal value for all diagonals of (2x2) point covariance matrix
         self.fully_observered_corner_reward = 0.5 # reward for fully observing a corner
-        self.horizon_length = 4 # length of the horizon for the environment
+        self.horizon_length = 6 # length of the horizon for the environment
         self.car_collision_radius = 4 # Collision radius of the car
         
         # Sensor parameters used in Object Manager for observation simulation and minimums for the measurement model
@@ -355,7 +355,7 @@ class MeasurementControlEnvironment(Environment):
             
         return new_ooi_means, new_ooi_covs, trace_delta_sum, fully_observed_corners
     
-    def step(self, state, action, dt=None, print_rewards=False, return_observation=False) -> Tuple[tuple, float, bool]:
+    def step(self, state, action, dt=None, print_rewards=False, return_observation=False, return_min_obs_dist=False) -> Tuple[tuple, float, bool]:
         """
         Step the environment by one time step. The action is applied to the car, and the state is observed by the OOI.
         The observation is then passed to the KF for update.
@@ -378,7 +378,7 @@ class MeasurementControlEnvironment(Environment):
         new_car_state = self.car.update(dt, action, starting_state=car_state)
         
         # Now see if the car has collided with any objects in the object manager
-        in_collision_obs, in_collision_ocl, in_collision_oois, collision_distances = self.object_manager.check_collision(new_car_state)
+        in_collision_obs, in_collision_ocl, in_collision_oois, collision_distances, min_obs_dist = self.object_manager.check_collision(new_car_state)
         
         # Get an observation from the object manager at this new car state
         observation_indices, noisy_observation = self.object_manager.get_noisy_observation(new_car_state)
@@ -412,10 +412,16 @@ class MeasurementControlEnvironment(Environment):
         # Combine the updated car state, mean, covariance and horizon into a new state
         new_state = (new_car_state, new_ooi_means, new_ooi_covs, horizon)
         
+        # Return options based on the flags
+        if return_observation and return_min_obs_dist:
+            return new_state, reward, done, noisy_observation, min_obs_dist
+        
         if return_observation:
             return new_state, reward, done, noisy_observation
         
-        # Return the reward and the new state
+        if return_min_obs_dist:
+            return new_state, reward, done, min_obs_dist
+        
         return new_state, reward, done
     
     # # Get normlized covariance trace for each point in the corners
@@ -519,7 +525,7 @@ class MeasurementControlEnvironment(Environment):
         car_state, ooi_means, ooi_covs, horizon = state
         
         # Simulate collision and observation to get objects in collision and observation display
-        in_collision_obs, in_collision_ocl, in_collision_oois, collision_distances = self.object_manager.check_collision(car_state)
+        in_collision_obs, in_collision_ocl, in_collision_oois, collision_distances, min_obs_dist = self.object_manager.check_collision(car_state)
         observation_indices = self.object_manager.get_observation_indices(car_state)
         
         # Draw the car state
