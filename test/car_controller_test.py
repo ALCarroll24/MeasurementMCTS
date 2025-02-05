@@ -8,7 +8,7 @@ import pygame
 # Add measurement mcts python package to path
 sys.path.append('./src/measurement_mcts')
 from measurement_mcts.mcts.mcts import get_best_trajectory, MCTSNode, DummyNode
-from measurement_mcts.state_evaluation.hertg import get_hertg_target_point, get_target_point_follow_action, get_hertg_reward
+from measurement_mcts.state_evaluation.hertg import HERTG
 from measurement_mcts.mcts.tree_viz import render_pyvis
 from measurement_mcts.environment.measurement_control_env import MeasurementControlEnvironment
 
@@ -16,6 +16,7 @@ from measurement_mcts.environment.measurement_control_env import MeasurementCont
 env = MeasurementControlEnvironment(init_reset=False, interactive=True)
 state = env.reset()
 env.draw_state(state)
+hertg = HERTG(state, env, 'static', reward_scale=0.01)
 
 # Initialize Pygame and the joystick module
 pygame.init()
@@ -73,12 +74,12 @@ try:
         print(f'Action: {action}')
 
         # Plot the hertg target point for debugging
-        get_hertg_target_point(state, env, ui=env.ui)
+        hertg.update_best_ooi(state)
         
         # --- Environment Update ---
-        state, reward, done = env.step(state, action, dt=dt)
+        state, reward, done, observation = env.step(state, action, dt=dt, return_observation=True)
         # print(f'(rew, her): {reward}, {get_hertg_reward(state, env)}')
-        env.draw_state(state)
+        env.draw_state(state, observation=observation, hertg=hertg)
         # print(f'Speed: {state[0][2]*2.23694} mph')
 
         # --- Dynamic Sleep Adjustment ---

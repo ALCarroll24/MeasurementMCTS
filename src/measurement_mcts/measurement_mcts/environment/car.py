@@ -10,7 +10,7 @@ from copy import deepcopy
 class Car:
     def __init__(self, max_range: float, max_bearing: float,
                  init_pos_bounds: np.ndarray, init_yaw_bounds: np.ndarray,
-                 steering_center_spring_rate: float=0.08, steering_velocity_damping: float=0.1,
+                 steering_center_spring_rate: float=0.08, steering_velocity_damping: float=0.16,
                  longitudinal_damping: float=0.04, range_arrow_length: float=10.0, state=None, ui=None):
         # Save parameters
         self.max_range = max_range # m

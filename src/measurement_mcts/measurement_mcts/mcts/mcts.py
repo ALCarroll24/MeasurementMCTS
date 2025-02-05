@@ -12,7 +12,7 @@ import timeit
 import time
 import pickle
 import sys
-from measurement_mcts.state_evaluation.hertg import get_hertg_target_point, get_hertg_reward
+from measurement_mcts.state_evaluation.hertg import HERTG
 
 # Measurement MCTS python package imports
 # sys.path.append("..")  # Adds higher directory to python modules path.
@@ -320,7 +320,7 @@ class MCTSNode:
     ############################################################################################################
     # Rollout evaluation methods
     ############################################################################################################
-    def one_action_rollout(self, rollout_method, first_action=None, hertg=False, target_point=None, keep_nodes=False, keep_data=False):
+    def one_action_rollout(self, rollout_method, first_action=None, hertg=None, keep_nodes=False, keep_data=False):
         """ Simulate the same action until reaching a terminal state 
             params:
                 action: the action to simulate (int)
@@ -332,8 +332,7 @@ class MCTSNode:
                     accelerate: accelerate the car in the direction of velocity with no steering wheel input
                     heuristic: use the highest HERTG action for all steps
                 first_action: action to use first before using rollout_method (must pass if using same) (bool)
-                hertg: whether to use the HERTG heuristic at the end of the rollout (bool)
-                target_point: the target point for the HERTG heuristic (np.ndarray)
+                hertg: HERTG object used to add heuristic at the end of the rollout, None disables (HERTG)
                 keep_nodes: whether to keep the nodes of the rollout (bool)
                 keep_data: whether to keep the data of the rollout (bool)
         """
@@ -382,9 +381,9 @@ class MCTSNode:
             cumulative_reward += reward
             is_first_action = False
             
-        if hertg is True and target_point is not None:
+        if hertg is not None:
             # Tack on expected cost to go to final state
-            hertg_reward = get_hertg_reward(state, self.env, target_point=target_point)
+            hertg_reward = hertg.get_reward(state)
             # print(f"HERTG Reward: {hertg_reward}")
             cumulative_reward += hertg_reward
         
@@ -393,7 +392,7 @@ class MCTSNode:
         
         return cumulative_reward
     
-    def rollout_children(self, rollout_method, hertg=False, target_point=None, keep_nodes=True, parallel=True):
+    def rollout_children(self, rollout_method, hertg=None, keep_nodes=True, parallel=True):
         """ rollout all children in parallel to get the expected reward 
             params:
                 rollout_method: The method to use for the rollout (random, same, zero, heuristic) (str)
@@ -403,7 +402,7 @@ class MCTSNode:
                     zero: select the zero action after the first action
                     accelerate: accelerate the car in the direction of velocity with no steering wheel input
                     heuristic: use the highest HERTG action for all steps
-                hertg: whether to use the HERTG heuristic at the end of the rollout (bool)
+                hertg: HERTG object used to add heuristic at the end of the rollout, None disables (HERTG)
                 target_point: the target point for the HERTG heuristic (np.ndarray)
                 keep_nodes: whether to keep the nodes of the rollout (bool)
         """
@@ -416,7 +415,7 @@ class MCTSNode:
             
             if keep_nodes:
                 partial_one_action_rollout = partial(self.one_action_rollout, rollout_method, hertg=hertg, 
-                                                     target_point=target_point, keep_nodes=False, keep_data=True)
+                                                     keep_nodes=False, keep_data=True)
                 rollout_results = pool.map(partial_one_action_rollout, np.arange(self.env.N))
                 
                 # Reconstruct the tree with the rollout results (can't add to tree in parallel)
@@ -433,7 +432,7 @@ class MCTSNode:
                             leaf.number_visits += 1
             else:
                 partial_one_action_rollout = partial(self.one_action_rollout, rollout_method, hertg=hertg, 
-                                                     target_point=target_point, keep_nodes=False, keep_data=False)
+                                                     keep_nodes=False, keep_data=False)
                 rollout_rewards= pool.map(partial_one_action_rollout, np.arange(self.env.N))
             
             pool.close()
@@ -444,7 +443,7 @@ class MCTSNode:
             rollout_rewards = np.zeros([self.env.N], dtype=np.float32)
             for action in range(self.env.N):
                 rollout_rewards[action] = self.one_action_rollout(rollout_method, first_action=action, hertg=hertg,
-                                                                  target_point=target_point, keep_nodes=keep_nodes)
+                                                                  keep_nodes=keep_nodes)
             return rollout_rewards
         
 
@@ -527,7 +526,7 @@ def get_action_subtree(root: MCTSNode, action: int):
 # MCTS search method currently used
 ############################################################################################################
 def mcts_with_rollout(env, starting_state, learning_iterations, explore_factor, discount_factor, 
-                      rollout_method, parallel_rollout=False, start_with_root=None, hertg=False, 
+                      rollout_method, parallel_rollout=False, start_with_root=None, hertg=None, 
                       keep_nodes=True, max_time=None):
     """
     Run MCTS search with a rollout from each selected node
@@ -546,7 +545,7 @@ def mcts_with_rollout(env, starting_state, learning_iterations, explore_factor, 
             heuristic: use the highest HERTG action for all steps
         parallel_rollout: If True do first rollouts for all children in parallel
         start_with_root: If provided start with the provided root node
-        hertg: If True tack on Heuristic Expected Reward to go at end of rollout
+        hertg: HERTG object used to add heuristic at the end of the rollout, None disables
         keep_nodes: If True keep the rollout nodes in the tree for visualization and re-use
         max_time: If provided, stop the search after the given time in seconds, also returns LI completed
     returns:
@@ -563,12 +562,13 @@ def mcts_with_rollout(env, starting_state, learning_iterations, explore_factor, 
     # Expand the root node to prevent first search from doing nothing
     root.is_expanded = True
     
-    # Calculate the target point for the HERTG heuristic
-    target_point = get_hertg_target_point(starting_state, env, ui=env.ui)
+    if hertg is not None:
+        # Determine OOI to target for this search
+        hertg.update_best_ooi(starting_state)
     
     # If enabled do first rollouts for all children in parallel
     if parallel_rollout:
-        rollout_rewards = root.rollout_children(rollout_method, hertg=hertg, target_point=target_point, keep_nodes=keep_nodes, parallel=False)
+        rollout_rewards = root.rollout_children(rollout_method, hertg=hertg, keep_nodes=keep_nodes, parallel=False)
         root.child_total_value = np.array(rollout_rewards) # Set the total value of the root node to the rollout rewards
         root.number_visits = env.N # Set the number of visits to the number of rollouts
         
@@ -583,7 +583,7 @@ def mcts_with_rollout(env, starting_state, learning_iterations, explore_factor, 
             first_action = None
         
         # Do a rollout from the leaf node to get estimated value
-        rollout_reward = leaf.one_action_rollout(rollout_method, first_action=first_action, hertg=hertg, target_point=target_point, keep_nodes=keep_nodes)
+        rollout_reward = leaf.one_action_rollout(rollout_method, first_action=first_action, hertg=hertg, keep_nodes=keep_nodes)
         
         leaf.is_expanded = True # Mark the leaf node as expanded
         leaf.backup(rollout_reward) # Backup the best rollout reward to the root node

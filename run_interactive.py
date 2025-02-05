@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from time import sleep
 sys.path.append('src/measurement_mcts')
 from measurement_mcts.mcts.mcts import mcts_with_rollout, get_action_subtree
-from measurement_mcts.state_evaluation.hertg import get_hertg_target_point, get_target_point_follow_action
+from measurement_mcts.state_evaluation.hertg import HERTG
 from measurement_mcts.mcts.tree_viz import render_pyvis
 from measurement_mcts.environment.measurement_control_env import MeasurementControlEnvironment
 
@@ -17,10 +17,14 @@ env.draw_state(state)
 
 # Parameters
 learning_iterations = 400
-explore_factor = 0.05
+explore_factor = 0.1
 discount_factor = 1.0
 rollout_method = 'random_same'
+hertg_method = 'static'
 dynamic_learning_iterations = True # When true varies LI to match the timestep
+
+# Create hertg object
+hertg = HERTG(state, env, hertg_method, reward_scale=0.01)
 
 # Permanent part of title for the window
 title_perm = f'Interactive MCTS searches\n\
@@ -40,8 +44,7 @@ if dynamic_learning_iterations is False:
 try:
     while not env.ui.shutdown:
         if env.ui.paused:
-            get_hertg_target_point(state, env, ui=env.ui)
-            env.draw_state(state, title=title, root_node=root, scaling=4, bias=0.1, max=1., rew=True)
+            env.draw_state(state, title=title, root_node=root, scaling=4, bias=0.1, max=1., rew=True, hertg=hertg)
             if first_pause: # Only render the first time
                 render_pyvis(root, env.action_space, show_unsimulated=False)
             first_pause = False
@@ -51,17 +54,19 @@ try:
         
         # Plot and check leftover time
         start_loop_time = timeit.default_timer()
-        env.draw_state(state, title=title, observation=observation)#, root_node=root, scaling=4, bias=0.1, max=1., rew=True)
+        env.draw_state(state, title=title, observation=observation, hertg=hertg)#, root_node=root, scaling=4, bias=0.1, max=1., rew=True)
         leftover_time = dt - (timeit.default_timer() - start_loop_time)
         print(f"Leftover time: {leftover_time}")
         
         # Run MCTS, get best action, and update state
         if dynamic_learning_iterations:
             root, LI_comp = mcts_with_rollout(env, state, learning_iterations, explore_factor, discount_factor, 
-                                            rollout_method, start_with_root=None, max_time=leftover_time, hertg=True)
+                                              rollout_method, start_with_root=None, max_time=leftover_time, 
+                                              hertg=hertg)
         else:
             root = mcts_with_rollout(env, state, learning_iterations, explore_factor, discount_factor, 
-                                        rollout_method, start_with_root=None, max_time=None, hertg=True)
+                                     rollout_method, start_with_root=None, max_time=None, 
+                                     hertg=hertg)
 
         best_action_idx = np.argmax(root.child_Q())
         state, reward, done, observation = env.step(state, env.action_space[best_action_idx], return_observation=True)
@@ -81,7 +86,7 @@ try:
         
         if done:
             print(f"Done! Cumulative reward: {cumulative_reward}")
-            break
+            env.ui.paused = True
         
 
 except KeyboardInterrupt:

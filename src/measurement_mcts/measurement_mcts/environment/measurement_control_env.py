@@ -15,7 +15,7 @@ from measurement_mcts.environment.object_manager import ObjectManager
 from measurement_mcts.environment.static_kf_2d import StaticKalmanFilter, measurement_model
 from measurement_mcts.utils.utils import min_max_normalize, find_farthest_point, rotate
 from measurement_mcts.mcts.mcts import Environment
-from measurement_mcts.environment.exploration_grid import ExplorationGrid
+from measurement_mcts.state_evaluation.hertg import HERTG
 
 class MeasurementControlEnvironment(Environment):
     def __init__(self, init_reset=True, interactive=False):
@@ -497,7 +497,7 @@ class MeasurementControlEnvironment(Environment):
     def draw_state(self, state, title=None, plot=True, root_node=None, 
                    rew=None, q_val=None, qu_val=None, scaling=1, bias=0,
                    max=4, get_fig_ax: bool=False,
-                   observation=None) -> None:
+                   observation=None, hertg=None) -> None:
         """
         Draw the state on the UI.
         
@@ -510,6 +510,9 @@ class MeasurementControlEnvironment(Environment):
         :param scaling: (float) the scaling factor for the radius of the points
         :param bias: (float) the bias to add to the radius of the points
         :param max: (float) the maximum radius of the points
+        :param get_fig_ax: (bool) whether to return the figure and axis
+        :param observation: (np.ndarray) the observation to display
+        :param hertg: (HERTG) the HERTG object to display
         """
         
         # Pull elements out of the state
@@ -526,6 +529,10 @@ class MeasurementControlEnvironment(Environment):
         self.object_manager.draw_objects(car_state, in_collision_obs, in_collision_ocl, in_collision_oois, 
                                          observation_indices=observation_indices, observation=observation,
                                          ooi_means=ooi_means, ooi_covs=ooi_covs)
+        
+        # Draw the HERTG
+        if hertg is not None:
+            hertg.draw_target_point(state)
         
         # Draw the simulated states
         if root_node is not None:
