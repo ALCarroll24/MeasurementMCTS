@@ -15,7 +15,7 @@ env = MeasurementControlEnvironment(init_reset=False, interactive=True)
 env.reset()
 
 # If desired load a state from a file
-env.load_state('state_configurations', 'evaluation1')
+# env.load_state('state_configurations', 'evaluation1')
 
 # Set and draw the initial state
 state = env.get_state()
@@ -26,12 +26,12 @@ learning_iterations = 400
 explore_factor = 0.1
 discount_factor = 1.0
 rollout_method = 'accelerate'
-hertg_method = 'dynamic' # 'static' or 'dynamic' (static is way better)
+hertg_method = 'static' # 'static' or 'dynamic' (static is way better)
 dynamic_learning_iterations = True # When true varies LI to match the timestep
 rollout_pre_collision_stop = True # When true decellerates car when collision is predicted
 
 # Pause initially if wanted
-env.ui.paused = True
+# env.ui.paused = True
 
 # Create hertg object
 hertg = HERTG(state, env, hertg_method, reward_scale=0.01)

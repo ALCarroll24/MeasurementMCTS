@@ -365,8 +365,8 @@ class MeasurementControlEnvironment(Environment):
             print(f'Total Reward: {reward}')
         
         # Check if the episode is done
-        total_trace = np.sum(np.trace(new_ooi_covs, axis1=2, axis2=3))
-        done = total_trace < self.final_cov_trace
+        all_traces = np.trace(new_ooi_covs, axis1=2, axis2=3).flatten() # trace for each corner in flattened array
+        done = np.all(all_traces <= self.final_corner_cov_trace) # Check if all traces are below the final corner trace
         
         # Also done if horizon is equal to the maximum horizon length
         done = done or horizon >= self.horizon_length
