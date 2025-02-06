@@ -357,7 +357,6 @@ class MeasurementControlEnvironment(Environment):
         trace_delta_reward = min_max_normalize(trace_delta_sum, 0, self.init_covariance_trace) # Reward for reducing covariance trace
         fully_observed_reward = fully_observed_corners * self.fully_observered_corner_reward # Reward for fully observing a corner
         reward = obstacle_reward + trace_delta_reward + fully_observed_reward # Total reward is sum of all rewards
-        # reward = 0. # For now, no rewards
         
         # Print rewards if enabled
         if print_rewards:

@@ -1,6 +1,7 @@
 numpy==1.24.4
 pandas
 graphviz
+scipy
 pyvis
 matplotlib
 torch
