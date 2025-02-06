@@ -133,13 +133,15 @@ class MeasurementControlEnvironment(Environment):
         '''
         Returns full state -> Tuple[Car state, Object Manager DF, Exploration Grid, horizon]
         '''
-        return self.state
+        copied_state_list = list(deepcopy(self.state))
+        copied_state_list[3] = horizon
+        return tuple(copied_state_list)
     
     def set_state(self, state) -> None:
         """
         Set the state of the environment to a specific state.
         
-        :param state: (np.ndarray) the state tuple (Car state, Object Manager DF, Exploration Grid, horizon)
+        :param state: (np.ndarray) the state tuple (Car state, OOI means, OOI covariances, horizon)
         """
         self.state = deepcopy(state)
         
@@ -151,9 +153,8 @@ class MeasurementControlEnvironment(Environment):
         :param name: (str) the name of the file to save the state to
         """
         # Save the state to a file
-        # np.save(f'{path}/{name}', (self.car.get_state(), self.object_manager.get_df(), self.explore_grid.get_grid(), 0))
         with open(f'{path}/{name}.pkl', 'wb') as file:
-            pickle.dump(self.state, file)
+            pickle.dump((self.get_state(), self.object_manager.get_true_state()), file)
         
     def load_state(self, path, name) -> None:
         """
@@ -163,14 +164,18 @@ class MeasurementControlEnvironment(Environment):
         """
         # Load the state from a file
         with open(f'{path}/{name}.pkl', 'rb') as file:
-            state = pickle.load(file)
+            state, object_true_state = pickle.load(file)
         
         # Set the state of the environment
         self.set_state(state)
+        
+        # Set the true state of the object manager
+        self.object_manager.set_true_state(object_true_state)
     
     def estimate_remaining_points(self, points, car_state):
         """
-        Take 2 or 3 points from the observation and estimate the remaining points of the object
+        Take 2 or 3 points from the observation and estimate the remaining points of the object.
+        Used to complete the observation on real/Unity data where only a few points are observed.
         
         :param points: (np.ndarray) the observed points of the object
         :param car_state: (np.ndarray) the state of the car (x, y, yaw)
@@ -214,109 +219,67 @@ class MeasurementControlEnvironment(Environment):
         
         else:
             raise ValueError("Points must be of length 2 or 3")
-    
-    def corner_data_association(self, obs_list: list, object_df: pd.DataFrame, 
-                                car_state: np.ndarray, node=None) -> Tuple[dict, pd.DataFrame, np.ndarray]:
-        # Create output observation dictionary which holds ooi_id's as keys and the associated corner indeces as values
-        obs_dict = {}
-        
-        # First estimate the remaining points of the objects based on the observed points
-        obs_polys = np.zeros((len(obs_list), 4, 2))
-        estimated_indices = np.zeros((len(obs_list), 4))
-        for i, poly in enumerate(obs_list):
-            obs_polys[i], estimated_indices[i] = self.estimate_remaining_points(poly, car_state)
-            
-        # If there are no objects maintained, add all sets of corners as new objects
-        if object_df.empty:
-            for i, poly in enumerate(obs_polys):
-                # Add the new polygon to the object manager
-                object_df = self.object_manager.add_ooi(poly, object_df)
-                
-            # Remove all objects from the observation polygons since they have all been applied
-            obs_polys = np.zeros((0, 4, 2))
-            
-            return obs_dict, object_df, obs_polys, estimated_indices
 
-        # Pull out corner points from the object dataframe where the object type is 'ooi'
-        ooi_df = object_df[object_df['object_type'] == 'ooi']
-        rects = np.stack(ooi_df['points'].values) # Get the corner points of the OOI's
-        ooi_ids = np.stack(ooi_df['ooi_id'].values) # Get the OOI id's
+    # For use with ROS and real/Unity data, needs to be reworked for new object manager no database format    
+    # def corner_data_association(self, obs_list: list, object_df: pd.DataFrame, 
+    #                             car_state: np.ndarray, node=None) -> Tuple[dict, pd.DataFrame, np.ndarray]:
+    #     # Create output observation dictionary which holds ooi_id's as keys and the associated corner indeces as values
+    #     obs_dict = {}
         
-        # First calculate centroids of the polygons
-        obs_centroids = np.mean(obs_polys, axis=1)
-        centroids = np.mean(rects, axis=1)
-        
-        # Calculate distance between all pairs of centroids
-        distances = cdist(obs_centroids, centroids)
-        
-        # Solve the assignment problem to find the best match using scipy
-        row_ind, col_ind = linear_sum_assignment(distances)
-        node.get_logger().info(f'Object Assignment:')
-        node.get_logger().info(f'Row Index: {row_ind}')
-        node.get_logger().info(f'Col Index: {col_ind}')
-        
-        # Organize the polygons based on the assignment 
-        assigned_rects = rects[col_ind]
-        
-        # Now with objects associated, perform point to point data association
-        for i, (obs_rect, maint_rect) in enumerate(zip(obs_polys, assigned_rects)):
-            distances = cdist(obs_rect, maint_rect)
-            row_idx, col_idx = linear_sum_assignment(distances)
-            node.get_logger().info(f'Object {i} Point Assignment:')
-            node.get_logger().info(f'Row Index: {row_idx}')
-            node.get_logger().info(f'Col Index: {col_idx}')
-            obs_dict[ooi_ids[i]] = col_idx
+    #     # First estimate the remaining points of the objects based on the observed points
+    #     obs_polys = np.zeros((len(obs_list), 4, 2))
+    #     estimated_indices = np.zeros((len(obs_list), 4))
+    #     for i, poly in enumerate(obs_list):
+    #         obs_polys[i], estimated_indices[i] = self.estimate_remaining_points(poly, car_state)
             
-        # Also organize the observation polygons based on the assignment
-        obs_polys = obs_polys[col_ind]
+    #     # If there are no objects maintained, add all sets of corners as new objects
+    #     if object_df.empty:
+    #         for i, poly in enumerate(obs_polys):
+    #             # Add the new polygon to the object manager
+    #             object_df = self.object_manager.add_ooi(poly, object_df)
+                
+    #         # Remove all objects from the observation polygons since they have all been applied
+    #         obs_polys = np.zeros((0, 4, 2))
             
-        # TODO: Add non-associated objects to the object manager as new objects
-        node.get_logger().info(f'obs_dict: {obs_dict}')
+    #         return obs_dict, object_df, obs_polys, estimated_indices
 
-        return obs_dict, object_df, obs_polys, estimated_indices
-    
-    # Old database method
-    # def apply_observation(self, observation: dict, object_df: pd.DataFrame, car_state: np.ndarray, 
-    #                       real_observation: np.ndarray=None, estimated_indices: np.ndarray=None) -> Tuple[pd.DataFrame, float]:
-    #     # Take a copy of the object dataframe to update before modifying
-    #     object_df = deepcopy(object_df)
+    #     # Pull out corner points from the object dataframe where the object type is 'ooi'
+    #     ooi_df = object_df[object_df['object_type'] == 'ooi']
+    #     rects = np.stack(ooi_df['points'].values) # Get the corner points of the OOI's
+    #     ooi_ids = np.stack(ooi_df['ooi_id'].values) # Get the OOI id's
         
-    #     # Apply the KF update to the observed corners
-    #     trace_delta_sum = 0. # Sum of the difference in trace made in this update
-    #     for i, (ooi_id, observed_indices) in enumerate(observation.items()):
-    #         # Get the row corresponding to this ooi and the means and covariances of the OOI corners
-    #         ooi_index = object_df.loc[object_df['ooi_id'] == ooi_id].index[0] # Index of the OOI in the object dataframe
-    #         cur_means = deepcopy(object_df.loc[ooi_index, 'points']) # 4x2 numpy array of corner means
-    #         cur_covs = deepcopy(object_df.loc[ooi_index, 'covariances']) # List of 4 2x2 numpy covariance matrices
+    #     # First calculate centroids of the polygons
+    #     obs_centroids = np.mean(obs_polys, axis=1)
+    #     centroids = np.mean(rects, axis=1)
+        
+    #     # Calculate distance between all pairs of centroids
+    #     distances = cdist(obs_centroids, centroids)
+        
+    #     # Solve the assignment problem to find the best match using scipy
+    #     row_ind, col_ind = linear_sum_assignment(distances)
+    #     node.get_logger().info(f'Object Assignment:')
+    #     node.get_logger().info(f'Row Index: {row_ind}')
+    #     node.get_logger().info(f'Col Index: {col_ind}')
+        
+    #     # Organize the polygons based on the assignment 
+    #     assigned_rects = rects[col_ind]
+        
+    #     # Now with objects associated, perform point to point data association
+    #     for i, (obs_rect, maint_rect) in enumerate(zip(obs_polys, assigned_rects)):
+    #         distances = cdist(obs_rect, maint_rect)
+    #         row_idx, col_idx = linear_sum_assignment(distances)
+    #         node.get_logger().info(f'Object {i} Point Assignment:')
+    #         node.get_logger().info(f'Row Index: {row_idx}')
+    #         node.get_logger().info(f'Col Index: {col_idx}')
+    #         obs_dict[ooi_ids[i]] = col_idx
             
-    #         # Go through the indeces of the OOI points that were observed
-    #         for j in observed_indices:
-    #             # KF update with the observed corner using the previous mean for now
-    #             prev_trace = np.trace(cur_covs[j]) # Get the trace of the covariance matrix pre-update
-                
-    #             # If we are doing a simulated update using the previous means
-    #             if real_observation is None:
-    #                 new_mean, new_cov = self.skf.update(cur_means[j,:], cur_covs[j], cur_means[j,:], car_state)
-                    
-    #             # Otherwise use the real observation dictionary to update the KF
-    #             else:
-    #                 # If this is an estimated point, inflate the noise
-    #                 if estimated_indices[i][j] == 1:
-    #                     new_mean, new_cov = self.skf.update(cur_means[j,:], cur_covs[j], real_observation[i][j], car_state, range_dev=10.0, bearing_dev=5.0)
-    #                 else:
-    #                     new_mean, new_cov = self.skf.update(cur_means[j,:], cur_covs[j], real_observation[i][j], car_state)
-                    
-    #             trace_delta_sum += prev_trace - np.trace(new_cov) # Add the difference in trace to the sum
-                
-    #             # Place the new mean and covariance into the copied means and covs
-    #             cur_means[j,:] = new_mean
-    #             cur_covs[j] = new_cov
-                
-    #         # Now place the updated means and covs back into the object dataframe
-    #         object_df.at[ooi_index, 'points'] = cur_means
-    #         object_df.at[ooi_index, 'covariances'] = cur_covs
+    #     # Also organize the observation polygons based on the assignment
+    #     obs_polys = obs_polys[col_ind]
             
-    #     return object_df, trace_delta_sum
+    #     # TODO: Add non-associated objects to the object manager as new objects
+    #     node.get_logger().info(f'obs_dict: {obs_dict}')
+
+    #     return obs_dict, object_df, obs_polys, estimated_indices
     
     def apply_observation(self, observation_indices: dict, observation: dict, car_state: np.ndarray, 
                           ooi_means: np.ndarray, ooi_covs: np.ndarray) -> Tuple[pd.DataFrame, float]:
@@ -423,82 +386,6 @@ class MeasurementControlEnvironment(Environment):
             return new_state, reward, done, min_obs_dist
         
         return new_state, reward, done
-    
-    # # Get normlized covariance trace for each point in the corners
-    # def get_normalized_cov_pt_traces(self, state) -> np.ndarray:
-    #     # Get the diagonals of the covariance matrix for the corners to get trace
-    #     corner_cov_diags = np.diag(state[2])
-        
-    #     # Get the trace of every 2 diagonals (to get a per point trace)
-    #     reshaped_cov_diags = corner_cov_diags.reshape(4, 2) # this puts x in first column and y in second
-    #     point_traces = np.mean(reshaped_cov_diags, axis=1) # Sum the x and y covariances for each point to get trace
-        
-    #     # Normalize the point traces to [0, covariance_trace_init/4] (this is the max trace for a single point)
-    #     norm_point_traces = min_max_normalize(point_traces, 0, self.covariance_trace_init/4)
-        
-    #     return norm_point_traces
-        
-    # # Quick state evaluation based on kdtree for quick distance lookup to corners and obstacles
-    # def evaluate(self, state, draw=False) -> float:
-    #     # Get the normalized covariance trace for each corner
-    #     norm_point_traces = self.get_normalized_cov_pt_traces(state)
-        
-    #     # Evaluate for each action in action space
-    #     prior_reward = np.zeros([self.N], dtype=np.float32)
-    #     for n, action in enumerate(self.action_space):
-    #         # Pass the car state to the KDTree evaluation to get the reward
-    #         prior_reward[n] = self.eval_kd_tree.evaluate(action, state[0], norm_point_traces, state[4], self.discount_factor, draw=draw)
-            
-    #     avg_reward = np.mean(prior_reward)
-        
-    #     return prior_reward, avg_reward
-    
-    # # Same repeating action evaluation as in evaluation.py but using full environment step
-    # def full_evaluate(self, action, state, depth, draw=False) -> float:
-    #     # Use the full environment step to evaluate the reward eval_steps times
-    #     cumulative_reward = 0.
-    #     for i in range(self.eval_steps):
-    #         state, reward, done = self.step(state, action, dt=self.eval_dt)
-    #         discounted_reward = reward * (self.discount_factor**(depth+i))
-    #         cumulative_reward += discounted_reward
-            
-    #         # Draw the state if draw is True with size based on reward
-    #         if draw:
-    #             # self.ui.draw_circle(state[0][:2], 0.1, color='r')
-    #             self.ui.draw_text(f'fl: {reward:.2f}', state[0][:2] + np.array([-0.2, 0.6]), color='black', fontsize=12)
-    #         #     print(f'i={i} Fl Reward={reward}')
-    #         # print()
-        
-    #     return cumulative_reward
-    
-    # # Run evaluation with display from starting state for debugging
-    # def display_evaluation(self, state, pause_time=0.1, draw=False) -> None:
-    #     # Run both evaluations for comparison on each action
-    #     test_actions = np.array([[1.0, -1.0], [1.0, -0.5], [1.0, 0.0], [1.0, 0.5], [1.0, 1.0]])
-    #     # test_actions = np.array([[0., 0.]])
-    #     # test_actions = np.array([[-1.0, 0.0], [-1.0, -1.0], [-1.0, 1.0]])
-        
-    #     for a in test_actions:
-    #     # for a in self.action_space:
-    #         print()
-    #         print(f'Action: {a}')
-    #         # Run the KDTree evaluation
-    #         print('KD TREE EVALUATION')
-    #         kd_cumulative_reward = self.evaluate(a, state, 0, draw=draw)
-            
-    #         # Run the full environment evaluation
-    #         print('FULL EVALUATION')
-    #         full_cumulative_reward = self.full_evaluate(a, state, 0, draw=draw)
-            
-    #     if draw:  
-    #         # Draw the initial state
-    #         self.car.draw_state(state[0])
-    #         self.skf.draw_state(state[1], state[2])
-    #         self.ooi.draw()
-    #         self.eval_kd_tree.draw_obstacles()
-            
-    #         # Create plot for the UI
-    #         self.ui.single_plot()
     
     def draw_state(self, state, title=None, plot=True, root_node=None, 
                    rew=None, q_val=None, qu_val=None, scaling=1, bias=0,
@@ -675,22 +562,3 @@ class MeasurementControlEnvironment(Environment):
         # Display the animation in the notebook
         display(HTML(ani.to_jshtml()))
     
-# if __name__ == '__main__':
-#     # Create parser
-#     parser = argparse.ArgumentParser(description='Run Toy Measurement Control')
-    
-#     # Add arguments
-#     parser.add_argument('--one_iteration', type=bool)
-#     parser.add_argument('--display_evaluation', type=bool)
-#     parser.add_argument('--time_evaluation', type=bool)
-#     parser.add_argument('--no_flask_server', type=bool)
-    
-#     # Parse arguments
-#     args = parser.parse_args()
-    
-#     # Create an instance of MeasurementControlEnvironment using command line arguments
-#     tmc = MeasurementControlEnvironment(one_iteration=args.one_iteration,
-#                                 display_evaluation=args.display_evaluation,
-#                                 time_evaluation=args.time_evaluation,
-#                                 no_flask_server=args.no_flask_server)
-#     tmc.run()

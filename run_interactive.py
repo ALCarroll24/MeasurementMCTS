@@ -12,18 +12,26 @@ from measurement_mcts.environment.measurement_control_env import MeasurementCont
 
 # Initialize the environment
 env = MeasurementControlEnvironment(init_reset=False, interactive=True)
-state = env.reset()
-env.draw_state(state)
+env.reset()
+
+# If desired load a state from a file
+env.load_state('state_configurations', 'evaluation1')
+
+# Set and draw the initial state
+state = env.get_state()
+env.draw_state(env.get_state())
 
 # Parameters
 learning_iterations = 400
 explore_factor = 0.1
 discount_factor = 1.0
 rollout_method = 'accelerate'
-hertg_method = 'static'
+hertg_method = 'dynamic' # 'static' or 'dynamic' (static is way better)
 dynamic_learning_iterations = True # When true varies LI to match the timestep
 rollout_pre_collision_stop = True # When true decellerates car when collision is predicted
 
+# Pause initially if wanted
+env.ui.paused = True
 
 # Create hertg object
 hertg = HERTG(state, env, hertg_method, reward_scale=0.01)
@@ -32,7 +40,7 @@ hertg = HERTG(state, env, hertg_method, reward_scale=0.01)
 title_perm = f'Interactive MCTS searches\n\
 LI={learning_iterations}, EF={explore_factor}, DF={discount_factor}, HL={env.horizon_length} RL={rollout_method}'
 
-# Goal is to match simulation dt
+# If dynamic learning iterations enabled goal is to match simulation dt
 dt = env.simulation_dt
 search_count = 1
 cumulative_reward = 0
@@ -46,10 +54,13 @@ if dynamic_learning_iterations is False:
 try:
     while not env.ui.shutdown:
         if env.ui.paused:
-            env.draw_state(state, title=title, root_node=root, scaling=4, bias=0.1, max=1., rew=True, hertg=hertg)
-            if first_pause: # Only render the first time
-                render_pyvis(root, env.action_space, show_unsimulated=False)
-            first_pause = False
+            if root is None:
+                env.draw_state(state, title=title, hertg=hertg)
+            else:
+                env.draw_state(state, title=title, root_node=root, scaling=4, bias=0.1, max=1., rew=True, hertg=hertg)
+                if first_pause: # Only render the first time
+                    render_pyvis(root, env.action_space, show_unsimulated=False)
+                first_pause = False
             sleep(0.1)
             continue
         first_pause = True

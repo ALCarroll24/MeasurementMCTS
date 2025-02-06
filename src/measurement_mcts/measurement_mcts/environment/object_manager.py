@@ -4,34 +4,6 @@ from typing import NamedTuple, List, Tuple
 from measurement_mcts.utils.utils import get_ellipse_scaling, wrap_angle
 from measurement_mcts.environment.static_kf_2d import measurement_model
 
-# class ObjectTuple(NamedTuple):
-#     """
-#     This defines a single object which is a row of the object dataframe maintained in the ObjectManager class
-#     """
-#     object_type: str         # occlusion, obstacle, ooi
-#     shape: str               # circle, 4polygon
-#     mean: np.ndarray         # [x, y]
-#     ooi_id: int=None
-#     points: np.ndarray=None  # [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
-#     covariances: List[np.ndarray]=None # [cov1, cov2, cov3, cov4]
-#     radius: float=None
-#     observed: np.ndarray=np.zeros(4, dtype=bool) # [obs1, obs2, obs3, obs4]
-#     in_collision: bool=False
-    
-# def get_empty_df():
-#     """
-#     This function returns an empty dataframe with the columns of the ObjectTuple
-#     """
-#     return pd.DataFrame({'object_type' : pd.Series(dtype='str'),
-#                          'shape' : pd.Series(dtype='str'),
-#                          'mean' : pd.Series(dtype='object'),
-#                          'ooi_id' : pd.Series(dtype='int'),
-#                          'points' : pd.Series(dtype='object'),
-#                          'covariances' : pd.Series(dtype='object'),
-#                          'radius' : pd.Series(dtype='float'),
-#                          'observed' : pd.Series(dtype='object'),
-#                          'in_collision' : pd.Series(dtype='bool')})
-
 class ObjectManager:
     def __init__(
         self,
@@ -90,6 +62,18 @@ class ObjectManager:
         # OOIs: each is a 4-pt polygon (rectangle or general quadrilateral)
         # Shape: (num_oois, 4, 2)
         self.oois = np.zeros((num_oois, 4, 2))
+    
+    def get_true_state(self):
+        """
+        Returns the true state of the environment.
+        """
+        return self.obstacle_means, self.obstacle_radii, self.occlusion_means, self.occlusion_radii, self.oois
+    
+    def set_true_state(self, true_state):
+        """
+        Sets the true state of the environment.
+        """
+        self.obstacle_means, self.obstacle_radii, self.occlusion_means, self.occlusion_radii, self.oois = true_state
     
     # Need to remake for new data structure
     # def add_ooi(self, points: np.ndarray, df: pd.DataFrame=None):
@@ -230,7 +214,7 @@ class ObjectManager:
         
     def get_noisy_initial_state(self):
         """
-        Use maintained real object means to generate noisy initial states for MCTS.
+        Use maintained true object means to generate noisy initial states for MCTS.
         
         Class variables init_covariance_diag, init_center_stddev, init_width_guess are used to make the guess for the initial state.
         """
@@ -348,7 +332,7 @@ class ObjectManager:
             
         # ------------------------------------------------------------------
         # 4) Draw Observation index (if available)
-        #    This marks the real observed corners with green circles and arrows
+        #    This marks the true observed corners with green circles and arrows
         # ------------------------------------------------------------------
         if observation_indices is not None:
             # Iterate through observed OOIs: observation_indices = {ooi_idx: [corner0, corner3, ...], ...}
@@ -706,7 +690,7 @@ class ObjectManager:
                 observation_matrix = measurement_model(corner, car_state[0:2], car_state[3], 
                                                        range_dev=self.range_stddev, bearing_dev=self.bearing_stddev)
                 
-                # Add noise to the real corner using the observation matrix
+                # Add noise to the true corner using the observation matrix
                 noisy_corners[j] = np.random.multivariate_normal(corner, observation_matrix)
         
             # Add the noisy corners to the noisy observation

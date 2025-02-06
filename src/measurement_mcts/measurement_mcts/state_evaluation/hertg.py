@@ -21,18 +21,21 @@ class HERTG:
             
         
     def get_reward(self, state):
-        if self.method == 'dynamic':
-            self.target_point = get_hertg_dynamic_target_point(state, self.env, self.best_ooi_idx)
-        
         return get_distance_reward(state, self.target_point, self.reward_scale)
     
     def update_best_ooi(self, state):
+        # Check if the ooi is completed and update the best ooi
         if self.check_ooi_completion(state) is True:
             self.set_best_ooi(state)
             
+            # Static is only updated if the ooi is completed
             if self.method == 'static':
                 self.target_point = get_hertg_past_ooi_target_point(state, self.env, self.best_ooi_idx)
-        
+                
+        # Dynamic target point is updated even if the ooi is not completed
+        if self.method == 'dynamic':
+            self.target_point = get_hertg_dynamic_target_point(state, self.env, self.best_ooi_idx)
+
     def draw_target_point(self, state):
         if self.target_point is not None:
             self.env.ui.draw_point(self.target_point, 'green', radius=0.25)
