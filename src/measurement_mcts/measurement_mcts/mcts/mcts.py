@@ -285,7 +285,8 @@ class MCTSNode:
              
             # If not, Run the simulation and update the child
             else:
-                new_state, reward, done, min_obs_dist = self.env.step(self.state, self.env.action_space[action], return_min_obs_dist=True)
+                new_state, reward, done, min_obs_dist = self.env.step(self.state, self.env.action_space[action], 
+                                                                      return_min_obs_dist=True, obs_at_mean=True)
                 self.children[action] = MCTSNode(self.env, new_state, action, explore_factor=self.explore_factor,
                                                  discount_factor=self.discount_factor, reward=reward, parent=self, 
                                                  done=done, parallel=self.parallel)
@@ -385,7 +386,7 @@ class MCTSNode:
                 
             if not keep_nodes:
                 state, reward, done, min_obs_dist = self.env.step(state, self.env.action_space[action], 
-                                                                    return_min_obs_dist=True)
+                                                                  obs_at_mean=True, return_min_obs_dist=True)
                 states.append(state)
                 rewards.append(reward)
                 dones.append(done)

@@ -697,3 +697,35 @@ class ObjectManager:
             noisy_observation[ooi_idx] = noisy_corners
             
         return observation_indices, noisy_observation
+    
+    def get_observation_at_mean(self, car_state, ooi_means):
+        """
+        Calculate what corners are observable as normal but rather than add noise
+        to the corners, we will use the mean of the currently estimated OOIs.
+        This is done for forward simulation in MCTS
+        
+        returns:
+        - observation_indices: Dictionary of observed OOI corners for displaying observation arrows
+        - mean_observation: Dictionary of the means OOI corner positions
+        """
+        # Get the observation indices
+        observation_indices = self.get_observation_indices(car_state)
+        
+        # Create the mean observation
+        mean_observation = {}
+        for ooi_idx, observed_corners in observation_indices.items():
+            # Create a mean corner for each observed corner
+            mean_corners = np.zeros((len(observed_corners), 2))
+            
+            # Loop through each observed corner and add noise using the measurement model
+            for j, corner_idx in enumerate(observed_corners):
+                # Get the mean of the corresponding OOI
+                corner = ooi_means[ooi_idx][corner_idx]
+                
+                # Add the corner to the mean corners
+                mean_corners[j] = corner
+        
+            # Add the mean corners to the mean observation
+            mean_observation[ooi_idx] = mean_corners
+        
+        return observation_indices, mean_observation

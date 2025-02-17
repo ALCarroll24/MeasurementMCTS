@@ -318,13 +318,14 @@ class MeasurementControlEnvironment(Environment):
             
         return new_ooi_means, new_ooi_covs, trace_delta_sum, fully_observed_corners
     
-    def step(self, state, action, dt=None, print_rewards=False, return_observation=False, return_min_obs_dist=False) -> Tuple[tuple, float, bool]:
+    def step(self, state, action, dt=None, obs_at_mean=False, print_rewards=False, return_observation=False, return_min_obs_dist=False) -> Tuple[tuple, float, bool]:
         """
         Step the environment by one time step. The action is applied to the car, and the state is observed by the OOI.
         The observation is then passed to the KF for update.
         
         :param state: (np.ndarray) the state (Car state(x,y,yaw), corner means, corner covariances)
         :param action: (np.ndarray) the control input to the car (velocity, steering angle)
+        :param obs_at_mean: (bool) whether to get the observation at the mean or at the noisy state
         :return: (tuple, float, bool) the new state, the reward of the state-action pair, and whether the episode is done
         """
         # If dt is not specified, use the default period
@@ -344,7 +345,12 @@ class MeasurementControlEnvironment(Environment):
         in_collision_obs, in_collision_ocl, in_collision_oois, collision_distances, min_obs_dist = self.object_manager.check_collision(new_car_state)
         
         # Get an observation from the object manager at this new car state
-        observation_indices, noisy_observation = self.object_manager.get_noisy_observation(new_car_state)
+        if obs_at_mean is False:
+            # This is for a real update after deciding action with MCTS
+            observation_indices, noisy_observation = self.object_manager.get_noisy_observation(new_car_state)
+        else:
+            # This is for predicted states in MCTS
+            observation_indices, noisy_observation = self.object_manager.get_observation_at_mean(new_car_state, ooi_means)
         
         # Apply the observation and get sum of the trace differences and the new object dataframe
         new_ooi_means, new_ooi_covs, trace_delta_sum, fully_observed_corners = \
