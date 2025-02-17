@@ -3,6 +3,7 @@ import timeit
 import os
 import pprint
 import sys
+from copy import deepcopy
 # Add measurement mcts python package to path
 sys.path.append('../src/measurement_mcts')
 from measurement_mcts.mcts.mcts import mcts_with_rollout
@@ -66,7 +67,7 @@ def save_environment_config(env, folder_path):
     
     
 def get_mcts_metrics(env, state, max_actions=200, LI=100,
-                     EF=0.1, DF=1.0, HL=6, rollout_method='random_same',
+                     EF=0.1, DF=1.0, HL=6, rollout_method='same',
                      hertg_method='static', rollout_pre_collision_stop=True) -> dict:
     """
     Run MCTS and return the metrics.
@@ -83,6 +84,8 @@ def get_mcts_metrics(env, state, max_actions=200, LI=100,
     returns:
         metrics: a dictionary of metrics
     """
+    # Take a copy of the state
+    state = deepcopy(state)
     
     # Change environment parameters and create HERTG object
     env.horizon_length = HL

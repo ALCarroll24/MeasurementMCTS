@@ -32,9 +32,12 @@ joystick = pygame.joystick.Joystick(0)
 joystick.init()
 
 print(f"Controller detected: {joystick.get_name()}")
-dt = 0.1  # Time step in seconds
+dt = 0.6  # Time step in seconds
 dt_ms = int(dt * 1000)
 min_obs_dist = np.inf
+
+# disable internal smaller car model dt since we are using a small dt anyways
+# env.car.model_dt = 0.0 
 
 try:
     while not env.ui.shutdown:
@@ -71,17 +74,15 @@ try:
         # # Format action (swap axes for intuitive control)
         # action = [-y_axis, -x_axis]
 
-        # print(f'Action: {action}')
-        stop_dist = env.car.get_stop_distance(state[0][2], env.car.model_dt)
-        # print(f'Stopping distance: {stop_dist}')
-        # print(f'Minimum obstacle distance: {min_obs_dist}')
         
-        if min_obs_dist < stop_dist:
-            # print("OH SHIDDDDDD")
-            if state[0][2] > 0.01:
-                action = [-1, 0]
-            elif state[0][2] < -0.01:
-                action = [1, 0]
+        # # Test stop distance if uncommented
+        # stop_dist = env.car.get_stop_distance(state[0][2], env.car.model_dt)
+        # if min_obs_dist < stop_dist:
+        #     # print("OH SHIDDDDDD")
+        #     if state[0][2] > 0.01:
+        #         action = [-1, 0]
+        #     elif state[0][2] < -0.01:
+        #         action = [1, 0]
                 
         print(f'Action: {action}')
 

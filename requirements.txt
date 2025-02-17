@@ -4,6 +4,7 @@ graphviz
 scipy
 pyvis
 matplotlib
+pygame
 torch
 torchvision
 torchaudio
