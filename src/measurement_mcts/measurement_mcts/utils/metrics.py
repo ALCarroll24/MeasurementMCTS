@@ -134,7 +134,7 @@ def get_mcts_metrics(env, state, max_actions=200, LI=100,
     
     return metrics
 
-def worker_wrapper(trial_config_name, rollout_method,
+def worker_wrapper(trial_number, trial_config_name, rollout_method,
                    trial_config_path,
                    max_actions=200,
                    LI=100,
@@ -160,8 +160,12 @@ def worker_wrapper(trial_config_name, rollout_method,
     Returns:
         dict: Metrics dictionary from get_mcts_metrics.
     """
+    # Create a unique seed using process ID and trial number.
+    seed = os.getpid() + trial_number
+    np.random.seed(seed)  # Re-seed NumPy's RNG in this process.
+    
     # Create a new environment instance.
-    env = MeasurementControlEnvironment()
+    env = MeasurementControlEnvironment(init_reset=False)
     
     # Load the saved state and object configuration.
     # This call uses your custom load_state method.
