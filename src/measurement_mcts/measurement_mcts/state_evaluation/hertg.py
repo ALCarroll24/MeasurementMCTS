@@ -2,10 +2,12 @@ import numpy as np
 from measurement_mcts.utils.utils import wrap_angle, min_max_normalize, rotate_about_point, angle_difference
 
 class HERTG:
-    def __init__(self, state, env, method, reward_scale=0.01):
+    def __init__(self, state, env, method, reward_scale=0.00166):
         self.env = env
         self.method = method
-        self.reward_scale = reward_scale
+        
+        # Scale the reward based on the horizon length in the environment
+        self.reward_scale = reward_scale * env.horizon_length
         
         # Initialize the best ooi index
         self.set_best_ooi(state)

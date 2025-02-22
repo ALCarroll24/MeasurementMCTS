@@ -16,7 +16,7 @@ from measurement_mcts.environment.measurement_control_env import MeasurementCont
 env = MeasurementControlEnvironment(init_reset=False, interactive=True)
 state = env.reset()
 env.draw_state(state)
-hertg = HERTG(state, env, 'static', reward_scale=0.01)
+hertg = HERTG(state, env, 'static')
 
 # Initialize Pygame and the joystick module
 pygame.init()

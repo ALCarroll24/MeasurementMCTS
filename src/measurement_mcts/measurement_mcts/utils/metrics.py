@@ -130,6 +130,7 @@ def get_mcts_metrics(env, state, max_actions=200, LI=100,
         'num_actions': num_actions,
         'computation_time': comp_time,
         'computation_per_action': comp_time / num_actions,
+        'rollout_pre_collision_stop': rollout_pre_collision_stop,
     }
     
     return metrics

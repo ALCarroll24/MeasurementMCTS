@@ -14,27 +14,31 @@ from measurement_mcts.environment.measurement_control_env import MeasurementCont
 env = MeasurementControlEnvironment(init_reset=False, interactive=True)
 env.reset()
 
+# Save an interesting state configuration to a file
+# env.save_state('state_configurations', 'hertg_test1')
+
 # If desired load a state from a file
-# env.load_state('state_configurations', 'evaluation1')
+env.load_state('state_configurations', 'hertg_test1')
 
 # Set and draw the initial state
 state = env.get_state()
 env.draw_state(env.get_state())
 
 # Parameters
-learning_iterations = 400
+learning_iterations = 25
 explore_factor = 0.1
 discount_factor = 1.0
-rollout_method = 'accelerate'
+rollout_method = 'same'
 hertg_method = 'static' # 'static' or 'dynamic' (static is way better)
-dynamic_learning_iterations = True # When true varies LI to match the timestep
+env.horizon_length = 13
 rollout_pre_collision_stop = True # When true decellerates car when collision is predicted
+dynamic_learning_iterations = False # When true varies LI to match the timestep
 
 # Pause initially if wanted
 # env.ui.paused = True
 
 # Create hertg object
-hertg = HERTG(state, env, hertg_method, reward_scale=0.01)
+hertg = HERTG(state, env, hertg_method)
 
 # Permanent part of title for the window
 title_perm = f'Interactive MCTS searches\n\
