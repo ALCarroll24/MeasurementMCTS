@@ -451,6 +451,9 @@ class ObjectManager:
         else:
             in_collision_oois = np.array([], dtype=int)
         
+        # Modify the minimum obstacle distance to be the minimum around the car not with the usual buffer
+        min_obs_dist += car_radius - 2.7 # 2.7 is actual collision distance of car
+        
         # Return the indices that are colliding
         return in_collision_obs, in_collision_ocl, in_collision_oois, collision_distances, min_obs_dist
     

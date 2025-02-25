@@ -18,27 +18,32 @@ env.reset()
 # env.save_state('state_configurations', 'hertg_test1')
 
 # If desired load a state from a file
-env.load_state('state_configurations', 'hertg_test1')
+# env.load_state('state_configurations', 'hertg_test1')
 
 # Set and draw the initial state
 state = env.get_state()
 env.draw_state(env.get_state())
 
 # Parameters
-learning_iterations = 25
+learning_iterations = 500
 explore_factor = 0.1
 discount_factor = 1.0
-rollout_method = 'same'
-hertg_method = 'static' # 'static' or 'dynamic' (static is way better)
-env.horizon_length = 13
-rollout_pre_collision_stop = True # When true decellerates car when collision is predicted
+rollout_method = 'accelerate'
+hertg_method = 'static' # 'static' or 'dynamic'
+env.horizon_length = 3
+env.obstacle_discount_factor = 0.8
+env.car_collision_radius = env.object_manager.car_collision_radius = 5
+env.fully_observed_corner_reward = 0.02 #0.1
+env.obstacle_punishment = -0.003
+hertg_reward_scale = 0.1
+rollout_pre_collision_stop = False # When true decellerates car when collision is predicted
 dynamic_learning_iterations = False # When true varies LI to match the timestep
 
 # Pause initially if wanted
 # env.ui.paused = True
 
 # Create hertg object
-hertg = HERTG(state, env, hertg_method)
+hertg = HERTG(state, env, hertg_method, reward_scale=hertg_reward_scale)
 
 # Permanent part of title for the window
 title_perm = f'Interactive MCTS searches\n\
@@ -61,9 +66,11 @@ try:
             if root is None:
                 env.draw_state(state, title=title, hertg=hertg)
             else:
-                env.draw_state(state, title=title, root_node=root, scaling=4, bias=0.1, max=1., rew=True, hertg=hertg)
+                env.draw_state(state, title=title, root_node=root, scaling=1000, bias=10, max=100000.,
+                               rew=True, hertg=hertg, hertg_scale=50)
                 if first_pause: # Only render the first time
                     render_pyvis(root, env.action_space, show_unsimulated=False)
+                    env.save_state('state_configurations', 'paused_state')
                 first_pause = False
             sleep(0.1)
             continue
@@ -86,7 +93,13 @@ try:
                                      start_with_root=None, max_time=None, hertg=hertg)
 
         best_action_idx = np.argmax(root.child_Q())
-        state, reward, done, observation = env.step(state, env.action_space[best_action_idx], return_observation=True)
+        state, reward, done, observation, failure = env.step(state, env.action_space[best_action_idx], 
+                                                    return_observation=True, check_failure=True)
+        
+        if failure:
+            print(f"Failure! Cumulative reward: {cumulative_reward}")
+            env.ui.paused = True
+            continue
         
         # Reset the depth of the state to 0
         state_list = list(state)

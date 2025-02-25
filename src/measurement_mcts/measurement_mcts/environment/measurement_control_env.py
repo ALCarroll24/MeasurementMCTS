@@ -21,11 +21,12 @@ class MeasurementControlEnvironment(Environment):
     def __init__(self, init_reset=True, interactive=False):
         # General important parameters
         self.simulation_dt = 0.6 # time step size for forward simulation search
-        self.obstacle_punishment = -0.01 # reward for colliding with an obstacle
+        self.obstacle_punishment = -0.003 # reward for colliding with an obstacle
         self.init_covariance_diag = 8. # Initial diagonal value for all diagonals of (2x2) point covariance matrix
-        self.fully_observered_corner_reward = 0.5 # reward for fully observing a corner
+        self.fully_observered_corner_reward = 0.02 # reward for fully observing a corner
         self.horizon_length = 6 # length of the horizon for the environment
-        self.car_collision_radius = 4 # Collision radius of the car
+        self.car_collision_radius = 5 # Collision radius of the car
+        self.obstacle_discount_factor = 0.8 # Discount factor for obstacles in the environment
         
         # Sensor parameters used in Object Manager for observation simulation and minimums for the measurement model
         sensor_min_range = 5. # minimum range for sensor model
@@ -318,14 +319,21 @@ class MeasurementControlEnvironment(Environment):
             
         return new_ooi_means, new_ooi_covs, trace_delta_sum, fully_observed_corners
     
-    def step(self, state, action, dt=None, obs_at_mean=False, print_rewards=False, return_observation=False, return_min_obs_dist=False) -> Tuple[tuple, float, bool]:
+    def step(self, state, action, dt=None, check_failure=False, obs_at_mean=False, print_rewards=False, return_observation=False,
+             return_min_obs_dist=False, negative_to_zero=False) -> Tuple[tuple, float, bool]:
         """
         Step the environment by one time step. The action is applied to the car, and the state is observed by the OOI.
         The observation is then passed to the KF for update.
         
         :param state: (np.ndarray) the state (Car state(x,y,yaw), corner means, corner covariances)
         :param action: (np.ndarray) the control input to the car (velocity, steering angle)
+        :param dt: (float) the time step size for the simulation
+        :param check_failure: (bool) whether to check for failure (hard collision)
         :param obs_at_mean: (bool) whether to get the observation at the mean or at the noisy state
+        :param print_rewards: (bool) whether to print the rewards for each step
+        :param return_observation: (bool) whether to return the observation
+        :param return_min_obs_dist: (bool) whether to return the minimum obstacle distance
+        :param negative_to_zero: (bool) whether to set negative rewards to 0
         :return: (tuple, float, bool) the new state, the reward of the state-action pair, and whether the episode is done
         """
         # If dt is not specified, use the default period
@@ -360,14 +368,19 @@ class MeasurementControlEnvironment(Environment):
         # num_in_collision = len(in_collision_obs) + len(in_collision_ocl) + len(in_collision_oois) # Number of objects in collision
         # obstacle_reward = num_in_collision * self.obstacle_punishment  # Reward for colliding with obstacles
         obstacle_reward = self.obstacle_punishment * np.sum(collision_distances**2) # Reward for colliding with obstacles
+        obstacle_reward = obstacle_reward * self.obstacle_discount_factor ** horizon # Discount the reward based on the horizon
         trace_delta_reward = min_max_normalize(trace_delta_sum, 0, self.init_covariance_trace) # Reward for reducing covariance trace
         fully_observed_reward = fully_observed_corners * self.fully_observered_corner_reward # Reward for fully observing a corner
         reward = obstacle_reward + trace_delta_reward + fully_observed_reward # Total reward is sum of all rewards
         
+        if negative_to_zero is True and reward < 0:
+            reward = 0. # Set negative rewards to 0
+        
         # Print rewards if enabled
-        if print_rewards:
+        if True:
             print(f'Obstacle Reward: {obstacle_reward}')
             print(f'Trace Delta Reward: {trace_delta_reward}')
+            print(f'fully observed Reward: {fully_observed_reward}')
             print(f'Total Reward: {reward}')
         
         # Check if the episode is done
@@ -377,6 +390,9 @@ class MeasurementControlEnvironment(Environment):
         # Also done if horizon is equal to the maximum horizon length
         done = done or horizon >= self.horizon_length
         
+        # Check for failure
+        failure = min_obs_dist <= 0.
+        
         # Combine the updated car state, mean, covariance and horizon into a new state
         new_state = (new_car_state, new_ooi_means, new_ooi_covs, horizon)
         
@@ -385,17 +401,22 @@ class MeasurementControlEnvironment(Environment):
             return new_state, reward, done, noisy_observation, min_obs_dist
         
         if return_observation:
+            if check_failure:
+                return new_state, reward, done, noisy_observation, failure
             return new_state, reward, done, noisy_observation
         
         if return_min_obs_dist:
             return new_state, reward, done, min_obs_dist
+        
+        if check_failure:
+            return new_state, reward, done, failure
         
         return new_state, reward, done
     
     def draw_state(self, state, title=None, plot=True, root_node=None, 
                    rew=None, q_val=None, qu_val=None, scaling=1, bias=0,
                    max=4, get_fig_ax: bool=False,
-                   observation=None, hertg=None) -> None:
+                   observation=None, hertg=None, hertg_scale=10) -> None:
         """
         Draw the state on the UI.
         
@@ -434,12 +455,50 @@ class MeasurementControlEnvironment(Environment):
         
         # Draw the simulated states
         if root_node is not None:
-            self.draw_simulated_states(root_node, rew=rew, q_val=q_val, qu_val=qu_val, scaling=scaling, bias=bias, max=max)
+            self.draw_simulated_states(root_node, rew=rew, q_val=q_val, qu_val=qu_val, scaling=scaling,
+                                       bias=bias, max=max, hertg=hertg, hertg_scale=hertg_scale)
         
         if plot:
             return self.ui.plot(get_fig_ax=get_fig_ax, title=title)
     
-    def draw_simulated_states(self, node, rew=False, q_val=False, qu_val=False, scaling=1, bias=0, max=4) -> None:
+    # Old method using a circle patch for each predicted state
+    # def draw_simulated_states(self, node, rew=False, q_val=False, qu_val=False, scaling=1, bias=0, max=4) -> None:
+    #     """
+    #     Recursively go through tree of simulated states and draw points of each position sized by the reward
+    #     :param node: (Node) the node to draw the simulated states from
+    #     :param color: (str) the color of the points to draw 
+    #     :param rew: (bool) whether to size based on reward
+    #     :param q_val: (bool) whether to size based on Q value
+    #     :param qu_val: (bool) whether to size based on upper confidence bound
+    #     :param scaling: (float) the scaling factor for the radius of the points
+    #     :param bias: (float) the bias to add to the radius of the points
+    #     """
+    #     if not (rew or q_val or qu_val):
+    #         raise ValueError("Must select at least one of rew, q_val, or qu_val to draw simulated states")
+        
+    #     if rew:
+    #         # Rewards are already normalized between 0 and 1, add 0.05 to make all rewards visible
+    #         radius = node.reward
+            
+    #     elif q_val:
+    #         # Q values are normalized between 0 and 1, add 0.05 to make all rewards visible
+    #         radius = node.Q
+            
+    #     elif qu_val:
+    #         radius = node.Q + node.U
+            
+    #     color = 'g' if radius >= 0 else 'r'
+    #     radius = np.abs(radius) * scaling + bias
+    #     radius = np.clip(radius, 0, max)
+            
+    #     # Place a point at the state of this node
+    #     self.ui.draw_point(node.state[0][:2], color=color, radius=radius, alpha=0.2)
+        
+    #     # Draw the children recursively by calling this function
+    #     for child in node.children.values():
+    #         self.draw_simulated_states(child, rew=rew, q_val=q_val, qu_val=qu_val, scaling=scaling, bias=bias, max=max)
+    
+    def draw_simulated_states(self, node, rew=False, q_val=False, qu_val=False, scaling=1, bias=0, max=4, hertg=None, hertg_scale=10) -> None:
         """
         Recursively go through tree of simulated states and draw points of each position sized by the reward
         :param node: (Node) the node to draw the simulated states from
@@ -449,31 +508,79 @@ class MeasurementControlEnvironment(Environment):
         :param qu_val: (bool) whether to size based on upper confidence bound
         :param scaling: (float) the scaling factor for the radius of the points
         :param bias: (float) the bias to add to the radius of the points
+        :param max: (float) the maximum radius of the points
         """
-        if not (rew or q_val or qu_val):
-            raise ValueError("Must select at least one of rew, q_val, or qu_val to draw simulated states")
         
-        if rew:
-            # Rewards are already normalized between 0 and 1, add 0.05 to make all rewards visible
-            radius = node.reward
-            
-        elif q_val:
-            # Q values are normalized between 0 and 1, add 0.05 to make all rewards visible
-            radius = node.Q
-            
-        elif qu_val:
-            radius = node.Q + node.U
-            
-        color = 'g' if radius >= 0 else 'r'
-        radius = np.abs(radius) * scaling + bias
-        radius = np.clip(radius, 0, max)
-            
-        # Place a point at the state of this node
-        self.ui.draw_point(node.state[0][:2], color=color, radius=radius, alpha=0.2)
+        ucb_states_pos = np.empty((0, 2))
+        ucb_rewards_pos = np.empty(0)
+        ucb_states_neg = np.empty((0, 2))
+        ucb_rewards_neg = np.empty(0)
+        rollout_states_pos = np.empty((0, 2))
+        rollout_rewards_pos = np.empty(0)
+        rollout_states_neg = np.empty((0, 2))
+        rollout_rewards_neg = np.empty(0)
+        hertg_states_pos = np.empty((0, 2))
+        hertg_rewards_pos = np.empty(0)
         
-        # Draw the children recursively by calling this function
-        for child in node.children.values():
-            self.draw_simulated_states(child, rew=rew, q_val=q_val, qu_val=qu_val, scaling=scaling, bias=bias, max=max)
+        def accumulate_data(node, rew=False, q_val=False, qu_val=False, scaling=1, bias=0, max=4, hertg=None, hertg_scale=hertg_scale):
+            nonlocal ucb_states_pos, ucb_rewards_pos, ucb_states_neg, ucb_rewards_neg
+            nonlocal rollout_states_pos, rollout_rewards_pos, rollout_states_neg, rollout_rewards_neg
+            nonlocal hertg_states_pos, hertg_rewards_pos
+            
+            if not (rew or q_val or qu_val):
+                raise ValueError("Must select at least one of rew, q_val, or qu_val to draw simulated states")
+            
+            if rew:
+                # Rewards are already normalized between 0 and 1, add 0.05 to make all rewards visible
+                reward = node.reward
+                
+            elif q_val:
+                # Q values are normalized between 0 and 1, add 0.05 to make all rewards visible
+                reward = node.Q
+                
+            elif qu_val:
+                reward = node.Q + node.U
+                
+            radius = np.abs(reward) * scaling + bias
+            radius = np.clip(radius, 0, max)
+
+            if node.is_expanded:
+                if reward >= 0:
+                    ucb_states_pos = np.vstack([ucb_states_pos, node.state[0][:2]])
+                    ucb_rewards_pos = np.append(ucb_rewards_pos, radius)
+                else:
+                    ucb_states_neg = np.vstack([ucb_states_neg, node.state[0][:2]])
+                    ucb_rewards_neg = np.append(ucb_rewards_neg, radius)
+            else:
+                if reward >= 0:
+                    rollout_states_pos = np.vstack([rollout_states_pos, node.state[0][:2]])
+                    rollout_rewards_pos = np.append(rollout_rewards_pos, radius)
+                else:
+                    rollout_states_neg = np.vstack([rollout_states_neg, node.state[0][:2]])
+                    rollout_rewards_neg = np.append(rollout_rewards_neg, radius)
+            
+            if not node.children and hertg is not None:
+                reward = hertg.get_reward(node.state)
+                
+                if reward < 0:
+                    raise ValueError("HERTG reward must be positive")
+                
+                # radius = reward * scaling + bias
+                radius = reward * hertg_scale * scaling + bias
+                
+                hertg_states_pos = np.vstack([hertg_states_pos, node.state[0][:2]])
+                hertg_rewards_pos = np.append(hertg_rewards_pos, radius)
+
+            # Draw the children recursively by calling this function
+            for child in node.children.values():
+                accumulate_data(child, rew=rew, q_val=q_val, qu_val=qu_val, scaling=scaling, bias=bias, max=max, hertg=hertg, hertg_scale=hertg_scale)
+        
+        # Place data into arrays recursively and then place into ui for later plotting
+        accumulate_data(node, rew=rew, q_val=q_val, qu_val=qu_val, scaling=scaling, bias=bias, max=max, hertg=hertg)
+        self.ui.update_future_state_data(ucb_states_pos.T, ucb_rewards_pos, ucb_states_neg.T, ucb_rewards_neg,
+                                         rollout_states_pos.T, rollout_rewards_pos, rollout_states_neg.T, rollout_rewards_neg,
+                                         hertg_states_pos.T, hertg_rewards_pos)
+        
 
     def draw_state_set(self, state_set, title_perm=None, rewards=None, roots=None, scaling=4, bias=0.1, max=1., rew=True):
         """

@@ -23,7 +23,7 @@ class MatPlotLibUI:
         self.interactive = interactive
         if interactive:
             plt.ion()
-            self.fig, self.ax = plt.subplots(figsize=(8, 8))
+            self.fig, self.ax = plt.subplots(figsize=(32, 32))
             
             # Handle close event
             self.fig.canvas.mpl_connect('close_event', self.handle_close)
@@ -33,6 +33,37 @@ class MatPlotLibUI:
             self.play_button = Button(play_button_ax, 'Play/Pause', color='lightgoldenrodyellow', hovercolor='0.975')
             self.play_button.on_clicked(self.on_play_button_click)
             self.paused = False
+            
+        self.reset_future_state_data()
+
+    def reset_future_state_data(self):
+        self.ucb_states_pos = ([], [])
+        self.ucb_rewards_pos = 20
+        self.ucb_states_neg = ([], [])
+        self.ucb_rewards_neg = 20
+        self.rollout_states_pos = ([], [])
+        self.rollout_rewards_pos = 20
+        self.rollout_states_neg = ([], [])
+        self.rollout_rewards_neg = 20
+        self.hertg_states_pos = ([], [])
+        self.hertg_rewards_pos = 20
+
+    def update_future_state_data(self, ucb_states_pos, ucb_rewards_pos, ucb_states_neg, ucb_rewards_neg,
+                                 rollout_states_pos, rollout_rewards_pos, rollout_states_neg, rollout_rewards_neg,
+                                 hertg_states_pos, hertg_rewards_pos):
+        """
+        Update the future state data for the scatter plots.
+        """
+        self.ucb_states_pos = ucb_states_pos
+        self.ucb_rewards_pos = ucb_rewards_pos
+        self.ucb_states_neg = ucb_states_neg
+        self.ucb_rewards_neg = ucb_rewards_neg
+        self.rollout_states_pos = rollout_states_pos
+        self.rollout_rewards_pos = rollout_rewards_pos
+        self.rollout_states_neg = rollout_states_neg
+        self.rollout_rewards_neg = rollout_rewards_neg
+        self.hertg_states_pos = hertg_states_pos
+        self.hertg_rewards_pos = hertg_rewards_pos
 
     def handle_close(self, event):
         # Handle what happens when the window is closed
@@ -43,7 +74,7 @@ class MatPlotLibUI:
         print("play/pause button clicked")
         self.paused = not self.paused
 
-    def plot(self, get_fig_ax: bool=False, title:str=None, figsize:tuple=(8, 8)):
+    def plot(self, get_fig_ax: bool=False, title:str=None, figsize:tuple=(32, 32)):
         """
         Refresh the display with new positions and orientations.
         """
@@ -53,6 +84,14 @@ class MatPlotLibUI:
         else:
             fig = self.fig
             ax = self.ax
+            
+        ax.scatter(*self.ucb_states_pos, marker='o', color='green', s=self.ucb_rewards_pos, alpha=1.0)
+        ax.scatter(*self.ucb_states_neg, marker='o', color='red', s=self.ucb_rewards_neg, alpha=1.0)
+        ax.scatter(*self.rollout_states_pos, marker='D', color='purple', s=self.rollout_rewards_pos, alpha=0.3)
+        ax.scatter(*self.rollout_states_neg, marker='D', color='red', s=self.rollout_rewards_neg, alpha=0.3)
+        ax.scatter(*self.hertg_states_pos, marker='*', color='orange', s=self.hertg_rewards_pos, alpha=0.5)
+        
+        self.reset_future_state_data()
         
         # Set title
         if title is not None:
@@ -198,25 +237,26 @@ class MatPlotLibUI:
             self.patches = []
             self.artists = []
         return artists
-    
-    def get_figure(self) -> tuple[plt.figure, plt.axes]:
-        """
-        Get the figure and axes of the plot.
-        :return: Tuple of the figure and axes.
-        """
-        fig, ax = plt.subplots(figsize=self.figsize)
+
+    # Old not used    
+    # def get_figure(self) -> tuple[plt.figure, plt.axes]:
+    #     """
+    #     Get the figure and axes of the plot.
+    #     :return: Tuple of the figure and axes.
+    #     """
+    #     fig, ax = plt.subplots(figsize=self.figsize)
         
-        # Set title
-        ax.set_title(self.title)
+    #     # Set title
+    #     ax.set_title(self.title)
         
-        # Set the aspect of the plot to be equal
-        ax.set_aspect('equal', adjustable='box')
+    #     # Set the aspect of the plot to be equal
+    #     ax.set_aspect('equal', adjustable='box')
         
-        # Set plot limits and labels
-        ax.set_xlim(0, 100)
-        ax.set_ylim(0, 100)
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
+    #     # Set plot limits and labels
+    #     ax.set_xlim(0, 100)
+    #     ax.set_ylim(0, 100)
+    #     ax.set_xlabel('X')
+    #     ax.set_ylabel('Y')
         
-        return fig, ax
+    #     return fig, ax
 

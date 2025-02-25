@@ -270,7 +270,7 @@ class MCTSNode:
             return current, path
         return current
 
-    def maybe_add_child(self, action, insert_leaf=None, return_min_obs_dist=False):
+    def maybe_add_child(self, action, insert_leaf=None, return_min_obs_dist=False, skip_collision=False):
         """Add a child if it does not exist"""
         min_obs_dist = np.inf # set default value
         
@@ -286,7 +286,15 @@ class MCTSNode:
             # If not, Run the simulation and update the child
             else:
                 new_state, reward, done, min_obs_dist = self.env.step(self.state, self.env.action_space[action], 
-                                                                      return_min_obs_dist=True, obs_at_mean=True)
+                                                                      return_min_obs_dist=True, obs_at_mean=True,
+                                                                      negative_to_zero=skip_collision)
+                
+                # Check if we are in collision and skip adding the child if we are, returning none for leaf
+                if skip_collision and min_obs_dist <= 0:
+                    if return_min_obs_dist:
+                        return None, min_obs_dist
+                    return None
+                
                 self.children[action] = MCTSNode(self.env, new_state, action, explore_factor=self.explore_factor,
                                                  discount_factor=self.discount_factor, reward=reward, parent=self, 
                                                  done=done, parallel=self.parallel)
@@ -375,23 +383,34 @@ class MCTSNode:
                 else:               # If the velocity is positive or 0, accelerate in the positive direction
                     action = 10
                     
-            if rollout_pre_collision_stop:
-                stop_dist = self.env.car.get_stop_distance(state[0][2], self.env.car.model_dt)
-                if stop_dist > min_obs_dist:
-                    # If car is travelling forward
-                    if state[0][2] >= 0:
-                        action = 15 # If the velocity is positive, accelerate in the negative direction
-                    else:
-                        action = 10 # If the velocity is negative, accelerate in the positive direction
+            # if rollout_pre_collision_stop:
+                # Old method where car is slowed down once collision is predicted
+                # stop_dist = self.env.car.get_stop_distance(state[0][2], self.env.car.model_dt)
+                # if stop_dist > min_obs_dist:
+                #     # If car is travelling forward
+                #     if state[0][2] >= 0:
+                #         action = 15 # If the velocity is positive, accelerate in the negative direction
+                #     else:
+                #         action = 10 # If the velocity is negative, accelerate in the positive direction
                 
             if not keep_nodes:
-                state, reward, done, min_obs_dist = self.env.step(state, self.env.action_space[action], 
-                                                                  obs_at_mean=True, return_min_obs_dist=True)
+                state, reward, done, min_obs_dist = self.env.step(state, self.env.action_space[action], obs_at_mean=True,
+                                                                  return_min_obs_dist=True, negative_to_zero=rollout_pre_collision_stop)
+                
+                # If rollout pre collision stop is enabled and a collision has happened, break without adding rewards
+                if rollout_pre_collision_stop is True and min_obs_dist <= self.env.car_collision_radius:
+                    break
+                
                 states.append(state)
                 rewards.append(reward)
                 dones.append(done)
             else:
-                leaf, min_obs_dist = leaf.maybe_add_child(action, return_min_obs_dist=True)
+                leaf, min_obs_dist = leaf.maybe_add_child(action, return_min_obs_dist=True, skip_collision=rollout_pre_collision_stop)
+                
+                # If leaf returned is none because rollout pre collison stop is enabled and a collision has happened, break without adding rewards
+                if leaf is None:
+                    break
+                
                 state, reward, done = leaf.state, leaf.reward, leaf.done
                 
             cumulative_reward += reward
@@ -400,7 +419,8 @@ class MCTSNode:
         if hertg is not None:
             # Tack on expected cost to go to final state
             hertg_reward = hertg.get_reward(state)
-            # print(f"HERTG Reward: {hertg_reward}")
+            print(f"Rollout reward: {cumulative_reward}")
+            print(f"HERTG Reward: {hertg_reward}")
             cumulative_reward += hertg_reward
         
         if keep_data:
@@ -579,7 +599,8 @@ def mcts_with_rollout(env, starting_state, learning_iterations, explore_factor, 
     root.is_expanded = True
     
     if hertg is not None:
-        # Determine OOI to target for this search
+        # Update root state and determine OOI to target for this search
+        hertg.update_root_state(starting_state)
         hertg.update_best_ooi(starting_state)
     
     # If enabled do first rollouts for all children in parallel

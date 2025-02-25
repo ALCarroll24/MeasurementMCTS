@@ -95,13 +95,14 @@ def get_mcts_metrics(env, state, max_actions=200, LI=100,
     cumulative_reward = 0.
     num_actions = 0
     done = False
+    failure=False
     start_time = timeit.default_timer()
     for i in range(max_actions):
         # Run MCTS and take the best action
         root = mcts_with_rollout(env, state, LI, EF, DF, rollout_method,
                                  rollout_pre_collision_stop, hertg=hertg)
         best_action_idx = np.argmax(root.child_Q())
-        state, reward, done = env.step(state, env.action_space[best_action_idx])
+        state, reward, done, failure = env.step(state, env.action_space[best_action_idx], check_failure=True)
         
         # Reset the horizon to 0
         state_list = list(state)
@@ -112,6 +113,10 @@ def get_mcts_metrics(env, state, max_actions=200, LI=100,
         cumulative_reward += reward
         num_actions = i + 1
         if done:
+            break
+        
+        if failure:
+            print(f"Collision failure! Cumulative reward: {cumulative_reward}")
             break
         
     comp_time = timeit.default_timer() - start_time
@@ -131,6 +136,7 @@ def get_mcts_metrics(env, state, max_actions=200, LI=100,
         'computation_time': comp_time,
         'computation_per_action': comp_time / num_actions,
         'rollout_pre_collision_stop': rollout_pre_collision_stop,
+        'collision_failure': failure
     }
     
     return metrics
@@ -143,7 +149,7 @@ def worker_wrapper(trial_number, trial_config_name, rollout_method,
                    DF=1.0,
                    HL=6,
                    hertg_method='static',
-                   rollout_pre_collision_stop=True):
+                   rollout_pre_collision_stop=False):
     """
     Worker function that:
       - Instantiates a fresh environment.

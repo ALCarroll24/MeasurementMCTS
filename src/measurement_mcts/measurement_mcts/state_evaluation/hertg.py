@@ -2,15 +2,17 @@ import numpy as np
 from measurement_mcts.utils.utils import wrap_angle, min_max_normalize, rotate_about_point, angle_difference
 
 class HERTG:
-    def __init__(self, state, env, method, reward_scale=0.00166):
+    def __init__(self, state, env, method, reward_scale=0.1):
         self.env = env
         self.method = method
         
         # Scale the reward based on the horizon length in the environment
-        self.reward_scale = reward_scale * env.horizon_length
+        self.reward_scale = reward_scale / env.horizon_length
         
         # Initialize the best ooi index
         self.set_best_ooi(state)
+        
+        self.root_state = state
         
         if self.method == 'static':
             self.target_point = get_hertg_past_ooi_target_point(state, self.env, self.best_ooi_idx)
@@ -23,7 +25,10 @@ class HERTG:
             
         
     def get_reward(self, state):
-        return get_distance_reward(state, self.target_point, self.reward_scale)
+        return get_distance_reward(state, self.target_point, self.root_state, scale=self.reward_scale)
+    
+    def update_root_state(self, state):
+        self.root_state = state
     
     def update_best_ooi(self, state):
         # Check if the ooi is completed and update the best ooi
@@ -108,7 +113,7 @@ def get_velocity_vector_reward(state, target_point, scale=0.01):
     # Take the dot product to get the heuristic reward
     return scale * unit_car_to_target_point @ velocity_vector
 
-def get_distance_reward(state, target_point, scale=0.01, max_distance=80):
+def get_distance_reward(state, target_point, root_state, scale=0.01, max_distance=30):
     """
     Compute the reward for the HERTG algorithm based on the distance to the target point.
     params:
@@ -124,11 +129,25 @@ def get_distance_reward(state, target_point, scale=0.01, max_distance=80):
     
     # Compute the distance to the target point
     distance_to_target = np.linalg.norm(target_point - car_pos)
+    print(f'Distance to target: {distance_to_target}')
+    
+    # Calculate distance from root to target
+    root_pos = root_state[0][:2]
+    distance_from_root = np.linalg.norm(target_point - root_pos)
+    print(f'Distance from root to target: {distance_from_root}')
+    
+    # Reward based on only decreasing the distance from root to target
+    distance_reduced = np.clip(distance_from_root - distance_to_target, 0, max_distance)
+    print(f'Distance reduced: {distance_reduced}')
     
     # Return the scaled distance as the reward
-    return scale * (1 - min_max_normalize(distance_to_target, 0, max_distance))
+    reward = min_max_normalize(distance_reduced, 0, max_distance)
+    print(f'Reward: {reward}')
+    reward = scale * reward
+    print(f'Scaled reward: {reward}')
+    return reward
     
-def get_hertg_dynamic_target_point(state, env, best_ooi_idx, lookahead_distance=15, ooi_circle_space=4, draw=False):
+def get_hertg_dynamic_target_point(state, env, best_ooi_idx, lookahead_distance=25, ooi_circle_space=4, draw=False):
     car_pos, car_yaw = state[0][:2], state[0][3]
     ooi_means = state[1]
     ooi_centers = np.mean(ooi_means, axis=1)
@@ -222,7 +241,7 @@ def get_hertg_dynamic_target_point(state, env, best_ooi_idx, lookahead_distance=
         
     return target_point
 
-def get_hertg_past_ooi_target_point(state, env, best_ooi_idx, spacing=2, draw=False):
+def get_hertg_past_ooi_target_point(state, env, best_ooi_idx, spacing=-2, draw=False):
     """
     Get the target point behind the best ooi based on the spacing provided.
     params:
