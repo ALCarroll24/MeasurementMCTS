@@ -419,8 +419,6 @@ class MCTSNode:
         if hertg is not None:
             # Tack on expected cost to go to final state
             hertg_reward = hertg.get_reward(state)
-            print(f"Rollout reward: {cumulative_reward}")
-            print(f"HERTG Reward: {hertg_reward}")
             cumulative_reward += hertg_reward
         
         if keep_data:

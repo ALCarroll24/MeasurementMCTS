@@ -377,7 +377,7 @@ class MeasurementControlEnvironment(Environment):
             reward = 0. # Set negative rewards to 0
         
         # Print rewards if enabled
-        if True:
+        if print_rewards:
             print(f'Obstacle Reward: {obstacle_reward}')
             print(f'Trace Delta Reward: {trace_delta_reward}')
             print(f'fully observed Reward: {fully_observed_reward}')

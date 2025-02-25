@@ -129,22 +129,17 @@ def get_distance_reward(state, target_point, root_state, scale=0.01, max_distanc
     
     # Compute the distance to the target point
     distance_to_target = np.linalg.norm(target_point - car_pos)
-    print(f'Distance to target: {distance_to_target}')
     
     # Calculate distance from root to target
     root_pos = root_state[0][:2]
     distance_from_root = np.linalg.norm(target_point - root_pos)
-    print(f'Distance from root to target: {distance_from_root}')
     
     # Reward based on only decreasing the distance from root to target
     distance_reduced = np.clip(distance_from_root - distance_to_target, 0, max_distance)
-    print(f'Distance reduced: {distance_reduced}')
     
     # Return the scaled distance as the reward
     reward = min_max_normalize(distance_reduced, 0, max_distance)
-    print(f'Reward: {reward}')
     reward = scale * reward
-    print(f'Scaled reward: {reward}')
     return reward
     
 def get_hertg_dynamic_target_point(state, env, best_ooi_idx, lookahead_distance=25, ooi_circle_space=4, draw=False):
