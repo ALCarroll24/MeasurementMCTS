@@ -22,11 +22,9 @@ def get_percent_done(state, env):
     
     # Make any traces below the final corner trace 0
     all_traces[all_traces <= final_coner_trace] = 0
-    print(all_traces)
     
     # Sum the traces and calculate the percentage
     sum_traces = np.sum(all_traces)
-    print(f'sum_traces: {sum_traces}')
     return (1 - sum_traces / total_trace) * 100
 
 
@@ -68,7 +66,8 @@ def save_environment_config(env, folder_path):
     
 def get_mcts_metrics(env, state, max_actions=200, LI=100,
                      EF=0.1, DF=1.0, HL=6, rollout_method='same',
-                     hertg_method='static', rollout_pre_collision_stop=True) -> dict:
+                     hertg_method='static', no_hertg=False,
+                     skip_rollout=False, rollout_pre_collision_stop=False) -> dict:
     """
     Run MCTS and return the metrics.
     params:
@@ -90,6 +89,8 @@ def get_mcts_metrics(env, state, max_actions=200, LI=100,
     # Change environment parameters and create HERTG object
     env.horizon_length = HL
     hertg = HERTG(state, env, method=hertg_method)
+    if no_hertg:
+        hertg = None
     
     # Create metric trackers
     cumulative_reward = 0.
@@ -100,7 +101,7 @@ def get_mcts_metrics(env, state, max_actions=200, LI=100,
     for i in range(max_actions):
         # Run MCTS and take the best action
         root = mcts_with_rollout(env, state, LI, EF, DF, rollout_method,
-                                 rollout_pre_collision_stop, hertg=hertg)
+                                 rollout_pre_collision_stop, hertg=hertg, skip_rollout=skip_rollout)
         best_action_idx = np.argmax(root.child_Q())
         state, reward, done, failure = env.step(state, env.action_space[best_action_idx], check_failure=True)
         
@@ -136,7 +137,9 @@ def get_mcts_metrics(env, state, max_actions=200, LI=100,
         'computation_time': comp_time,
         'computation_per_action': comp_time / num_actions,
         'rollout_pre_collision_stop': rollout_pre_collision_stop,
-        'collision_failure': failure
+        'collision_failure': failure,
+        'skip_rollout': skip_rollout,
+        'no_hertg': no_hertg
     }
     
     return metrics
@@ -149,6 +152,8 @@ def worker_wrapper(trial_number, trial_config_name, rollout_method,
                    DF=1.0,
                    HL=6,
                    hertg_method='static',
+                   no_hertg=False,
+                   skip_rollout=False,
                    rollout_pre_collision_stop=False):
     """
     Worker function that:
@@ -192,6 +197,8 @@ def worker_wrapper(trial_number, trial_config_name, rollout_method,
         HL=HL,
         rollout_method=rollout_method,
         hertg_method=hertg_method,
+        no_hertg=no_hertg,
+        skip_rollout=skip_rollout,
         rollout_pre_collision_stop=rollout_pre_collision_stop
     )
     

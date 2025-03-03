@@ -561,7 +561,7 @@ def get_action_subtree(root: MCTSNode, action: int):
 ############################################################################################################
 def mcts_with_rollout(env, starting_state, learning_iterations, explore_factor, discount_factor, 
                       rollout_method, rollout_pre_collision_stop=True, parallel_rollout=False, start_with_root=None, 
-                      hertg=None, keep_nodes=True, max_time=None):
+                      hertg=None, keep_nodes=True, max_time=None, skip_rollout=False):
     """
     Run MCTS search with a rollout from each selected node
     params:
@@ -619,9 +619,14 @@ def mcts_with_rollout(env, starting_state, learning_iterations, explore_factor, 
             first_action = None
         
         # Do a rollout from the leaf node to get estimated value
-        rollout_reward = leaf.one_action_rollout(rollout_method, rollout_pre_collision_stop=rollout_pre_collision_stop,
-                                                 first_action=first_action, hertg=hertg, keep_nodes=keep_nodes)
-        
+        if not skip_rollout:
+            rollout_reward = leaf.one_action_rollout(rollout_method, rollout_pre_collision_stop=rollout_pre_collision_stop,
+                                                    first_action=first_action, hertg=hertg, keep_nodes=keep_nodes)
+        else:
+            rollout_reward = 0.
+            if hertg is not None:
+                rollout_reward = hertg.get_reward(leaf.state)
+            
         leaf.is_expanded = True # Mark the leaf node as expanded
         leaf.backup(rollout_reward) # Backup the best rollout reward to the root node
 

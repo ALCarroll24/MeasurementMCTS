@@ -18,32 +18,34 @@ env.reset()
 # env.save_state('state_configurations', 'hertg_test1')
 
 # If desired load a state from a file
-# env.load_state('state_configurations', 'hertg_test1')
+env.load_state('state_configurations', 'hertg_test1')
 
 # Set and draw the initial state
 state = env.get_state()
 env.draw_state(env.get_state())
 
 # Parameters
-learning_iterations = 500
+learning_iterations = 50
 explore_factor = 0.1
 discount_factor = 1.0
-rollout_method = 'accelerate'
-hertg_method = 'static' # 'static' or 'dynamic'
-env.horizon_length = 3
-env.obstacle_discount_factor = 0.8
-env.car_collision_radius = env.object_manager.car_collision_radius = 5
-env.fully_observed_corner_reward = 0.02 #0.1
-env.obstacle_punishment = -0.003
-hertg_reward_scale = 0.1
+rollout_method = 'random_same'
+hertg_method = 'dynamic' # 'static' or 'dynamic'
+env.horizon_length = 9
+# env.obstacle_discount_factor = 0.8
+# env.car_collision_radius = env.object_manager.car_collision_radius = 5
+# env.fully_observed_corner_reward = 0.02 #0.1
+# env.obstacle_punishment = -0.003
+# hertg_reward_scale = 0.1
 rollout_pre_collision_stop = False # When true decellerates car when collision is predicted
 dynamic_learning_iterations = False # When true varies LI to match the timestep
+skip_rollout = False
 
 # Pause initially if wanted
 # env.ui.paused = True
 
 # Create hertg object
-hertg = HERTG(state, env, hertg_method, reward_scale=hertg_reward_scale)
+hertg = HERTG(state, env, hertg_method) #, reward_scale=hertg_reward_scale)
+# hertg = None
 
 # Permanent part of title for the window
 title_perm = f'Interactive MCTS searches\n\
@@ -80,17 +82,20 @@ try:
         start_loop_time = timeit.default_timer()
         env.draw_state(state, title=title, observation=observation, hertg=hertg)#, root_node=root, scaling=4, bias=0.1, max=1., rew=True)
         leftover_time = dt - (timeit.default_timer() - start_loop_time)
-        print(f"Leftover time: {leftover_time}")
+        # print(f"Leftover time: {leftover_time}")
         
         # Run MCTS, get best action, and update state
+        comp_start = timeit.default_timer()
         if dynamic_learning_iterations:
             root, LI_comp = mcts_with_rollout(env, state, learning_iterations, explore_factor, discount_factor, 
                                               rollout_method, rollout_pre_collision_stop=rollout_pre_collision_stop,
-                                              start_with_root=None, max_time=leftover_time, hertg=hertg)
+                                              start_with_root=None, max_time=leftover_time, hertg=hertg, skip_rollout=skip_rollout)
         else:
             root = mcts_with_rollout(env, state, learning_iterations, explore_factor, discount_factor, 
                                      rollout_method, rollout_pre_collision_stop=rollout_pre_collision_stop,
-                                     start_with_root=None, max_time=None, hertg=hertg)
+                                     start_with_root=None, max_time=None, hertg=hertg, skip_rollout=skip_rollout)
+
+        print(f'Computation time: {timeit.default_timer() - comp_start}')
 
         best_action_idx = np.argmax(root.child_Q())
         state, reward, done, observation, failure = env.step(state, env.action_space[best_action_idx], 
@@ -111,7 +116,7 @@ try:
         # subroot = get_action_subtree(root, best_action_idx)
         best_action = env.action_space[best_action_idx]
         title = f'{title_perm}\nAction: {best_action}, Search: {search_count}, LI: {LI_comp}, {round(state[0][2]*2.23694,2)} mph, CR: {round(cumulative_reward,2)}'
-        print(f'Total Time: {timeit.default_timer() - start_loop_time}')
+        # print(f'Total Time: {timeit.default_timer() - start_loop_time}')
         search_count += 1
         
         if done:
